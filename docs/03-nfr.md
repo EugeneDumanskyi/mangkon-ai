@@ -21,11 +21,10 @@
 
 | ID | Machine | Spec | Source |
 |---|---|---|---|
-| RM-1 | At-minimum PC | NVIDIA GPU 8 GB VRAM (e.g. RTX 4060 class), 16 GB RAM, 8-core CPU, NVMe SSD, Windows 11 or Ubuntu 22.04 | Brief (VRAM/RAM) · ASSUMPTION (CPU, GPU class, SSD) |
-| RM-2 | At-minimum Mac | Apple Silicon, 32 GB unified memory, SSD, macOS 14 | Brief (32 GB) · ASSUMPTION (macOS 14) |
-| RM-3 | Below-minimum laptop | 8 GB RAM, no usable GPU, 4-core CPU, SSD; model runs on RM-1 over the local network | Brief (test path) · ASSUMPTION (spec) |
+| RM-1 | Main test PC | NVIDIA GPU 8 GB VRAM, 64 GB+ RAM, NVMe SSD, Ubuntu-based Linux. Used at full power, with no artificial limits. | Brief §8 (test path at or above the minimum) |
+| RM-2 | Below-minimum machine | Any machine below the minimum (under 8 GB VRAM or 16 GB RAM), so no supported local model. The model runs on RM-1 over the local network. | Brief §8 (below-minimum test path) |
 
-ASSUMPTION: the maintainer owns RM-1 or RM-2 and RM-3 (brief says two test paths).
+Targets are measured on RM-1 at full power, and each result records the machine. Machines at the bare minimum may be slower; the README says which machines were tested (brief §8). Machines with more memory get bigger models through the catalog recommendation (US-09.3).
 
 | ID | Test data | Description | Source |
 |---|---|---|---|
@@ -41,7 +40,7 @@ ASSUMPTION: the maintainer owns RM-1 or RM-2 and RM-3 (brief says two test paths
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-PERF-01 | Cold start to project list | ≤ 3 s | Timer, RM-1/RM-2, 10 runs, p95 | ASSUMPTION |
+| NFR-PERF-01 | Cold start to project list | ≤ 3 s | Timer, RM-1, 10 runs, p95 | ASSUMPTION |
 | NFR-PERF-02 | Open a project of TD-2 size | ≤ 2 s to a usable connections screen | Timer, p95 | ASSUMPTION |
 | NFR-PERF-03 | UI stays responsive during background jobs | UI thread never blocked > 100 ms; input response ≤ 100 ms | Frame/long-task tracing during TD-2 ingestion | ASSUMPTION |
 | NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing | ASSUMPTION |
@@ -53,7 +52,7 @@ ASSUMPTION: the maintainer owns RM-1 or RM-2 and RM-3 (brief says two test paths
 | NFR-PERF-10 | First cross-source identifier visible after dropping TD-1 ("within seconds") | ≤ 10 s | Timer from drop to first row on connections screen | Brief ("seconds") · ASSUMPTION (10 s) |
 | NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION |
 | NFR-PERF-12 | First cross-source person/org visible after drop on TD-1 ("within minutes") | ≤ 5 min | Timer | Brief ("minutes") · ASSUMPTION (5 min) |
-| NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1/RM-2 | Timer | ASSUMPTION · final after M1 |
+| NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 | Timer | ASSUMPTION · final after M1 |
 | NFR-PERF-14 | Click on a link → source viewer shows highlight | ≤ 1 s p95 (PDF ≤ 500 pages, CSV ≤ 1,000,000 rows, MBOX message) | Timer, 50 random clicks on TD-1 and TD-2 | Brief ("one click") · ASSUMPTION (1 s) |
 
 ### 3.3 Throughput
@@ -174,9 +173,9 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + model download, normal connection, supported hardware) | Timed fresh run on RM-1 and RM-2 | Brief |
+| NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + model download, normal connection, supported hardware) | Timed fresh run on RM-1 | Brief |
 | NFR-USE-02 | "Normal connection" for NFR-USE-01 | 100 Mbit/s | — | ASSUMPTION |
-| NFR-USE-03 | Clean build time | ≤ 15 min on RM-1/RM-2 | Timer | ASSUMPTION |
+| NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION |
 | NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief |
 | NFR-USE-05 | Error messages | Every failed file has a plain-English reason + path; no raw stack traces in the main UI | TD-3 review | Brief · ASSUMPTION (wording rule) |
 | NFR-USE-06 | Keyboard | Connections screen, source viewer, and review queue fully usable by keyboard | Manual test | ASSUMPTION |
@@ -210,7 +209,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-MNT-03 | CI duration | ≤ 30 min per PR | CI logs | ASSUMPTION |
 | NFR-MNT-04 | Rust core test coverage | ≥ 70% line coverage | Coverage report in CI | ASSUMPTION |
 | NFR-MNT-05 | Layer 1 quality benchmark | Runs on every PR (no LLM needed); fails CI if recall/precision drop > 2 points | CI | ASSUMPTION |
-| NFR-MNT-06 | LLM quality benchmark | Run manually before each release on RM-1 or RM-2 | Release checklist | ASSUMPTION |
+| NFR-MNT-06 | LLM quality benchmark | Run manually before each release on RM-1 | Release checklist | ASSUMPTION |
 | NFR-MNT-07 | DB migrations | Forward-only, numbered, tested on a copy of TD-2 | CI | ASSUMPTION |
 | NFR-MNT-08 | Code style | `rustfmt`, `clippy` (no warnings), ESLint + Prettier, TypeScript strict mode — enforced in CI | CI | ASSUMPTION |
 | NFR-MNT-09 | Model catalog format | Versioned JSON file with schema; validated in CI | CI | ASSUMPTION |

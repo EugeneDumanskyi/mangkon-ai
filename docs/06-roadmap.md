@@ -1,7 +1,7 @@
 # 06 — Roadmap: Mangkon AI v0.1
 
 > Input: `05-architecture.md` and its ADRs, read against `01-brief.md`, `02-requirements.md`, `03-nfr.md`, `04-domain.md`. **If this file disagrees with them, they win** (same order as in `05-architecture.md`).
-> Status: Draft for review (2026-10-22).
+> Status: Milestone order approved (2026-10-22).
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -129,7 +129,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | | |
 |---|---|
 | Question | Which engine pair passes every ADR-0013 criterion, and does the highlight round-trip hold? |
-| Method | Run each candidate over TD-1 PDFs/scans and TD-3 on RM-1 and RM-2. Score against ground truth. For the round-trip: take 200 random ground-truth identifiers in PDFs/scans, find them in stored text, map span → boxes, check the boxes overlap the right glyphs on the rendered page. |
+| Method | Run each candidate over TD-1 PDFs/scans and TD-3 on RM-1. Score against ground truth. For the round-trip: take 200 random ground-truth identifiers in PDFs/scans, find them in stored text, map span → boxes, check the boxes overlap the right glyphs on the rendered page. |
 | Pass marks | ADR-0013 table: ≥ 20 pages/s text PDF (NFR-PERF-20); ≤ 5 s/page/core OCR (NFR-PERF-21); ≥ 95% OCR characters (NFR-QA-07); ≥ 85% identifier recall on OCR'd files (NFR-QA-06); boxes + one-page render of a 500-page PDF ≤ 1 s; one-command build ≤ 15 min; app ≤ 150 MB; every TD-3 file fails alone; AGPL-compatible. Plus: highlight round-trip ≥ 99% (early NFR-QA-12). |
 | Timebox | Bake-off 1 week after TD-1 exists. ASSUMPTION. |
 | If nothing passes all | Rank: highlight round-trip > OCR accuracy > build simplicity > speed. Take the best by that rank. A native engine is downloaded as a checksum-verified prebuilt binary, like `llama-server` (ADR-0008 pattern). |
@@ -158,13 +158,13 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 ### M1 — Local model reality check
 
-**Goal.** Know, with numbers, whether local models on minimum hardware can carry Layer 2, which models to list, how fast they are, and whether the chosen embedding model works with binary vectors.
+**Goal.** Know, with numbers, whether local models that fit the minimum (8 GB VRAM) can carry Layer 2, which bigger models are worth listing for stronger machines, how fast they are, and whether the chosen embedding model works with binary vectors.
 
 **Scope**
-- **Runtime mechanics (ADR-0008)** from a small Rust harness on RM-1 and RM-2: download a pinned prebuilt `llama-server`, verify SHA-256, start on `127.0.0.1` with a random port and `--api-key`, wait for `/health`, kill, restart. Confirms the supervisor approach before M5 builds it.
+- **Runtime mechanics (ADR-0008)** from a small Rust harness on RM-1: download a pinned prebuilt `llama-server`, verify SHA-256, start on `127.0.0.1` with a random port and `--api-key`, wait for `/health`, kill, restart. Confirms the supervisor approach before M5 builds it.
 - **Extraction**: one people/org prompt with a JSON-schema `response_format` (brief §14). 3 model sizes. Measure on TD-1 segments: precision, recall, segments/s, VRAM/RAM peak, share of outputs that fail the evidence span check (INV-AI span rule, NFR-QA-11) and the schema check (INV-AI-03).
 - **Embeddings (R2, gap A6)**: 2–3 candidate embedding models. Recall@20 of binary + rescore vs exact search on TD-1.
-- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-3 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0008).
+- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-2 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0008).
 - **Optional probe** (≤ ½ day): relations on the best model, to inform the M8 go/no-go.
 
 **Out of scope**
@@ -184,8 +184,8 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | Output | Results table; model catalog v0 draft; Layer 2 decision recorded in this file and the brief. |
 
 **Acceptance criteria**
-1. A results table covers 3 extraction model sizes and 2–3 embedding models, on RM-1 and RM-2, with commands to reproduce.
-2. The runtime harness starts, health-checks, kills, and restarts `llama-server` on RM-1 and RM-2 from a pinned, checksum-verified binary.
+1. A results table covers 3 extraction model sizes and 2–3 embedding models, on RM-1, with commands to reproduce.
+2. The runtime harness starts, health-checks, kills, and restarts `llama-server` on RM-1 from a pinned, checksum-verified binary.
 3. Model catalog v0 exists as a versioned JSON file with a schema (NFR-MNT-09): models, runtime binaries per OS/backend, hardware tiers.
 4. NFR-PERF-13, -24 and NFR-QA-01, -02, -08, -09 hold measured or confirmed targets (NFR §13).
 5. **Layer 2 decision** recorded: Go, Experimental, or Cut. Gaps A3 and A6 decided.
@@ -234,7 +234,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 2. Every TXT/CSV file in TD-3, plus the memory bomb and the endless loop, fails alone with a plain reason; all other files finish (NFR-REL-01, NFR-REL-06, NFR-USE-05).
 3. Re-scan with 0 changes processes 0 files (NFR-PERF-33). Re-scan of TD-2 with 0 changes ≤ 60 s (NFR-PERF-32).
 4. Property test passes: "rebuild from scratch" equals "incremental updates" for random result sequences (ADR-0005 follow-up).
-5. CI builds and tests on all three OSes, ≤ 30 min per PR (NFR-MNT-02/03). Clean build ≤ 15 min on RM-1/RM-2 (NFR-USE-03). `rustfmt`, `clippy`, ESLint, Prettier, TS strict enforced (NFR-MNT-08).
+5. CI builds and tests on all three OSes, ≤ 30 min per PR (NFR-MNT-02/03). Clean build ≤ 15 min on RM-1 (NFR-USE-03). `rustfmt`, `clippy`, ESLint, Prettier, TS strict enforced (NFR-MNT-08).
 6. A test PR that adds `tauri` to `mk-core` or an HTTP client to any other crate fails CI.
 7. Idle memory ≤ 500 MB (NFR-RES-01). Stage A memory ≤ 2 GB on the CSV part of TD-2 (NFR-RES-02).
 8. All four spike pass marks met or their fallback recorded.
@@ -354,7 +354,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Acceptance criteria**
 1. All ACs of E09 and US-14.4 pass.
 2. Download resumes after pulling the network cable; 100% of downloads SHA-256 verified (NFR-REL-08); a tampered file is rejected (NFR-SEC-11); a full disk is caught before download (NFR-RES-05).
-3. `llama-server` reachable only on `127.0.0.1`, random port (NFR-SEC-06, port scan from RM-3). Stops after 10 min idle (NFR-RES-06).
+3. `llama-server` reachable only on `127.0.0.1`, random port (NFR-SEC-06, port scan from RM-2). Stops after 10 min idle (NFR-RES-06).
 4. Killing the sidecar: AI work pauses with a reason, Layer 1 keeps working, at most 2 auto-restarts (NFR-REL-12).
 5. New projects allow no non-local endpoint (NFR-SEC-04). Destination shown during every AI call (NFR-SEC-05).
 6. A known test key never appears in the project folder, config files, or logs (NFR-SEC-07).
@@ -470,7 +470,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - **E14** all: US-14.1–14.4 (build from source, README, published corpus and benchmark, first run).
 - README: hardware minimum at the top, tested-platform matrix (brief §8), "Responsible use" (brief §13), disk-encryption note (NFR-SEC-13).
 - `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. llama.cpp and the chosen engines.
-- Full NFR sweep on RM-1, RM-2, RM-3.
+- Full NFR sweep on RM-1 and RM-2.
 - Demo video and README GIFs from TD-1 only.
 - Tag v0.1.
 
@@ -482,7 +482,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 **Acceptance criteria**
 1. All ACs of E14 pass.
-2. Timed fresh run on RM-1 and RM-2: `git clone` → first cross-source result < 30 min on 100 Mbit/s (NFR-USE-01/02).
+2. Timed fresh run on RM-1: `git clone` → first cross-source result < 30 min on 100 Mbit/s (NFR-USE-01/02).
 3. Rust line coverage ≥ 70% (NFR-MNT-04). 0 known critical/high vulnerabilities (NFR-SEC-12). All dependency licenses AGPL-compatible (NFR-LEG-02). Model licenses shown before download (NFR-LEG-03).
 4. Network capture of a full TD-1 run + model download shows only allowed hosts (NFR-SEC-02). No telemetry code paths or dependencies (NFR-SEC-01).
 5. App binary ≤ the M0-confirmed size (NFR-RES-07). Cold start ≤ 3 s (NFR-PERF-01). Idle CPU < 2% (NFR-RES-03).
@@ -515,7 +515,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 | # | Decision | Source | Needed by |
 |---|---|---|---|
-| 1 | Approve this order and renumbering. Brief §10, the story and epic milestone tags in `02-requirements.md`, and milestone references in `03-nfr.md`, `05-architecture.md` and the ADRs are updated (2026-10-22). | This file §1.3 | Start of M0a |
+| 1 | **Approved (2026-10-22).** Approve this order and renumbering. Brief §10, the story and epic milestone tags in `02-requirements.md`, and milestone references in `03-nfr.md`, `05-architecture.md` and the ADRs are updated (2026-10-22). | This file §1.3 | Start of M0a |
 | 2 | Brief §14 names `sqlite-vec`; ADR-0010 chose a binary flat index + rescoring. The brief wins until changed. Update the brief with the S1 result, or keep `sqlite-vec`. | Brief §14, ADR-0010 | End of M1 |
 | 3 | A1 — download hosts for runtime (and native engine) binaries. | 05-architecture §10 | End of M0c |
 | 4 | A3 — how Stage B is limited on large projects. | 05-architecture §10 | End of M1 |
