@@ -106,12 +106,18 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Goal.** Prove that every PDF and scan in TD-1 can become segments with exact locators and boxes, and that a highlight drawn from a stored locator lands on the right text. Pick the PDF and OCR engines. Build the ground truth that every later milestone measures against.
 
 **Scope**
-- **TD-1 v1**: the story is written first, then ~80 synthetic files + ~20 public files, with a ground-truth file (brief §11). Built by a reproducible generator in the repo, so TD-2 can be derived from it in M2. Corpus document as called for in brief §11.
+- **TD-1 v1**: the story is written first, then ~80 synthetic files + ~20 public files, with a ground-truth file (brief §11). Built by a reproducible generator in the repo, so TD-2 can be derived from it in M2. Corpus document `07-test-corpus.md` (brief §11): story, file list, ground-truth format, and the source and license of each public file.
 - **TD-3 v1** for PDF/images: encrypted, corrupt, empty, truncated, 2,000-page, wrongly named, "memory bomb", "endless loop".
 - **Engine bake-off harness** (throwaway CLI). Candidates from ADR-0013: pure Rust PDF stack, pdfium; OCR: `ocrs`, Tesseract, an ONNX OCR model. Each adapter is written against the `PdfEngine` / `OcrEngine` trait shapes (ADR-0002), so the winner's adapter carries over.
 - **Locator draft** for PDF text and OCR pages: page + span in stored text + character/word boxes (INV-CO-03). Becomes the `mk-kernel` type.
 - **Build probe**: a throwaway CI job builds each native candidate on macOS, Windows, Ubuntu with one command. Record build time and binary-size delta.
 - **Desk check (R3, gap A1)**: list which OS/backend pairs have official prebuilt `llama-server` binaries at a candidate tag. If a native engine wins, its binary needs the same download path, so A1 is decided once for both.
+- **Code layout.** M0 starts a minimal Cargo workspace; M2a extends it and does not move anything.
+  - `crates/mk-kernel` — the `Locator` draft. Survives into M2.
+  - `tools/corpus-gen` — the TD-1/TD-3 generator, in Rust. Deterministic: a fixed seed and generator version give the same files byte for byte.
+  - `testdata/td1/`, `testdata/td3/` — the generated files and the ground-truth file, **committed**, so the ground truth never drifts. Public files sit in `testdata/td1/public/` with a manifest (source URL, license) (NFR-LEG-04).
+  - `testdata/td2/` — generated locally from TD-1 in M2b, never committed (`.gitignore`).
+  - `spikes/` — throwaway bake-off harnesses. Not in the workspace's default members. Removed in M2a once ADR-0014 records their numbers.
 
 **Out of scope**
 - Worker processes, database, job queue, UI.
@@ -142,7 +148,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 | Sub | Focus | Scope items | Spike part | Acceptance criteria | Needs |
 |---|---|---|---|---|---|
-| **M0a** | Test data + ground truth | TD-1 v1 with its story, generator and ground-truth format; corpus document; TD-3 v1 for PDF/images. | — | 1, 2 | — |
+| **M0a** | Test data + ground truth | Workspace start (`mk-kernel`, `tools/corpus-gen`); TD-1 v1 with its story, generator and ground-truth format; corpus document `07-test-corpus.md`; TD-3 v1 for PDF/images. | — | 1, 2 | — |
 | **M0b** | PDF text engine + `Locator` | Bake-off harness; PDF candidates (pure Rust stack, pdfium) behind `PdfEngine`; `Locator` draft in `mk-kernel`; round-trip check on text PDFs; render timing on the 500-page PDF. | S0, PDF rows | 3 (PDF rows), 5 (text PDFs) | M0a |
 | **M0c** | OCR engine, build probe, decision | OCR candidates (`ocrs`, Tesseract, ONNX) behind `OcrEngine`; round-trip on scans; build probe on 3 OSes; R3 desk check; ADR-0014. | S0, OCR rows + build | 3 (complete), 4, 5 (scans), 6, 7 | M0b |
 

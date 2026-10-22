@@ -2,7 +2,7 @@
 
 > Name: **Mangkon AI** · Repo: `mangkon-ai`
 > Type: Open-source, local-first desktop app
-> Status: Brief approved after PM interview (2026-09-22). §10 milestone order updated to match `06-roadmap.md` (2026-10-22). Nothing is built yet.
+> Status: Brief approved after PM interview (2026-09-22). §10 milestone order updated to match `06-roadmap.md`; §11 and §17 doc references updated to the docs that exist (2026-10-22). Nothing is built yet.
 > Input: `00-idea.md`. **If this brief and `00-idea.md` disagree, this brief wins.**
 
 ---
@@ -190,7 +190,7 @@ The total is ~1 week more than the first estimate (~11) because of parser worker
 - Published openly (in the repo or a separate `mangkon-demo-corpus` repo), so anyone can run the demo and check the quality numbers.
 - Used for: quality benchmark, regression tests, demo video, README GIFs.
 
-Details go in `02-test-corpus.md`.
+Details go in `07-test-corpus.md`, written in M0a.
 
 ---
 
@@ -257,14 +257,16 @@ Details go in `02-test-corpus.md`.
 
 ---
 
-## 17. Next docs (one at a time)
+## 17. Follow-up docs
 
-1. `02-test-corpus.md` — corpus story, file list, ground-truth format
-2. `03-spikes.md` — M0 spike plan and result template
-3. `04-architecture.md` — modules, crates, IPC commands (after spikes)
-4. `05-data-model.md` — SQLite schema + migrations
-5. `06-model-manager.md` — hardware detection, catalog format, download flow
-6. `07-pipeline.md` — ingestion, Stage A/B/C, job queue, re-processing rules
-7. `08-resolution.md` — merge logic, scoring, review queue UX
-8. `09-ui-spec.md` — connections screen, source viewer, review queue, model manager
-9. `10-milestone-plan.md` — tasks per milestone
+The planned list of follow-up docs was replaced by the set that was written (2026-10-22):
+
+| Planned topic | Where it lives now |
+|---|---|
+| Corpus story, file list, ground-truth format | `07-test-corpus.md`, written in M0a |
+| M0 spike plan and result template | `06-roadmap.md` (spikes per milestone) |
+| Modules, crates, IPC commands | `05-architecture.md` and `adr/` |
+| Data model | `04-domain.md`; the SQLite schema and migrations come with the M2b code |
+| Model manager, pipeline, resolution | `04-domain.md`, `05-architecture.md`, ADR-0006/0008/0009; details per milestone (M2, M5, M7) |
+| UI spec | Stories in `02-requirements.md`; screens are designed in the milestone that builds them |
+| Milestone plan | `06-roadmap.md` |

@@ -1,0 +1,16 @@
+# Rust
+/target/
+
+# UI
+node_modules/
+/ui/dist/
+
+# Scale corpus (TD-2): generated locally, never committed
+/testdata/td2/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
