@@ -18,6 +18,7 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [Domain model](docs/04-domain.md) | Bounded contexts, entities, invariants, state machines |
 | [Architecture](docs/05-architecture.md) | The big picture, with decisions recorded in [ADRs](docs/adr/README.md) |
 | [Roadmap](docs/06-roadmap.md) | Milestones M0–M9, spikes, risk burn-down |
+| [Test corpus](docs/07-test-corpus.md) | Test data story, files, ground-truth format, broken-file set |
 
 ## Planned stack
 

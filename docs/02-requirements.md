@@ -1370,7 +1370,7 @@ As a technical user, I want one build command per OS, so that I can run the app 
 #### US-14.3 — Demo corpus and benchmark
 *Layer 1 · M0 / M4 / M9*
 **AC1 — Public corpus**
-- **Then** the synthetic corpus (~80 files) and the public slice (~20 files) are published with a ground-truth file
+- **Then** the synthetic corpus (~80 files) and the public slice (~20 files) are published with a ground-truth file, as a deterministic generator and a download manifest (the files themselves are built locally, not committed)
 
 **AC2 — Reproducible numbers**
 - **When** a user runs the documented benchmark command

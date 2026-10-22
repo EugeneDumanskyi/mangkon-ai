@@ -1,0 +1,935 @@
+{
+  "note": "Public slice of TD-1 (docs/07-test-corpus.md §8). US federal public-domain works. Not committed: `corpus-gen fetch` downloads each file from source_url into testdata/td1/public/ and checks its sha256. Identifiers per page were found by pattern search on pdftotext output and checked by hand; URLs wrapped across lines are left out.",
+  "files": [
+    {
+      "path": "fr-2025-03344.pdf",
+      "title": "Federal Communications Commission: Broadband Serviceable Location Fabric",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03344.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "c8541da1c56da89f01cf83c973a189f24bb984b0ff881775e7b37a5f3e1c2563",
+      "bytes": 221959,
+      "kind": "pdf_text",
+      "pages": 12,
+      "purpose": "Federal Register pages: long order over 12 pages with footnotes, neighbouring rules, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "heidi.lankau@fcc.gov",
+          "raw": "Heidi.Lankau@fcc.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024187400",
+          "raw": "202–418– 7400"
+        },
+        {
+          "page": 12,
+          "type": "email",
+          "value": "larry.redd@noaa.gov",
+          "raw": "larry.redd@noaa.gov"
+        },
+        {
+          "page": 12,
+          "type": "email",
+          "value": "becky.curtis@noaa.gov",
+          "raw": "becky.curtis@noaa.gov"
+        },
+        {
+          "page": 12,
+          "type": "phone",
+          "value": "+13014278503",
+          "raw": "301–427–8503"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03514.pdf",
+      "title": "Securities and Exchange Commission: Self-Regulatory Organizations; ICE Clear Credit LLC; Notice of Filing of Proposed Rule Change Relating to the ICC Procedures for Identification of Contract Reference Obligations",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03514.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "67016b4435eddc4357b20b6cb3ee635d834f0df32e2a810b39347004f6dd83e6",
+      "bytes": 213636,
+      "kind": "pdf_text",
+      "pages": 5,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 5,
+          "type": "url",
+          "value": "https://www.stb.gov",
+          "raw": "www.stb.gov"
+        },
+        {
+          "page": 5,
+          "type": "phone",
+          "value": "+12022450333",
+          "raw": "(202) 245–0333"
+        },
+        {
+          "page": 5,
+          "type": "phone",
+          "value": "+12022450245",
+          "raw": "(202) 245–0245"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03520.pdf",
+      "title": "International Trade Commission: Steel Nails From China; Scheduling of an Expedited Five-Year Review",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03520.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "8002b442080cfe1525020b6557e85d77493be96b1fd4561394c4a41495640b2c",
+      "bytes": 193434,
+      "kind": "pdf_text",
+      "pages": 1,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.usitc.gov",
+          "raw": "www.usitc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://edis.usitc.gov",
+          "raw": "https://edis.usitc.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12022052000",
+          "raw": "202–205–2000"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03524.pdf",
+      "title": "Employee Benefits Security Administration (Labor): Amendment To Extend Effective Dates for Prohibited Transaction Exemptions: Royal Bank of Canada, Toronto, Canada; Northern Trust Corporation, Chicago, Illinois",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03524.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "0a850d5d25ff5c637b1d899bfdc2a688b7e195a7a792f74aa1909a7bf795af8c",
+      "bytes": 184880,
+      "kind": "pdf_text",
+      "pages": 4,
+      "purpose": "Federal Register pages: exemption notice about named financial companies, agency phone contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12026938567",
+          "raw": "(202) 693–8567"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12026938565",
+          "raw": "(202) 693–8565"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03525.pdf",
+      "title": "International Trade Commission: Certain Medical Programmers With Printed Circuit Boards; Notice of Commission Determination Not To Review an Initial Determination Terminating the Investigation",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03525.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "0264568aae4b3a4313b49dde064a1ee795809ed2a2cfa5ef35e85009ca800ad5",
+      "bytes": 178555,
+      "kind": "pdf_text",
+      "pages": 2,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "edis3help@usitc.gov",
+          "raw": "EDIS3Help@usitc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://edis.usitc.gov",
+          "raw": "https://edis.usitc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.usitc.gov",
+          "raw": "https://www.usitc.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12022053179",
+          "raw": "(202) 205–3179"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12022051810",
+          "raw": "(202) 205–1810"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03531.pdf",
+      "title": "Environmental Protection Agency: Vinyl Chloride; Draft Scope of the Risk Evaluation Under TSCA; Reopening of Comment Period",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03531.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "ac94eef8eba9abff09414336790ce20d793549a750deb2cafff7a7bcb4a78f58",
+      "bytes": 181031,
+      "kind": "pdf_text",
+      "pages": 2,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "opp@ferc.gov",
+          "raw": "OPP@ferc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "www.regulations.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.epa.gov/dockets",
+          "raw": "https://www.epa.gov/dockets"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+18662083676",
+          "raw": "(866) 208–3676"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12025028659",
+          "raw": "(202) 502–8659"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12025026595",
+          "raw": "(202) 502–6595"
+        },
+        {
+          "page": 2,
+          "type": "email",
+          "value": "vinylchloride.tsca@epa.gov",
+          "raw": "VinylChloride.TSCA@epa.gov"
+        },
+        {
+          "page": 2,
+          "type": "email",
+          "value": "tsca-hotline@epa.gov",
+          "raw": "TSCA-Hotline@epa.gov"
+        },
+        {
+          "page": 2,
+          "type": "email",
+          "value": "nicole.ongele@fcc.gov",
+          "raw": "nicole.ongele@fcc.gov"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12025641202",
+          "raw": "(202) 564–1202"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12025541404",
+          "raw": "(202) 554–1404"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12025127350",
+          "raw": "(202) 512–7350"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12024182991",
+          "raw": "(202) 418–2991"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03536.pdf",
+      "title": "Postal Regulatory Commission: New Postal Products",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03536.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "8c06be40b30b9e2bdc3889b8e1dab585a0c1dd77e6630c271ec6a58ba541be8d",
+      "bytes": 212624,
+      "kind": "pdf_text",
+      "pages": 2,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.prc.gov",
+          "raw": "www.prc.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.sec.gov/comments/srphlx-2024-72/srphlx202472.htm",
+          "raw": "https://www.sec.gov/comments/srphlx-2024-72/srphlx202472.htm"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12027896820",
+          "raw": "202–789–6820"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03543.pdf",
+      "title": "National Marine Fisheries Service (Commerce): Taking Marine Mammals Incidental to Small Boat Harbor Preconstruction Activities in St. George, Alaska",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03543.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "3cfe89f8cdf221ef16c87c367b31bb04141ad1c0142db149fcf21258324cc964",
+      "bytes": 556740,
+      "kind": "pdf_text",
+      "pages": 21,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+13014278401",
+          "raw": "(301) 427–8401"
+        },
+        {
+          "page": 3,
+          "type": "url",
+          "value": "https://www.fisheries.noaa.gov/find-species",
+          "raw": "www.fisheries.noaa.gov/find-species"
+        },
+        {
+          "page": 4,
+          "type": "url",
+          "value": "https://marinemammalscience.org/science-and-publications/list-marine-mammal-species-subspecies",
+          "raw": "https://marinemammalscience.org/science-and-publications/list-marine-mammal-species-subspecies"
+        },
+        {
+          "page": 18,
+          "type": "email",
+          "value": "itp.fleming@noaa.gov",
+          "raw": "itp.fleming@noaa.gov"
+        },
+        {
+          "page": 18,
+          "type": "phone",
+          "value": "+18779257773",
+          "raw": "877–925–7773"
+        },
+        {
+          "page": 21,
+          "type": "phone",
+          "value": "+14017883500",
+          "raw": "(401) 788–3500"
+        },
+        {
+          "page": 21,
+          "type": "phone",
+          "value": "+19784650492",
+          "raw": "(978) 465–0492"
+        },
+        {
+          "page": 21,
+          "type": "phone",
+          "value": "+19784650492",
+          "raw": "(978) 465–0492"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03547.pdf",
+      "title": "Consumer Financial Protection Bureau: Protecting Americans From Harmful Data Broker Practices (Regulation V); Extension of Comment Period",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03547.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "7cc78b2d98371de4747fefcf4bf344e66ac2a988b5fb70d35b0f6fd4f01b1051",
+      "bytes": 195458,
+      "kind": "pdf_text",
+      "pages": 1,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "2024-nprm-consumerreporting@cfpb.gov",
+          "raw": "2024-NPRM-CONSUMERREPORTING@cfpb.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "cfpb_accessibility@cfpb.gov",
+          "raw": "CFPB_Accessibility@cfpb.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "https://www.regulations.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024357700",
+          "raw": "202–435–7700"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024932251",
+          "raw": "202–493–2251"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03548.pdf",
+      "title": "Federal Aviation Administration (Transportation): Airworthiness Directives; Airbus Canada Limited Partnership Airplanes",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03548.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "ed6e8ec875be613daed5765fadfcdaadd171f9fafdf80435dcfe0f790e0d106a",
+      "bytes": 236788,
+      "kind": "pdf_text",
+      "pages": 4,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "consignesdenavigabilite.tc@tc.gc.ca",
+          "raw": "Consignesdenavigabilite.TC@tc.gc.ca"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "a220_crc@abc.airbus",
+          "raw": "a220_crc@abc.airbus"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "9-avsnyaco-cos@faa.gov",
+          "raw": "9-avsnyaco-cos@faa.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+18886633639",
+          "raw": "888–663–3639"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+14504767676",
+          "raw": "450–476–7676"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12062313195",
+          "raw": "206–231–3195"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+15162287300",
+          "raw": "516–228–7300"
+        },
+        {
+          "page": 4,
+          "type": "email",
+          "value": "amoc@faa.gov",
+          "raw": "AMOC@faa.gov"
+        },
+        {
+          "page": 4,
+          "type": "email",
+          "value": "9-avs-nyaco-cos@faa.gov",
+          "raw": "9-avs-nyaco-cos@faa.gov"
+        },
+        {
+          "page": 4,
+          "type": "email",
+          "value": "a220_crc@abc.airbus",
+          "raw": "a220_crc@abc.airbus"
+        },
+        {
+          "page": 4,
+          "type": "email",
+          "value": "tc.airworthinessdirectivesconsignesdenavigabilite.tc@tc.gc.ca",
+          "raw": "TC.AirworthinessDirectivesConsignesdenavigabilite.TC@tc.gc.ca"
+        },
+        {
+          "page": 4,
+          "type": "email",
+          "value": "fr.inspection@nara.gov",
+          "raw": "fr.inspection@nara.gov"
+        },
+        {
+          "page": 4,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "www.regulations.gov"
+        },
+        {
+          "page": 4,
+          "type": "phone",
+          "value": "+14504767676",
+          "raw": "450–476–7676"
+        },
+        {
+          "page": 4,
+          "type": "phone",
+          "value": "+12062313195",
+          "raw": "206–231–3195"
+        },
+        {
+          "page": 4,
+          "type": "phone",
+          "value": "+12022678783",
+          "raw": "(202) 267–8783"
+        },
+        {
+          "page": 4,
+          "type": "phone",
+          "value": "+14043055589",
+          "raw": "(404) 305–5589"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03561.pdf",
+      "title": "National Oceanic and Atmospheric Administration (Commerce): Magnuson-Stevens Act Provisions; Fisheries Off West Coast States; Pacific Coast Groundfish Fishery Management Plan; Amendment 35; Notice of Availability",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03561.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "e0d700a33375d881c122036fbe9505854095e8c2cf01f6add22c3352b0a8e72b",
+      "bytes": 254919,
+      "kind": "pdf_text",
+      "pages": 5,
+      "purpose": "Federal Register pages: many URLs and agency contacts, phone numbers split across lines",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "emily.harrison@fcc.gov",
+          "raw": "Emily.Harrison@fcc.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "mark.colombo@fcc.gov",
+          "raw": "Mark.Colombo@fcc.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "fcc504@fcc.gov",
+          "raw": "FCC504@fcc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.fcc.gov/edocs",
+          "raw": "https://www.fcc.gov/edocs"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.fcc.gov/proposedrulemakings",
+          "raw": "https://www.fcc.gov/proposedrulemakings"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024180530",
+          "raw": "(202) 418–0530"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024180432",
+          "raw": "(202) 418–0432"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024181665",
+          "raw": "(202) 418– 1665"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024187611",
+          "raw": "(202) 418– 7611"
+        },
+        {
+          "page": 2,
+          "type": "email",
+          "value": "abbie.moyer@noaa.gov",
+          "raw": "abbie.moyer@noaa.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "https://www.regulations.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "www.regulations.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.federalregister.gov",
+          "raw": "www.federalregister.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.pcouncil.org",
+          "raw": "https://www.pcouncil.org"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+12063059601",
+          "raw": "206–305–9601"
+        },
+        {
+          "page": 5,
+          "type": "email",
+          "value": "mark.grant@noaa.gov",
+          "raw": "mark.grant@noaa.gov"
+        },
+        {
+          "page": 5,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "https://www.regulations.gov"
+        },
+        {
+          "page": 5,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "www.regulations.gov"
+        },
+        {
+          "page": 5,
+          "type": "url",
+          "value": "https://www.nefmc.org/library/northeastmultispecies-groundfish-amendment-25",
+          "raw": "www.nefmc.org/library/northeastmultispecies-groundfish-amendment-25"
+        },
+        {
+          "page": 5,
+          "type": "url",
+          "value": "https://appsnefsc.fisheries.noaa.gov/saw/sasi.php",
+          "raw": "https://appsnefsc.fisheries.noaa.gov/saw/sasi.php"
+        },
+        {
+          "page": 5,
+          "type": "phone",
+          "value": "+19782819145",
+          "raw": "978–281–9145"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03566.pdf",
+      "title": "Office of Space Commerce (Commerce): Advisory Committee on Excellence in Space (ACES); Notice of Cancellation",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03566.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "e97550a2dedb074f5a46a29a60f4a2a15a509d5058c2430a645679a0a9f8eaa6",
+      "bytes": 193579,
+      "kind": "pdf_text",
+      "pages": 1,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "space.commerce@noaa.gov",
+          "raw": "space.commerce@noaa.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "nmfs.pr1comments@noaa.gov",
+          "raw": "NMFS.Pr1Comments@noaa.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "submission@omb.eop.gov",
+          "raw": "submission@omb.eop.gov"
+        },
+        {
+          "page": 1,
+          "type": "email",
+          "value": "pra@cpsc.gov",
+          "raw": "pra@cpsc.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.regulations.gov",
+          "raw": "www.regulations.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024825827",
+          "raw": "202–482–5827"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+13014278401",
+          "raw": "(301) 427–8401"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+13015047791",
+          "raw": "(301) 504–7791"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03569.pdf",
+      "title": "U.S.-China Economic and Security Review Commission: Notice of Open Public Hearing",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03569.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "4507ac5b08af666fa94010f069ed414fde5c91a9b381121c008ce8fb62e5a561",
+      "bytes": 206463,
+      "kind": "pdf_text",
+      "pages": 2,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "email",
+          "value": "pra@treasury.gov",
+          "raw": "PRA@treasury.gov"
+        },
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://www.reginfo.gov",
+          "raw": "www.reginfo.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12029275331",
+          "raw": "(202) 927–5331"
+        },
+        {
+          "page": 2,
+          "type": "email",
+          "value": "jcunningham@uscc.gov",
+          "raw": "jcunningham@uscc.gov"
+        },
+        {
+          "page": 2,
+          "type": "url",
+          "value": "https://www.uscc.gov",
+          "raw": "www.uscc.gov"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+19292056099",
+          "raw": "929–205–6099"
+        },
+        {
+          "page": 2,
+          "type": "phone",
+          "value": "+16699006833",
+          "raw": "669–900–6833"
+        }
+      ]
+    },
+    {
+      "path": "fr-2025-03598.pdf",
+      "title": "Bureau of Industry and Security (Commerce): Implementation of Duties on Steel Pursuant to Proclamation 10896 Adjusting Imports of Steel Into the United States",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03598.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "dbd0d299370a1d2a0dda1587ff7f4f335c2917975f3e3bba43ee6341d28e2a3b",
+      "bytes": 182441,
+      "kind": "pdf_text",
+      "pages": 3,
+      "purpose": "Federal Register pages: tariff code tables and no identifiers, so any find is a false positive",
+      "identifiers": []
+    },
+    {
+      "path": "fr-2025-03613.pdf",
+      "title": "International Trade Administration (Commerce): Certain Softwood Lumber Products From Canada: Preliminary Results of the Administrative Review; 2023",
+      "source_url": "https://www.govinfo.gov/content/pkg/FR-2025-03-05/pdf/2025-03613.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Federal Register document.",
+      "retrieved": "2026-10-22",
+      "sha256": "4d71312d0842eb1cb767c5ddb7167873b02b702311e13ab3986d783d4525c49d",
+      "bytes": 186963,
+      "kind": "pdf_text",
+      "pages": 4,
+      "purpose": "Federal Register page(s): three-column layout, parts of neighbouring notices, agency contacts",
+      "identifiers": [
+        {
+          "page": 1,
+          "type": "url",
+          "value": "https://access.trade.gov",
+          "raw": "https://access.trade.gov"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024822769",
+          "raw": "(202) 482–2769"
+        },
+        {
+          "page": 1,
+          "type": "phone",
+          "value": "+12024825831",
+          "raw": "(202) 482–5831"
+        }
+      ]
+    },
+    {
+      "path": "ntrs-19620005134.pdf",
+      "title": "NASA Langley Research Center: Drag Characteristics and Dynamic Stability in Descent of a Rotary Parachute Tested in a Vertical Tunnel (1962)",
+      "source_url": "https://ntrs.nasa.gov/api/citations/19620005134/downloads/19620005134.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. NASA technical report; NTRS marks it public use permitted.",
+      "retrieved": "2026-10-22",
+      "sha256": "77661b980cebf8247bb7a49d1d5debaf85d4ffb61d08ca720d1ddda0356c86c8",
+      "bytes": 2808285,
+      "kind": "pdf_ocr_layer",
+      "pages": 19,
+      "purpose": "Typewritten 1960s scan with an OCR text layer added by the archive",
+      "identifiers": []
+    },
+    {
+      "path": "ntrs-19640002194.pdf",
+      "title": "NASA Langley Research Center: Description and Initial Calibration of the Langley Hotshot Tunnel with Some Real-Gas Charts for Nitrogen (1963)",
+      "source_url": "https://ntrs.nasa.gov/api/citations/19640002194/downloads/19640002194.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. NASA technical report; NTRS marks it public use permitted.",
+      "retrieved": "2026-10-22",
+      "sha256": "aea19821ac806ba67af16915ef20e3bcd75bd060f488c06c3f232f87a148c0cf",
+      "bytes": 2503040,
+      "kind": "pdf_ocr_layer",
+      "pages": 59,
+      "purpose": "Typewritten 1960s scan with an OCR text layer added by the archive",
+      "identifiers": []
+    },
+    {
+      "path": "ntrs-19650072761.pdf",
+      "title": "NASA Langley Research Center: A Simplified Method for Estimating Subsonic Lift-Curve Slope at Low Angles of Attack for Irregular Planform Wings (1961)",
+      "source_url": "https://ntrs.nasa.gov/api/citations/19650072761/downloads/19650072761.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. NASA technical report; NTRS marks it public use permitted.",
+      "retrieved": "2026-10-22",
+      "sha256": "b0ae08fd4c66c608c93f9c064b0b5b5ef6d5d4e54643176391390e6cd84b2e22",
+      "bytes": 3603614,
+      "kind": "pdf_ocr_layer",
+      "pages": 34,
+      "purpose": "Typewritten 1960s scan with an OCR text layer added by the archive",
+      "identifiers": []
+    },
+    {
+      "path": "scotus-22-448_o7jp.pdf",
+      "title": "Supreme Court of the United States: Consumer Financial Protection Bureau v. Community Financial Services Assn. of America, Ltd., 601 U.S. ___ (2024), slip opinion",
+      "source_url": "https://www.supremecourt.gov/opinions/23pdf/22-448_o7jp.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Court opinion; parties are companies and public officials.",
+      "retrieved": "2026-10-22",
+      "sha256": "d583c404f4aa2cb108858c3073d6d531153f3f6f82ffd492d3c897cdcf69b9ff",
+      "bytes": 294002,
+      "kind": "pdf_text",
+      "pages": 59,
+      "purpose": "Long court opinion: syllabus, footnotes, citations",
+      "identifiers": [
+        {
+          "page": 5,
+          "type": "email",
+          "value": "pio@supremecourt.gov",
+          "raw": "pio@supremecourt.gov"
+        },
+        {
+          "page": 38,
+          "type": "url",
+          "value": "https://www.supremecourt.gov",
+          "raw": "https://www.supremecourt.gov"
+        },
+        {
+          "page": 38,
+          "type": "url",
+          "value": "https://fred.stlouisfed.org/series/DTB3",
+          "raw": "https://fred.stlouisfed.org/series/DTB3"
+        },
+        {
+          "page": 46,
+          "type": "url",
+          "value": "https://www.royal.uk/royal-finances",
+          "raw": "https://www.royal.uk/royal-finances"
+        }
+      ]
+    },
+    {
+      "path": "scotus-22-451_7m58.pdf",
+      "title": "Supreme Court of the United States: Loper Bright Enterprises v. Raimondo, 603 U.S. ___ (2024), slip opinion",
+      "source_url": "https://www.supremecourt.gov/opinions/23pdf/22-451_7m58.pdf",
+      "license_basis": "17 U.S.C. §105: work of the United States Government, not subject to copyright in the United States. Court opinion; parties are companies and public officials.",
+      "retrieved": "2026-10-22",
+      "sha256": "12f5ea075004886774c25e7831ea1608fd0f831f0113e83bb0e85811c0a4bb6e",
+      "bytes": 637387,
+      "kind": "pdf_text",
+      "pages": 114,
+      "purpose": "Long court opinion: syllabus, footnotes, citations",
+      "identifiers": [
+        {
+          "page": 9,
+          "type": "email",
+          "value": "pio@supremecourt.gov",
+          "raw": "pio@supremecourt.gov"
+        },
+        {
+          "page": 56,
+          "type": "url",
+          "value": "http://supremecourtdatabase.org",
+          "raw": "http://supremecourtdatabase.org"
+        }
+      ]
+    }
+  ]
+}

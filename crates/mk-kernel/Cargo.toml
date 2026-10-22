@@ -1,0 +1,16 @@
+[package]
+name = "mk-kernel"
+description = "Shared kernel: evidence value objects (no I/O)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sha2 = "0.11.1"
+
+[dev-dependencies]
+proptest = "1.12.0"

@@ -1,0 +1,20 @@
+[package]
+name = "mk-bench"
+description = "BC-13: ground-truth model, load and validate (scoring comes in M4)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bech32 = "0.12.0"
+bs58 = { version = "0.5.1", features = ["check"] }
+mk-kernel.workspace = true
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+sha3 = "0.12.0"

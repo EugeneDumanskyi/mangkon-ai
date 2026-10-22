@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Td3Manifest",
+  "type": "object",
+  "properties": {
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Td3File"
+      }
+    },
+    "generator": {
+      "$ref": "#/$defs/Generator"
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generator",
+    "files"
+  ],
+  "$defs": {
+    "Generator": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "version": {
+          "description": "Bumped whenever output bytes change on purpose.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "seed"
+      ]
+    },
+    "Outcome": {
+      "description": "The expected result of processing the file alone. Whatever the outcome, the file must\nfinish within the per-file limits (NFR-REL-06/07) and never stop the batch (NFR-REL-01).",
+      "oneOf": [
+        {
+          "description": "The file fails with a plain reason (NFR-USE-05).",
+          "type": "string",
+          "const": "fail"
+        },
+        {
+          "description": "The file is processed (possibly with zero text).",
+          "type": "string",
+          "const": "success"
+        }
+      ]
+    },
+    "Td3Category": {
+      "type": "string",
+      "enum": [
+        "empty",
+        "blank",
+        "encrypted",
+        "corrupt",
+        "truncated",
+        "huge",
+        "wrong_extension",
+        "memory_bomb",
+        "endless_loop"
+      ]
+    },
+    "Td3File": {
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "category": {
+          "$ref": "#/$defs/Td3Category"
+        },
+        "expected": {
+          "$ref": "#/$defs/Outcome"
+        },
+        "path": {
+          "description": "Path relative to `testdata/td3/`.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "What the file does and why the outcome is expected.",
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes",
+        "category",
+        "expected",
+        "reason"
+      ]
+    }
+  }
+}

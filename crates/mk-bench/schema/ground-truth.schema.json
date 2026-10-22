@@ -1,0 +1,1182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GroundTruth",
+  "description": "The whole ground truth of one corpus (TD-1). Stored as `ground-truth.json`; the page\nreference text is stored next to it as JSON Lines (`page_text_file`), one page per line.",
+  "type": "object",
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Document"
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Entity"
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Event"
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FileEntry"
+      }
+    },
+    "generator": {
+      "$ref": "#/$defs/Generator"
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Link"
+      }
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Mention"
+      }
+    },
+    "merges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Merge"
+      }
+    },
+    "negatives": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Negative"
+      }
+    },
+    "page_text_file": {
+      "description": "Path of the page-text JSON Lines file, relative to the ground-truth file.",
+      "type": "string"
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Relation"
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generator",
+    "page_text_file",
+    "files",
+    "documents",
+    "entities",
+    "mentions",
+    "negatives",
+    "links",
+    "merges",
+    "relations",
+    "events"
+  ],
+  "$defs": {
+    "Annotation": {
+      "oneOf": [
+        {
+          "description": "Every mention in the file is listed, with exact locations. Precision and recall can be scored.",
+          "type": "string",
+          "const": "full"
+        },
+        {
+          "description": "Listed mentions are true, but the list may be incomplete and has page-level locations only.\nOnly recall can be scored.",
+          "type": "string",
+          "const": "partial"
+        }
+      ]
+    },
+    "BBox": {
+      "description": "`[x0, y0, x1, y1]`, top-left origin, y down. Units depend on the location kind.",
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "double"
+      },
+      "maxItems": 4,
+      "minItems": 4
+    },
+    "Difficulty": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "normal"
+          ]
+        },
+        {
+          "description": "Split across lines or runs, rotated, out of reading order, or similar.",
+          "type": "string",
+          "const": "hard"
+        }
+      ]
+    },
+    "DocPart": {
+      "oneOf": [
+        {
+          "description": "The whole file.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "whole"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Message `index` (0-based, file order) of an MBOX.",
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "mbox_message"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "index"
+          ]
+        },
+        {
+          "description": "A MIME attachment of the parent message. `mime_part` is the IMAP-style section number.",
+          "type": "object",
+          "properties": {
+            "filename": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "attachment"
+            },
+            "mime_part": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "mime_part",
+            "filename"
+          ]
+        }
+      ]
+    },
+    "Document": {
+      "description": "A document: the unit that mentions and connections count (domain BC-02). Most files are one\ndocument; an MBOX holds one per message; an attachment is a child document (INV-CO-05).",
+      "type": "object",
+      "properties": {
+        "file": {
+          "description": "`FileEntry::path` of the file that holds this document.",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "The document kind, which decides the location kind of its mentions (INV-CO-03).",
+          "$ref": "#/$defs/FileKind"
+        },
+        "parent": {
+          "description": "Parent document id, for attachments. Exactly one parent, no cycles (INV-CO-05).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "part": {
+          "$ref": "#/$defs/DocPart"
+        },
+        "sha256": {
+          "description": "SHA-256 of the decoded attachment bytes, for child documents.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "file",
+        "part",
+        "kind"
+      ]
+    },
+    "Entity": {
+      "description": "A person or organization of the story. `aliases` are the other surface forms the corpus uses;\nall of them must end up in one entity (E11 merge truth).",
+      "type": "object",
+      "properties": {
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "canonical": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EntityKind"
+        },
+        "role": {
+          "description": "Role in the story (one line).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "canonical",
+        "aliases",
+        "role"
+      ]
+    },
+    "EntityKind": {
+      "type": "string",
+      "enum": [
+        "person",
+        "org"
+      ]
+    },
+    "Event": {
+      "description": "Layer 3 event (INV-AI-07): a full or partial ISO 8601 date, or `unknown`.",
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "document": {
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Mention ids of the entities taking part.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "quote": {
+          "description": "Exact text of the sentence that states the event.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "date",
+        "description",
+        "document",
+        "evidence",
+        "quote"
+      ]
+    },
+    "FileEntry": {
+      "type": "object",
+      "properties": {
+        "annotation": {
+          "$ref": "#/$defs/Annotation"
+        },
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "dpi": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "encoding": {
+          "description": "Text encoding for text formats: `utf-8`, `utf-8-bom`, `utf-16le-bom`, `windows-1252`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/FileKind"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "pages": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "path": {
+          "description": "Path relative to the corpus root (the directory holding `ground-truth.json`), `/`-separated.",
+          "type": "string"
+        },
+        "purpose": {
+          "description": "What the file is for in the corpus (one line).",
+          "type": "string"
+        },
+        "scan_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScanTier"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sha256": {
+          "description": "SHA-256 of the file bytes, lowercase hex.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256",
+        "bytes",
+        "origin",
+        "kind",
+        "annotation",
+        "purpose"
+      ]
+    },
+    "FileKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "eml",
+            "mbox",
+            "csv",
+            "json",
+            "docx",
+            "html",
+            "txt",
+            "md"
+          ]
+        },
+        {
+          "description": "PDF with a real text layer.",
+          "type": "string",
+          "const": "pdf_text"
+        },
+        {
+          "description": "PDF whose pages are images only.",
+          "type": "string",
+          "const": "pdf_scan"
+        },
+        {
+          "description": "PDF with both text pages and image-only pages.",
+          "type": "string",
+          "const": "pdf_mixed"
+        },
+        {
+          "description": "Scanned pages with an invisible text layer (render mode 3), as OCR tools write.",
+          "type": "string",
+          "const": "pdf_ocr_layer"
+        },
+        {
+          "description": "PNG, JPEG or TIFF scan.",
+          "type": "string",
+          "const": "image"
+        }
+      ]
+    },
+    "Generator": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "version": {
+          "description": "Bumped whenever output bytes change on purpose.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "seed"
+      ]
+    },
+    "IdType": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "email",
+            "phone",
+            "url",
+            "domain",
+            "iban",
+            "btc",
+            "evm",
+            "sol",
+            "tron"
+          ]
+        },
+        {
+          "description": "A user-defined pattern (US-04.7); `IdentifierKey::pattern` names it.",
+          "type": "string",
+          "const": "custom"
+        }
+      ]
+    },
+    "IdentifierKey": {
+      "description": "Identifier type + normalized value: the identity of an identifier (domain §3.3).",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "$ref": "#/$defs/IdType"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "value"
+      ]
+    },
+    "Link": {
+      "description": "A true connection: a subject with mentions in 2 or more distinct documents (INV-LK-01/02).",
+      "type": "object",
+      "properties": {
+        "documents": {
+          "description": "Distinct document ids, sorted.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mentions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject": {
+          "$ref": "#/$defs/LinkSubject"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "documents",
+        "mentions"
+      ]
+    },
+    "LinkSubject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/IdentifierKey"
+            },
+            "kind": {
+              "type": "string",
+              "const": "identifier"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entity": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "entity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "entity"
+          ]
+        }
+      ]
+    },
+    "Location": {
+      "description": "Where a mention is, in the format's own terms. Mirrors the INV-CO-03 locator kinds.\nAll `start`/`end` pairs are half-open offsets counted in Unicode scalar values (Rust `char`s).",
+      "oneOf": [
+        {
+          "description": "PDF text layer. `page` is 1-based. Boxes are in PDF points in the page's unrotated\nMediaBox space, top-left origin, y down; one box per line the mention covers.",
+          "type": "object",
+          "properties": {
+            "boxes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/BBox"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "pdf_text"
+            },
+            "page": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "page",
+            "boxes"
+          ]
+        },
+        {
+          "description": "Scanned page (image file, or image-only PDF page). Boxes in pixels at `dpi`, axis-aligned\naround the (possibly skewed) glyphs, top-left origin.",
+          "type": "object",
+          "properties": {
+            "boxes": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/BBox"
+              }
+            },
+            "dpi": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "scan"
+            },
+            "page": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "page",
+            "dpi",
+            "boxes"
+          ]
+        },
+        {
+          "description": "Page only. Used by `partial` annotations of public files.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "pdf_page"
+            },
+            "page": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "page"
+          ]
+        },
+        {
+          "description": "TXT/MD: `line` is 1-based, after decoding; `start`/`end` within that line.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "text_line"
+            },
+            "line": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "line",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "DOCX: `paragraph` is the 0-based index of `w:p` in body order; offsets within the\nconcatenated `w:t` text of that paragraph.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "docx_paragraph"
+            },
+            "paragraph": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "paragraph",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "CSV: `row` 0 is the header row; `column` is 0-based; offsets within the unquoted cell value.",
+          "type": "object",
+          "properties": {
+            "column": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "csv_cell"
+            },
+            "row": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "row",
+            "column",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "JSON: RFC 6901 JSON Pointer to a string value; offsets within the decoded string.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "json_value"
+            },
+            "pointer": {
+              "type": "string"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pointer",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "Email header of the document's message, offsets within the decoded (RFC 2047) value.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "header": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "email_header"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "header",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "Email body part (IMAP-style section number), offsets within the decoded part text.",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "mime_part"
+            },
+            "part": {
+              "type": "string"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "part",
+            "start",
+            "end"
+          ]
+        },
+        {
+          "description": "HTML: offsets within the decoded HTML source (not the rendered text).",
+          "type": "object",
+          "properties": {
+            "end": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "kind": {
+              "type": "string",
+              "const": "html_source"
+            },
+            "start": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "start",
+            "end"
+          ]
+        }
+      ]
+    },
+    "Mention": {
+      "description": "One true mention of an identifier or entity at one place in one document.",
+      "type": "object",
+      "properties": {
+        "derived_from": {
+          "description": "For domain identifiers that come out of an email address or URL (US-04.3 AC1/AC2):\nthe mention they come from. Same location and raw text as that mention.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "difficulty": {
+          "$ref": "#/$defs/Difficulty"
+        },
+        "document": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "raw": {
+          "description": "The text exactly as it appears in the document (line breaks inside it removed).",
+          "type": "string"
+        },
+        "subject": {
+          "$ref": "#/$defs/Subject"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "document",
+        "subject",
+        "raw",
+        "location",
+        "difficulty"
+      ]
+    },
+    "Merge": {
+      "description": "The raw name variants that must end up in one entity.",
+      "type": "object",
+      "properties": {
+        "entity": {
+          "type": "string"
+        },
+        "variants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "entity",
+        "variants"
+      ]
+    },
+    "Negative": {
+      "description": "Things that must **not** become identifiers, connections or merges.",
+      "oneOf": [
+        {
+          "description": "Looks like `claimed_type` but its checksum fails (US-04.4 AC2, US-04.5).",
+          "type": "object",
+          "properties": {
+            "claimed_type": {
+              "$ref": "#/$defs/IdType"
+            },
+            "document": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "bad_checksum"
+            },
+            "location": {
+              "$ref": "#/$defs/Location"
+            },
+            "raw": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "claimed_type",
+            "raw",
+            "document",
+            "location"
+          ]
+        },
+        {
+          "description": "Passes Luhn: flag the document only, never an identifier or connection (INV-ID-06, INV-LK-03).",
+          "type": "object",
+          "properties": {
+            "document": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "card_like"
+            },
+            "last4": {
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/$defs/Location"
+            },
+            "raw": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "raw",
+            "last4",
+            "document",
+            "location"
+          ]
+        },
+        {
+          "description": "A stop-list domain: may be stored but never becomes a connection (US-04.3 AC3, INV-LK-03).",
+          "type": "object",
+          "properties": {
+            "document": {
+              "type": "string"
+            },
+            "domain": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "stop_list_domain"
+            },
+            "location": {
+              "$ref": "#/$defs/Location"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "domain",
+            "document",
+            "location"
+          ]
+        },
+        {
+          "description": "Two entities with similar names that must stay apart.",
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "string"
+            },
+            "b": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "distinct_entities"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id",
+            "a",
+            "b",
+            "note"
+          ]
+        }
+      ]
+    },
+    "Origin": {
+      "type": "string",
+      "enum": [
+        "synthetic",
+        "public"
+      ]
+    },
+    "Relation": {
+      "description": "Layer 3 relation (INV-AI-06): subject and object are entity mentions in the same segment.",
+      "type": "object",
+      "properties": {
+        "document": {
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Mention ids: the subject mention first, then the object mention.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/RelationType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "subject",
+        "object",
+        "document",
+        "evidence"
+      ]
+    },
+    "RelationType": {
+      "type": "string",
+      "enum": [
+        "works_for",
+        "owns",
+        "director_of",
+        "paid",
+        "sent_to",
+        "related_to"
+      ]
+    },
+    "ScanTier": {
+      "oneOf": [
+        {
+          "description": "300 DPI, straight, no noise. The NFR-QA-07 tier.",
+          "type": "string",
+          "const": "clean"
+        },
+        {
+          "description": "Up to 1.5° skew, light noise, slight blur, JPEG q75.",
+          "type": "string",
+          "const": "office"
+        },
+        {
+          "description": "200 DPI, 3° skew, speckle, low contrast.",
+          "type": "string",
+          "const": "poor"
+        }
+      ]
+    },
+    "Subject": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "$ref": "#/$defs/IdentifierKey"
+            },
+            "kind": {
+              "type": "string",
+              "const": "identifier"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "key"
+          ]
+        },
+        {
+          "description": "`name_key` is the NameKey of the mention's raw text (case, spaces, punctuation and legal\nsuffixes normalized, US-11.1). Variants with different name keys are tied together only by\n`entity` (see `merges`).",
+          "type": "object",
+          "properties": {
+            "entity": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "entity"
+            },
+            "name_key": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "entity",
+            "name_key"
+          ]
+        }
+      ]
+    }
+  }
+}

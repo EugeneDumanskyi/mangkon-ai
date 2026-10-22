@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PageText",
+  "description": "Exact reference text of one synthetic PDF or scan page, with word boxes. Used for OCR\ncharacter accuracy (NFR-QA-07) and the M0b/M0c highlight round-trip.",
+  "type": "object",
+  "properties": {
+    "document": {
+      "type": "string"
+    },
+    "dpi": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "height": {
+      "type": "number",
+      "format": "double"
+    },
+    "page": {
+      "description": "1-based.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "rotate": {
+      "description": "PDF `/Rotate` (0, 90, 180, 270).",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "skew_deg": {
+      "description": "Scan skew in degrees, counter-clockwise positive. Boxes already include it.",
+      "type": "number",
+      "format": "double"
+    },
+    "text": {
+      "description": "Reading-order text: lines joined with `\\n`, words with one space.",
+      "type": "string"
+    },
+    "unit": {
+      "$ref": "#/$defs/Unit"
+    },
+    "width": {
+      "description": "Unrotated page size in `unit`.",
+      "type": "number",
+      "format": "double"
+    },
+    "words": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Word"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "document",
+    "page",
+    "unit",
+    "width",
+    "height",
+    "rotate",
+    "skew_deg",
+    "text",
+    "words"
+  ],
+  "$defs": {
+    "BBox": {
+      "description": "`[x0, y0, x1, y1]`, top-left origin, y down. Units depend on the location kind.",
+      "type": "array",
+      "items": {
+        "type": "number",
+        "format": "double"
+      },
+      "maxItems": 4,
+      "minItems": 4
+    },
+    "Unit": {
+      "oneOf": [
+        {
+          "description": "PDF points (1/72 inch).",
+          "type": "string",
+          "const": "pt"
+        },
+        {
+          "description": "Pixels at `dpi`.",
+          "type": "string",
+          "const": "px"
+        }
+      ]
+    },
+    "Word": {
+      "type": "object",
+      "properties": {
+        "b": {
+          "$ref": "#/$defs/BBox"
+        },
+        "t": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "b"
+      ]
+    }
+  }
+}
