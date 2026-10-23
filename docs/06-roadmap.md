@@ -26,7 +26,7 @@ Known, low-risk work (pure Rust parsers, screens over settled data) comes **afte
 | 2 | K2 | **Local model reality.** Do local models on minimum hardware extract people/orgs well and fast enough? Do candidate embedding models survive binary vectors? (NFR-QA-08/09, NFR-PERF-24, R2, gaps A3, A6) | Decides if Layer 2 ships, ships as "experimental", or is cut. Sets hardware tiers and the catalog. | High. | Medium. Layering limits the damage, but scope and hardware tiers ripple into the model manager and README. | M1 |
 | 3 | K3 | **Process isolation works on 3 OSes.** Kill and replace a worker, enforce memory limits (macOS has no hard limit), stream 1M CSV rows at speed. (R5, R6, gaps A2, A5) | NFR-REL-01/06/07, NFR-PERF-22. "One bad file never stops the batch." | Medium. Known techniques, three OS paths. | High. It is the process layout (ADR-0001). | M2 |
 | 4 | K4 | **One-commit model holds at scale.** Rebuilding derived rows and re-applying decisions inside each work-item commit stays fast; forced kills never corrupt. (R7, ADR-0004/0005/0006) | INV-CU-03, NFR-PERF-34, NFR-REL-02/03/04. | Medium. | High. Shapes `mk-store`, `mk-graph`, `mk-jobs`. | M2 |
-| 5 | K5 | **Build and ship.** One command per OS, clean build ≤ 15 min, CI ≤ 30 min, prebuilt `llama-server` for each OS/GPU pair. (R3, gap A1, NFR-USE-03, NFR-MNT-01/02/03) | Every user builds from source. NFR-USE-01 (< 30 min to first result). | Medium. Depends on K1's engine choice. | Medium–high. Native deps are hard to remove later. | M0 (desk check) + M2 (CI from day one) |
+| 5 | K5 | **Build and ship.** One command per OS, clean build ≤ 15 min, CI ≤ 30 min, native engines built from pinned sources. (R3, gap A1, NFR-USE-03, NFR-MNT-01/02/03) M0c: Tesseract is compiled in from pinned sources (ADR-0014); `llama-server` is user-installed, not shipped (ADR-0015). | Every user builds from source. NFR-USE-01 (< 30 min to first result). | Medium. Depends on K1's engine choice. | Medium–high. Native deps are hard to remove later. | M0 (desk check) + M2 (CI from day one) |
 | 6 | K6 | **Search at 1M segments.** FTS5 ≤ 200 ms p95; binary index + rescoring ≤ 1 s p95. (R1, R2) | NFR-PERF-30/31. | Medium. | **Low.** Both fallbacks are derived indexes (ADR-0010). | M4 (keyword), M6 (meaning) |
 | 7 | K7 | **UI at scale on the slowest webview.** 100,000-row lists at 60 fps on WebKitGTK; typed IPC tool. (ADR-0003) | NFR-PERF-04. | Low–medium. | Low. | M2 |
 | 8 | K8 | **Egress gate details.** Pin the checked IP while keeping TLS SNI; classify multi-address hosts; DNS rebinding. (ADR-0009) | NFR-SEC-02/04/05. Privacy promise. | Low. | Low. Contained in one crate. | M5 |
@@ -181,7 +181,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | Method | As in scope. Each number reported per model size and per machine. |
 | Pass marks | People/org precision ≥ 85% and recall ≥ 70% (NFR-QA-08/09, placeholders); ≥ 2 segments/s on RM-1 (NFR-PERF-24, placeholder); recall@20 ≥ 0.9 for binary + rescore (ADR-0010). |
 | Timebox | 0.5 week. ASSUMPTION. |
-| If it fails | Quality fails → Layer 2 ships as "experimental" (US-10.3, brief §10) or is cut. Speed fails → gap A3 decides how Stage B is limited on large projects. Vectors fail → int8 index, then HNSW (`usearch`), per ADR-0010; record as a new ADR if the decision changes. No Linux CUDA binary → Vulkan build or documented local build (R3). |
+| If it fails | Quality fails → Layer 2 ships as "experimental" (US-10.3, brief §10) or is cut. Speed fails → gap A3 decides how Stage B is limited on large projects. Vectors fail → int8 index, then HNSW (`usearch`), per ADR-0010; record as a new ADR if the decision changes. |
 | Output | Results table; model catalog v0 draft; Layer 2 decision recorded in this file and the brief. |
 
 **Acceptance criteria**
@@ -213,7 +213,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - **UI**: create/open project, add folder, progress counts, a virtualized raw connections list, click → text view with highlight.
 - **CLI**: `mangkon-cli ingest`, `rebuild`, and the kill-test driver.
 - **Test data**: TD-2 generator (from TD-1); TD-3 additions for TXT/CSV.
-- **Build**: one documented command per OS; CI on macOS, Windows, Ubuntu for every PR.
+- **Build**: one documented command per OS; CI on macOS, Windows, Ubuntu for every PR. The build compiles Tesseract and Leptonica from pinned sources; cmake and a C++ compiler are prerequisites (ADR-0014).
 
 **Out of scope**
 - PDF, OCR, DOCX, HTML, JSON, email parsers; page view (M3).
@@ -245,7 +245,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 | Sub | Focus | Scope items | Spikes | Acceptance criteria | Needs |
 |---|---|---|---|---|---|
-| **M2a** | Workspace, CI, shell | Workspace with the slice's crates (empty where not yet needed); dependency rules in CI; Tauri shell with CSP and capabilities; typed IPC tool; one-command build; CI on 3 OSes; lint and format gates; virtualized list over synthetic rows. | S2d | 5, 6; ADR-0002, 0003 ready for acceptance | M0 exit |
+| **M2a** | Workspace, CI, shell | Workspace with the slice's crates (empty where not yet needed); dependency rules in CI; Tauri shell with CSP and capabilities; typed IPC tool; one-command build, including Tesseract and Leptonica compiled from the SHA-256-pinned sources (cmake and a C++ compiler as documented prerequisites, ADR-0014); CI on 3 OSes with the same prerequisites; lint and format gates; virtualized list over synthetic rows. | S2d | 5, 6; ADR-0002, 0003 ready for acceptance | M0 exit |
 | **M2b** | Store, jobs, corpus, derived data | `mk-store` (writer + readers, WAL, schema v1, migrations with backup, decision-log triggers); `mk-jobs` (persistent jobs, Stage A lane, restart recovery); corpus re-scan + BLAKE3; TXT/CSV parsers and email identifiers called in process; derived rebuild per touched key; `ConnectionsChanged`; TD-2 generator. | S2c | 3, 4; ADR-0004, 0005, 0006 ready for acceptance | M2a |
 | **M2c** | Worker isolation | `--worker` mode, framed protocol, heartbeats, deadline kill, memory limits per OS, recycling, memory budget; parsing moves from in process to workers; TD-3 TXT/CSV additions; CLI kill-test driver. | S2a, S2b | 1, 2, 7; ADR-0001, 0007 ready for acceptance; gaps A2, A5 | M2b |
 | **M2d** | End-to-end slice | UI: create/open project, add folder, progress counts, raw connections list, click → highlighted text; CLI `ingest` and `rebuild`; ADR acceptance; gap A7. | — | 8, 9 | M2c |
@@ -498,7 +498,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | Risk (05-architecture §9 / this file) | Spike | Milestone | Fallback stays additive? |
 |---|---|---|---|
 | R4 PDF/OCR quality (K1) | S0 | M0b, M0c | No — that is why it is first. |
-| R3 prebuilt `llama-server` per OS/GPU (K5) | Desk check, S1 | M0c, M1 | Yes (Vulkan or local build guide). |
+| R3 prebuilt `llama-server` per OS/GPU (K5). **Retired in M0c:** prebuilt builds exist for every desktop OS and GPU backend; `llama-server` is user-installed (ADR-0015). | Desk check | M0c (done), M1 (install guide) | Yes (install guide names the build per GPU). |
 | R2 binary vectors: quality (K2) | S1 | M1 | Yes (int8, HNSW). |
 | R2 binary vectors: latency at scale (K6) | S6 | M6 | Yes. |
 | R6 CSV streaming (K3) | S2a | M2c | Mostly (chunking, frames). |
