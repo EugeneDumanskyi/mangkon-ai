@@ -60,7 +60,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-PERF-20 | Text-PDF parsing + identifier extraction | ≥ 20 pages/s | Benchmark on TD-1 PDFs | ASSUMPTION |
-| NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core | Benchmark on TD-1 scans | ASSUMPTION · OCR engine chosen in M0 |
+| NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core (decode + OCR + layout, one thread) | Benchmark on TD-1 scans | M0: Tesseract, slowest clean A4 page 0.26 s on RM-1 (ADR-0014) |
 | NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION |
 | NFR-PERF-23 | Email parsing (MBOX) | ≥ 200 messages/s (without attachments OCR) | Benchmark on public Enron slice | ASSUMPTION |
 | NFR-PERF-24 | LLM extraction speed | ≥ 2 segments/s on RM-1 (segment ≈ 500 tokens) | Benchmark in M1 | ASSUMPTION · final after M1 |
@@ -103,7 +103,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-RES-04 | Free disk for models + project data | ~30 GB | README + hardware check | Brief |
 | NFR-RES-05 | Model download disk check | Model size + 2 GB headroom required before download | Test with a full disk | ASSUMPTION |
 | NFR-RES-06 | Local model stops after idle | After 10 min with no AI work | Timer | ASSUMPTION |
-| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION |
+| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION · M0: PDF + OCR engines with English OCR data add 18.8 MB on Linux (ADR-0014); `llama-server` is not shipped (ADR-0015); shell share measured in M2a |
 
 ---
 
@@ -138,7 +138,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-QA-04 | Identifier precision, other types (email, phone, domain, Solana) | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-05 | Identifier recall, text-native files | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-06 | Identifier recall, OCR'd files (clean 300 DPI scans) | ≥ 85% | Benchmark | ASSUMPTION |
-| NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95% | Benchmark | ASSUMPTION · engine chosen in M0 |
+| NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · ASSUMPTION (definition) |
 | NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% | Benchmark | ASSUMPTION · final after M1 |
 | NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | ASSUMPTION · final after M1 |
 | NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
@@ -231,6 +231,6 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 ## 13. Numbers to fix after M0 and M1
 
 These are placeholders until the M0 and M1 spikes produce real data (`06-roadmap.md`):
-- After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07 (OCR speed and accuracy), NFR-RES-07 (binary size, depends on OCR engine and sidecar)
+- After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07, NFR-RES-07. **Done in M0c:** targets kept, measured values in the rows above (ADR-0014, `08-engine-bakeoff.md` §13). NFR-RES-07 still needs the shell share (M2a).
 - After M1 (local models): NFR-PERF-13, -24 (LLM speed), NFR-QA-01, -02, -08, -09 (quality targets), model tiers and catalog (brief §14)
-- NFR-PERF-11 (Stage A incl. OCR): set from the M0 OCR numbers, checked in M3
+- NFR-PERF-11 (Stage A incl. OCR): M0 gives about 0.2 s per OCR page on one core (TD-1 has 22 OCR pages, about 5 s). The 3-min target is kept and checked in M3.

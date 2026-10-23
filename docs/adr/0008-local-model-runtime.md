@@ -1,6 +1,6 @@
 # ADR-0008: Local model runtime — `llama-server` sidecar from pinned releases
 
-- **Status:** Proposed
+- **Status:** Superseded by ADR-0015
 - **Date:** 2026-10-12
 - **Related:** NFR-REL-08/12, NFR-RES-04/05/06, NFR-SEC-02/06/11, NFR-COMP-03/04/05, NFR-USE-01/03, NFR-MNT-01, NFR-LEG-05, INV-MM-01..06, domain §7.7, §7.8, ADR-0009
 

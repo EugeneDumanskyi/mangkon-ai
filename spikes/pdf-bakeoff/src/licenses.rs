@@ -1,6 +1,7 @@
 //! License check from `cargo metadata` (`cargo-deny` arrives in M2a): the crates each engine
 //! feature adds to the shipped (normal) dependency graph, and whether every license expression
-//! is AGPL-3.0-compatible (NFR-LEG-02).
+//! is AGPL-3.0-compatible (NFR-LEG-02). Native libraries and model files are not crates; they
+//! are listed by hand in `NATIVE`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::process::Command;
@@ -39,9 +40,64 @@ const ALLOWED: &[&str] = &[
     "CDLA-Permissive-2.0",
 ];
 
+/// (feature, component, license, how it ships, checked at). Checked by hand on 2026-10-23.
+pub const NATIVE: &[(&str, &str, &str, &str, &str)] = &[
+    (
+        "pdfium",
+        "PDFium (bblanchon/pdfium-binaries)",
+        "BSD-3-Clause AND Apache-2.0",
+        "shared library",
+        "M0b",
+    ),
+    (
+        "ocrs",
+        "ocrs text-detection / text-recognition models",
+        "CC-BY-SA-4.0",
+        "data files, trained on HierText (CC-BY-SA-4.0)",
+        "huggingface.co/robertknight/ocrs model card; ocrs-models repo has no license file",
+    ),
+    (
+        "tesseract",
+        "Tesseract 5.5.2",
+        "Apache-2.0",
+        "compiled from source into the binary",
+        "github.com/tesseract-ocr/tesseract",
+    ),
+    (
+        "tesseract",
+        "Leptonica 1.87.0",
+        "BSD-2-Clause",
+        "compiled from source into the binary",
+        "leptonica-license.txt",
+    ),
+    (
+        "tesseract",
+        "tessdata_fast eng.traineddata 4.1.0",
+        "Apache-2.0",
+        "data file",
+        "github.com/tesseract-ocr/tessdata_fast",
+    ),
+    (
+        "onnx",
+        "ONNX Runtime (prebuilt by pyke for ort)",
+        "MIT",
+        "linked statically; ships its ThirdPartyNotices",
+        "github.com/microsoft/onnxruntime",
+    ),
+    (
+        "onnx",
+        "PP-OCRv5 mobile det/rec models (ONNX export, oar-ocr v0.3.0)",
+        "Apache-2.0",
+        "data files",
+        "github.com/PaddlePaddle/PaddleOCR, github.com/GreatV/oar-ocr",
+    ),
+];
+
 #[derive(Serialize)]
 pub struct EngineLicenses {
-    /// Crates this engine adds over the no-engine build.
+    /// Feature set the count is taken over (`""`: the no-engine build).
+    pub base: String,
+    /// Crates this engine adds over the base build.
     pub crates: usize,
     /// License expression → number of crates.
     pub licenses: BTreeMap<String, usize>,
@@ -141,10 +197,26 @@ fn closure(features: &str) -> Result<BTreeMap<String, Option<String>>, String> {
         .collect())
 }
 
+/// (feature, base): PDF engines over the no-engine build; the shared OCR image path over
+/// hayro, which renders scanned pages; each OCR engine over that.
+const FEATURES: &[(&str, &str)] = &[
+    ("hayro", ""),
+    ("oxide", ""),
+    ("pdfium", ""),
+    ("ocr", "hayro"),
+    ("ocrs", "ocr"),
+    ("tesseract", "ocr"),
+    ("onnx", "ocr"),
+];
+
 pub fn by_engine() -> Result<BTreeMap<String, EngineLicenses>, String> {
-    let base = closure("")?;
+    let mut bases: HashMap<&str, BTreeMap<String, Option<String>>> = HashMap::new();
     let mut out = BTreeMap::new();
-    for e in ["hayro", "oxide", "pdfium"] {
+    for &(e, b) in FEATURES {
+        if !bases.contains_key(b) {
+            bases.insert(b, closure(b)?);
+        }
+        let base = &bases[b];
         let all = closure(e)?;
         let mut licenses = BTreeMap::new();
         let mut flagged = Vec::new();
@@ -160,6 +232,7 @@ pub fn by_engine() -> Result<BTreeMap<String, EngineLicenses>, String> {
         out.insert(
             e.to_string(),
             EngineLicenses {
+                base: b.to_string(),
                 crates,
                 licenses,
                 flagged,

@@ -106,6 +106,13 @@ pub trait PdfDoc {
     fn chars(&self, page: usize) -> Result<Vec<RawChar>, PdfError>;
     /// Renders the page at `scale` pixels per point.
     fn render(&self, page: usize, scale: f32) -> Result<GrayImage, PdfError>;
+    /// Declared pixel size of the largest image the page's resources hold, read without
+    /// decoding it: input to the app's image guard on the OCR path (M0c). `None` if there is no
+    /// image, or the engine cannot tell.
+    #[cfg_attr(not(feature = "ocr"), allow(dead_code))]
+    fn largest_image(&self, _page: usize) -> Result<Option<(u64, u64)>, PdfError> {
+        Ok(None)
+    }
 }
 
 pub fn read(path: &Path) -> Result<Vec<u8>, PdfError> {

@@ -30,9 +30,11 @@ Header fields: **Status** (Proposed · Accepted · Superseded by ADR-xxxx · Ope
 | [0005](0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Proposed |
 | [0006](0006-background-jobs.md) | Background jobs: persistent queue in the project store | Proposed |
 | [0007](0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Proposed |
-| [0008](0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Proposed |
+| [0008](0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Superseded by ADR-0015 |
 | [0009](0009-egress-gate.md) | One egress gate for all model traffic | Proposed |
 | [0010](0010-search.md) | Search: FTS5 + binary vector index with rescoring | Proposed |
 | [0011](0011-source-viewer.md) | Source viewer: stored text first, page view from the same engine | Proposed |
 | [0012](0012-secrets.md) | API keys in the OS secret store | Proposed |
-| [0013](0013-parsing-and-ocr-engines.md) | Parsing and OCR engines | Open — decided in M0 |
+| [0013](0013-parsing-and-ocr-engines.md) | Parsing and OCR engines | Superseded by ADR-0014 |
+| [0014](0014-pdf-and-ocr-engines.md) | PDF and OCR engines: hayro and Tesseract | Accepted |
+| [0015](0015-user-installed-llama-server.md) | Local model runtime: user-installed `llama-server` | Accepted |

@@ -138,12 +138,12 @@ flowchart TB
         direction LR
         files["<b>Source folders</b><br/>[External]<br/>The user's own files.<br/>Read-only for the app."]
         secrets["<b>OS secret store</b><br/>[External]<br/>Keychain / Credential Manager /<br/>Secret Service"]
+        llamabin["<b>llama.cpp</b><br/>[External, user-installed]<br/>llama-server, minimum build<br/>checked at start"]
     end
 
     subgraph net["Network"]
         direction LR
         hf["<b>Hugging Face</b><br/>[External]<br/>Model files (GGUF)<br/>listed in the catalog"]
-        llamarel["<b>llama.cpp releases</b><br/>[External]<br/>Prebuilt llama-server<br/>per OS and GPU type"]
         endpoint["<b>OpenAI-compatible endpoint</b><br/>[External, optional]<br/>Ollama, LM Studio, LAN server,<br/>or cloud API. Off by default."]
     end
 
@@ -151,7 +151,7 @@ flowchart TB
     mangkon -- "Reads, never writes" --> files
     mangkon -- "Stores and reads API keys" --> secrets
     mangkon -- "Downloads models<br/>[HTTPS]" --> hf
-    mangkon -- "Downloads runtime<br/>[HTTPS]" --> llamarel
+    mangkon -- "Runs as a sidecar<br/>[process]" --> llamabin
     mangkon -- "Sends segments and queries,<br/>only if allowed [HTTP(S)]" --> endpoint
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
@@ -159,7 +159,7 @@ flowchart TB
     classDef ext fill:#999999,stroke:#6b6b6b,color:#fff
     class researcher person
     class mangkon system
-    class files,secrets,hf,llamarel,endpoint ext
+    class files,secrets,llamabin,hf,endpoint ext
     style local fill:none,stroke:#888,stroke-dasharray: 5 5
     style net fill:none,stroke:#888,stroke-dasharray: 5 5
 ```
@@ -170,7 +170,7 @@ flowchart TB
 | Source folders | External (local) | File bytes, read-only | INV-CO-01: never written, moved, or deleted. |
 | OS secret store | External (local) | API keys | INV-EG-07: keys never stored anywhere else. |
 | Hugging Face | External (internet) | Model files in; nothing out except the request | Checksum before use (NFR-SEC-11). |
-| llama.cpp releases | External (internet) | Runtime binary in | Pinned version, checksum before use. **See gap A1.** |
+| llama.cpp | External (local, user-installed) | Started as a sidecar; nothing downloaded | Found in the settings path or on `PATH`; minimum build checked before start (ADR-0015). |
 | OpenAI-compatible endpoint | External (this machine, LAN, or internet) | **Project data out** (segments, queries) | Only through the egress gate (ADR-0009). Off by default. |
 
 ---
@@ -198,12 +198,12 @@ flowchart TB
         direction LR
         files["<b>Source folders</b><br/>[External]<br/>Read-only"]
         secrets["<b>OS secret store</b><br/>[External]"]
+        llamabin["<b>llama.cpp</b><br/>[External, user-installed]<br/>llama-server binary"]
     end
 
     subgraph netext["Network"]
         direction LR
         hf["<b>Hugging Face</b><br/>[External]<br/>Models"]
-        llamarel["<b>llama.cpp releases</b><br/>[External]<br/>Runtime binary"]
         endpoint["<b>OpenAI-compatible<br/>endpoint</b><br/>[External, optional]"]
     end
 
@@ -211,11 +211,11 @@ flowchart TB
     ui -- "Commands, queries,<br/>change events [Tauri IPC]" --> core
     core -- "Work items / results<br/>[stdin/stdout frames]" --> worker
     core -- "Start, stop; calls via<br/>egress gate [HTTP]" --> llm
+    llm -. "Runs" .-> llamabin
     core -- "Reads, writes [SQL]" --> stores
     worker -- "Reads" --> files
     core -- "Walks roots, hashes;<br/>API keys [keyring]" --> localext
     core -- "Downloads models [HTTPS]" --> hf
-    core -- "Downloads runtime [HTTPS]" --> llamarel
     core -- "Calls via egress gate,<br/>only if allowed" --> endpoint
 
     classDef person fill:#08427b,stroke:#052e56,color:#fff
@@ -223,7 +223,7 @@ flowchart TB
     classDef ext fill:#999999,stroke:#6b6b6b,color:#fff
     class researcher person
     class ui,core,worker,llm,pdb,vidx,adb container
-    class files,secrets,hf,llamarel,endpoint ext
+    class files,secrets,llamabin,hf,endpoint ext
     style app fill:none,stroke:#444,stroke-dasharray: 5 5
     style stores fill:none,stroke:#9ab,stroke-dasharray: 3 3
     style localext fill:none,stroke:#888,stroke-dasharray: 5 5
@@ -236,11 +236,11 @@ flowchart TB
 |---|---|---|---|---|---|---|
 | **UI** | React 19, TypeScript (strict), Vite, TanStack Virtual, Tauri webview | Shows screens. Sends commands. Asks the core for pages of rows. Listens for "something changed" events. | Hold domain rules. Call the network. Read files. | Screens over all contexts | PERF-03/04, USE-04/06–09, SEC-09/10 | [0003](adr/0003-desktop-shell-and-ui.md), [0011](adr/0011-source-viewer.md) |
 | **Core** | Rust, Tokio, Tauri 2 main process | All domain logic. Job scheduler. Only DB writer. Applies decisions. Egress gate. Supervises workers and `llama-server`. Downloads. | Parse untrusted file formats itself. | BC-01, 03, 05–12 | REL-02–05, PERF-30–34, SEC-02–07 | [0001](adr/0001-architecture-style.md), [0002](adr/0002-headless-core-workspace.md), [0005](adr/0005-derived-data-and-decisions.md), [0006](adr/0006-background-jobs.md), [0009](adr/0009-egress-gate.md) |
-| **Parser workers** | Rust, same binary in `--worker` mode, a small pool | Stage A for one source content: parse, segment, OCR, identifiers, sensitive flags. Renders PDF pages for the viewer. | Open the database. Use the network. Write any file. | BC-02 (parsing), BC-04 | REL-01/06/07, PERF-20–23, QA-03–07 | [0007](adr/0007-parser-worker-isolation.md), [0013](adr/0013-parsing-and-ocr-engines.md) |
-| **Local model runtime** | `llama-server`, pinned release, one process per loaded model | Serves `/v1/chat/completions` and `/v1/embeddings`. | Listen on anything but `127.0.0.1`. | BC-12 (runtime) | REL-12, RES-06, SEC-06, COMP-03 | [0008](adr/0008-local-model-runtime.md) |
+| **Parser workers** | Rust, same binary in `--worker` mode, a small pool | Stage A for one source content: parse, segment, OCR, identifiers, sensitive flags. Renders PDF pages for the viewer. | Open the database. Use the network. Write any file. | BC-02 (parsing), BC-04 | REL-01/06/07, PERF-20–23, QA-03–07 | [0007](adr/0007-parser-worker-isolation.md), [0014](adr/0014-pdf-and-ocr-engines.md) |
+| **Local model runtime** | User-installed `llama-server` (minimum build checked), one process per loaded model | Serves `/v1/chat/completions` and `/v1/embeddings`. | Listen on anything but `127.0.0.1`. | BC-12 (runtime) | REL-12, RES-06, SEC-06, COMP-03 | [0015](adr/0015-user-installed-llama-server.md) |
 | **Project store** | SQLite (bundled), WAL, FTS5 | Source of truth for one project: corpus, mentions, jobs, decision log, egress records, derived tables, keyword index. | — | All project contexts | REL-02/09/11, CAP-08, COMP-07 | [0004](adr/0004-project-storage.md) |
 | **Vector index** | Flat binary file, 1 bit per dimension | Fast first pass for meaning search. | Hold the only copy of anything. | BC-10 | PERF-31, RES-01 | [0010](adr/0010-search.md) |
-| **App store** | SQLite + folders under the OS app-data folder | Project registry, endpoints (without keys), installed models, runtime binaries, hardware profile, logs. | Hold project data or secrets. | BC-01 (registry), BC-12 | RES-04/05, REL-08, SEC-07/08 | [0004](adr/0004-project-storage.md), [0012](adr/0012-secrets.md) |
+| **App store** | SQLite + folders under the OS app-data folder | Project registry, endpoints (without keys), installed models, hardware profile, logs. | Hold project data or secrets. | BC-01 (registry), BC-12 | RES-04/05, REL-08, SEC-07/08 | [0004](adr/0004-project-storage.md), [0012](adr/0012-secrets.md) |
 
 ### 4.2 Bounded contexts in the code
 
@@ -401,8 +401,8 @@ Milestones as in `06-roadmap.md`.
 |---|---|---|---|---|---|
 | R1 | FTS5 ranked search is too slow for common words on 1M segments. | NFR-PERF-30 | Run 100 mixed queries on TD-2. | M4 (spike S4) | Add Tantivy as a derived index (ADR-0010). |
 | R2 | The embedding model loses too much quality with binary vectors. | NFR-PERF-31, search quality | Recall@20 of binary + rescore vs exact search on TD-1. | M1 (quality), M6 (speed at scale) | Store int8 instead, or add an HNSW index (usearch). |
-| R3 | No prebuilt `llama-server` with CUDA for Linux. ASSUMPTION — check the current release list. | NFR-COMP-03, NFR-USE-01 | Check the pinned release. | M0 (desk check), M1 | Use the Vulkan build on Linux, or a documented local build of llama.cpp. |
-| R4 | Rust-native PDF/OCR quality is not good enough. | NFR-QA-06/07, NFR-PERF-21 | Benchmark candidates on TD-1 scans (ADR-0013). | M0 | Use pdfium and/or Tesseract inside the workers. |
+| R3 | No prebuilt `llama-server` with CUDA for Linux. **Retired in M0c:** llama.cpp `b11829` has Linux x64 CUDA 12.8/13.4, Vulkan, ROCm, SYCL and OpenVINO builds (`08-engine-bakeoff.md` §16). With ADR-0015 the user installs llama.cpp, so this is install guidance, not an app risk. | NFR-COMP-03, NFR-USE-01 | Desk check of the release list. | M0 (done), M1 (install guide) | Vulkan build, or a local build of llama.cpp. |
+| R4 | Rust-native PDF/OCR quality is not good enough. **Decided in M0 (ADR-0014):** hayro (pure Rust) passes for PDF; for OCR the pure-Rust `ocrs` lacks word confidence, so Tesseract is used, built from pinned sources. | NFR-QA-06/07, NFR-PERF-21 | Benchmark candidates on TD-1 scans (`08-engine-bakeoff.md`). | M0 (done) | pdfium for PDF; `ocrs` once it gives word confidence. |
 | R5 | macOS cannot enforce a hard memory limit on a process. | NFR-REL-07 | Kill test with a "memory bomb" file. | M2 | RSS watchdog every 100 ms; the limit is "1 GB + one sampling step". |
 | R6 | Large CSV/MBOX results are slow to stream from worker to core. | NFR-PERF-22/23 | Benchmark 1M-row CSV. | M2 | Larger chunks; compact binary frames. |
 | R7 | Re-applying decisions inside each commit is too slow when a project has many decisions. | NFR-PERF-34 | Load test with 10,000 decisions. | M2, re-run in M7 | Index decisions by anchor (already planned); batch commits. |
@@ -413,7 +413,7 @@ Milestones as in `06-roadmap.md`.
 
 | # | Finding | Proposal |
 |---|---|---|
-| A1 | NFR-SEC-02 allows only Hugging Face hosts. But the runtime binary (`llama-server`) must also be downloaded (NFR-SEC-11 already says "downloaded binaries"). | Add the llama.cpp release host to NFR-SEC-02. Alternative: mirror the pinned binaries in a Hugging Face repo, so there is only one host. |
+| A1 | NFR-SEC-02 allows only Hugging Face hosts. But the runtime binary (`llama-server`) must also be downloaded (NFR-SEC-11 already says "downloaded binaries"). | **Decided in M0c (2026-10-23):** the app downloads no binaries. `llama-server` is a user-installed prerequisite with a minimum version (ADR-0015); the PDF and OCR engines are compiled in (ADR-0014). Hugging Face stays the only download host. Where extra OCR language files come from is decided in M3. |
 | A2 | NFR-REL-07 (1 GB per file) × NFR-PERF-25 (cores − 1 workers) can reach 7 GB. NFR-RES-02 says 2 GB for the whole app. | NFR-RES-02 counts all app processes except the model. The scheduler keeps a total memory budget and starts big files only when the budget allows. |
 | A3 | NFR-PERF-24 (2 segments/s) × TD-2 (1M segments) ≈ 6 days of Stage B. | Measure Stage B targets on TD-1 only. On large projects, Stage B runs on the documents the user picks, or on segments with identifiers first. Please decide. |
 | A4 | Re-run with a new model: show old results until the new run is done, or replace segment by segment? | Show old results until done, then switch in one step (5.3). Never mix two models' output. |
@@ -435,9 +435,11 @@ Milestones as in `06-roadmap.md`.
 | [0005](adr/0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Proposed |
 | [0006](adr/0006-background-jobs.md) | Background jobs: persistent queue in the project store | Proposed |
 | [0007](adr/0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Proposed |
-| [0008](adr/0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Proposed |
+| [0008](adr/0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Superseded by ADR-0015 |
 | [0009](adr/0009-egress-gate.md) | One egress gate for all model traffic | Proposed |
 | [0010](adr/0010-search.md) | Search: FTS5 + binary vector index with rescoring | Proposed |
 | [0011](adr/0011-source-viewer.md) | Source viewer: stored text first, page view from the same engine | Proposed |
 | [0012](adr/0012-secrets.md) | API keys in the OS secret store | Proposed |
-| [0013](adr/0013-parsing-and-ocr-engines.md) | Parsing and OCR engines | Open — decided in M0 |
+| [0013](adr/0013-parsing-and-ocr-engines.md) | Parsing and OCR engines | Superseded by ADR-0014 |
+| [0014](adr/0014-pdf-and-ocr-engines.md) | PDF and OCR engines: hayro and Tesseract | Accepted |
+| [0015](adr/0015-user-installed-llama-server.md) | Local model runtime: user-installed `llama-server` | Accepted |

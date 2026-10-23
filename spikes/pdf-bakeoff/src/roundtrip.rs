@@ -18,9 +18,9 @@ pub const MIN_X_IOU: f32 = 0.8;
 pub const MIN_V_OVERLAP: f32 = 0.5;
 pub const MIN_INK: f32 = 0.9;
 pub const RENDER_SCALE: f32 = 2.0;
-const DARK: u8 = 128;
+pub const DARK: u8 = 128;
 /// Antialiasing margin around the returned box, in pixels.
-const PAD_PX: f32 = 1.5;
+pub const PAD_PX: f32 = 1.5;
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[serde(rename_all = "snake_case")]
@@ -97,17 +97,17 @@ pub fn find_all(text: &str, raw: &str) -> Vec<Span> {
         .collect()
 }
 
-fn to_rect(b: &BBox) -> Rect {
+pub fn to_rect(b: &BBox) -> Rect {
     Rect::new(b.x0() as f32, b.y0() as f32, b.x1() as f32, b.y1() as f32).expect("valid GT box")
 }
 
-fn x_iou(a: &Rect, b: &Rect) -> f32 {
+pub fn x_iou(a: &Rect, b: &Rect) -> f32 {
     let inter = (a.x1().min(b.x1()) - a.x0().max(b.x0())).max(0.0);
     let union = a.x1().max(b.x1()) - a.x0().min(b.x0());
     if union > 0.0 { inter / union } else { 0.0 }
 }
 
-fn v_overlap(gt: &Rect, b: &Rect) -> f32 {
+pub fn v_overlap(gt: &Rect, b: &Rect) -> f32 {
     let inter = (gt.y1().min(b.y1()) - gt.y0().max(b.y0())).max(0.0);
     if gt.height() > 0.0 {
         inter / gt.height()
@@ -121,7 +121,7 @@ fn matches(gt: &Rect, b: &Rect) -> bool {
 }
 
 /// Sum over ground-truth boxes of the best IoU with a returned box: picks among occurrences.
-fn score(gt: &[Rect], got: &[Rect]) -> f32 {
+pub fn score(gt: &[Rect], got: &[Rect]) -> f32 {
     gt.iter()
         .map(|g| got.iter().map(|b| g.iou(b)).fold(0.0, f32::max))
         .sum()
@@ -155,7 +155,7 @@ fn ink_share(img: &GrayImage, info: &PageInfo, gt: &Rect, got: &Rect) -> Option<
     (total > 0).then(|| inside as f32 / total as f32)
 }
 
-fn fmt_rects(r: &[Rect]) -> String {
+pub fn fmt_rects(r: &[Rect]) -> String {
     r.iter()
         .map(|r| format!("[{:.1},{:.1},{:.1},{:.1}]", r.x0(), r.y0(), r.x1(), r.y1()))
         .collect::<Vec<_>>()

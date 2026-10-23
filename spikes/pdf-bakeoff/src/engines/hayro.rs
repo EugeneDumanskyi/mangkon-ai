@@ -126,6 +126,29 @@ impl PdfDoc for HayroDoc<'_> {
             false,
         ))
     }
+
+    fn largest_image(&self, page: usize) -> Result<Option<(u64, u64)>, PdfError> {
+        let xobjects = &self.page(page)?.resources().x_objects;
+        let mut largest: Option<(u64, u64)> = None;
+        for key in xobjects.keys() {
+            let Some(stream) = xobjects.get::<hayro::hayro_syntax::object::Stream>(&*key) else {
+                continue;
+            };
+            let d = stream.dict();
+            let image = d
+                .get::<hayro::hayro_syntax::object::Name>(b"Subtype")
+                .is_some_and(|n| n.as_str() == "Image");
+            if !image {
+                continue;
+            }
+            let dim = |k: &[u8]| d.get::<f64>(k).map_or(0, |v| v.max(0.0) as u64);
+            let (w, h) = (dim(b"Width"), dim(b"Height"));
+            if largest.is_none_or(|(lw, lh)| w.saturating_mul(h) > lw.saturating_mul(lh)) {
+                largest = Some((w, h));
+            }
+        }
+        Ok(largest)
+    }
 }
 
 #[derive(Default)]

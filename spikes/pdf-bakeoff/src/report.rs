@@ -1,5 +1,6 @@
 //! `report`: every measurement for every engine, written to `spikes/out/report.json` and
-//! `spikes/out/report.md` (copied into `docs/08-engine-bakeoff.md` by hand).
+//! `spikes/out/report.md` (copied into `docs/08-engine-bakeoff.md` by hand). OCR engines
+//! (`ocrs`, `tesseract`, `onnx`) get their own sections from `ocr::report`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
@@ -104,7 +105,13 @@ fn machine() -> BTreeMap<&'static str, String> {
         ("os", sh("uname", &["-sm"])),
         ("kernel", sh("uname", &["-r"])),
         ("cpu", cpu),
-        ("threads", sh("nproc", &[])),
+        // Not `nproc`: it honours the OMP_THREAD_LIMIT=1 that `main` sets for the OCR runs.
+        (
+            "threads",
+            std::thread::available_parallelism()
+                .map_or(0, |n| n.get())
+                .to_string(),
+        ),
         ("rustc", sh("rustc", &["-V"])),
         ("date_utc", sh("date", &["-u", "+%Y-%m-%d %H:%M"])),
     ])
@@ -118,11 +125,34 @@ fn pct(t: &Tally) -> String {
     format!("{:.1}% ({}/{})", t.rate() * 100.0, t.passed, t.total)
 }
 
+const OCR_ENGINES: &[&str] = &["ocrs", "tesseract", "onnx"];
+
 pub fn run(names: &[String], c: &Corpus) -> Result<(), String> {
     let out = out_dir();
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    let (ocr_names, pdf_names): (Vec<&String>, Vec<&String>) = names
+        .iter()
+        .partition(|n| OCR_ENGINES.contains(&n.as_str()));
+    #[cfg(not(feature = "ocr"))]
+    if !ocr_names.is_empty() {
+        return Err(format!(
+            "{ocr_names:?} need an OCR feature (ocrs, tesseract, onnx)"
+        ));
+    }
+    #[cfg(feature = "ocr")]
+    let mut ocr_reports = Vec::new();
+    #[cfg(feature = "ocr")]
+    for n in &ocr_names {
+        let r = crate::ocr::report::run_engine(n, c);
+        std::fs::write(
+            out.join(format!("report-{n}.json")),
+            serde_json::to_string_pretty(&r).expect("serializes"),
+        )
+        .map_err(|e| e.to_string())?;
+        ocr_reports.push(r);
+    }
     let mut reports = Vec::new();
-    for n in names {
+    for n in pdf_names {
         let r = run_engine(n, c);
         std::fs::write(
             out.join(format!("report-{n}.json")),
@@ -137,15 +167,23 @@ pub fn run(names: &[String], c: &Corpus) -> Result<(), String> {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or(Value::Null);
     let m = machine();
+    #[cfg(feature = "ocr")]
+    let ocr_json = serde_json::to_value(&ocr_reports).expect("serializes");
+    #[cfg(not(feature = "ocr"))]
+    let ocr_json = Value::Array(Vec::new());
     std::fs::write(
         out.join("report.json"),
         serde_json::to_string_pretty(&serde_json::json!({
-            "machine": m, "engines": reports, "licenses": lic, "build_probe": probe,
+            "machine": m, "engines": reports, "ocr_engines": ocr_json, "licenses": lic,
+            "native_licenses": licenses::NATIVE, "build_probe": probe,
         }))
         .expect("serializes"),
     )
     .map_err(|e| e.to_string())?;
-    let md = markdown(&m, &reports, &lic, &probe);
+    #[cfg_attr(not(feature = "ocr"), allow(unused_mut))]
+    let mut md = markdown(&m, &reports, &lic, &probe);
+    #[cfg(feature = "ocr")]
+    md.push_str(&crate::ocr::report::markdown(&ocr_reports, &lic, &probe));
     std::fs::write(out.join("report.md"), &md).map_err(|e| e.to_string())?;
     println!("{md}");
     Ok(())
@@ -187,6 +225,9 @@ fn markdown(
         let _ = writeln!(s, "| {} |", cells.join(" | "));
     };
 
+    if rs.is_empty() {
+        return s;
+    }
     let _ = writeln!(s, "### S0 PDF criteria\n");
     head(&mut s, &["Criterion", "Pass mark"]);
     row(

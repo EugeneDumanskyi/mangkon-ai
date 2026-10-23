@@ -1,6 +1,6 @@
 # ADR-0013: Parsing and OCR engines
 
-- **Status:** Open — decided in M0
+- **Status:** Superseded by ADR-0014
 - **Date:** 2026-10-12
 - **Related:** NFR-PERF-20..23, NFR-QA-05/06/07, NFR-RES-07, NFR-USE-03, NFR-MNT-01, NFR-LEG-02/05, NFR-COMP-06, INV-CO-03, INV-WS-06, brief (Rust-native parsing by default), ADR-0007, ADR-0011
 

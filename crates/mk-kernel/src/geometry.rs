@@ -2,11 +2,13 @@ use std::fmt;
 
 use crate::{ContentHash, Span};
 
-/// Axis-aligned box `[x0, y0, x1, y1]` on a page.
+/// Axis-aligned box `[x0, y0, x1, y1]` on a page, top-left origin, y down.
 ///
-/// PDF points in the page's **unrotated** box, top-left origin, y down: the convention of the
-/// ground truth (`docs/07-test-corpus.md` §5). Always finite with `x0 ≤ x1` and `y0 ≤ y1`;
-/// zero width or height is allowed.
+/// The unit depends on where the box comes from, as in the ground truth
+/// (`docs/07-test-corpus.md` §5): PDF points in the page's **unrotated** box for PDF text
+/// ([`PageGeometry`], [`Locator::PdfText`](crate::Locator)), pixels of the OCR'd image for OCR
+/// text ([`OcrGeometry`](crate::OcrGeometry), [`Locator::OcrText`](crate::Locator)). Always
+/// finite with `x0 ≤ x1` and `y0 ≤ y1`; zero width or height is allowed.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Rect {
     x0: f32,
@@ -86,6 +88,10 @@ pub enum GeometryError {
     SpanOutOfBounds { end: usize, len: usize },
     /// Every character in the span is layout-inserted (space, newline): nothing to draw.
     NoBoxes,
+    /// OCR word `index` overlaps the word before it or runs past the page text.
+    WordSpan { index: usize },
+    /// OCR word `index` has a confidence outside `[0, 1]`.
+    Confidence { index: usize },
 }
 
 impl fmt::Display for GeometryError {
@@ -105,6 +111,15 @@ impl fmt::Display for GeometryError {
                 write!(f, "span end {end} is past page text length {len}")
             }
             GeometryError::NoBoxes => f.write_str("span covers no drawn characters"),
+            GeometryError::WordSpan { index } => {
+                write!(
+                    f,
+                    "OCR word {index} overlaps the previous word or the text end"
+                )
+            }
+            GeometryError::Confidence { index } => {
+                write!(f, "OCR word {index} has a confidence outside 0..1")
+            }
         }
     }
 }

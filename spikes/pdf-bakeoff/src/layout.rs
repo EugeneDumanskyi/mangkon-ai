@@ -11,7 +11,7 @@ use crate::engine::{PageInfo, RawChar};
 /// Thresholds in units of the line's median character height. ASSUMPTION (spike values).
 const SAME_LINE_OVERLAP: f32 = 0.5;
 const SPACE_GAP: f32 = 0.15;
-const FRAGMENT_GAP: f32 = 1.0;
+pub const FRAGMENT_GAP: f32 = 1.0;
 
 pub struct Laid {
     pub text: String,
@@ -94,8 +94,9 @@ pub fn layout(chars: &[RawChar], info: &PageInfo) -> Laid {
         }
     }
 
+    let rects: Vec<Rect> = frags.iter().map(|f| f.d).collect();
     let mut read = Vec::new();
-    xy_cut(&frags, (0..frags.len()).collect(), &mut read);
+    xy_cut(&rects, (0..rects.len()).collect(), &mut read);
 
     let mut text = String::new();
     let mut boxes = Vec::new();
@@ -130,7 +131,7 @@ fn frag(items: &[Item], members: Vec<usize>, height: f32) -> Frag {
     }
 }
 
-fn median(v: impl Iterator<Item = f32>) -> f32 {
+pub fn median(v: impl Iterator<Item = f32>) -> f32 {
     let mut v: Vec<f32> = v.collect();
     v.sort_by(f32::total_cmp);
     v.get(v.len() / 2).copied().unwrap_or(0.0)
@@ -138,11 +139,11 @@ fn median(v: impl Iterator<Item = f32>) -> f32 {
 
 /// Widest empty band between the projections of `idx` on one axis: (width, cut position).
 fn widest_gap(
-    frags: &[Frag],
+    boxes: &[Rect],
     idx: &[usize],
     span: impl Fn(&Rect) -> (f32, f32),
 ) -> Option<(f32, f32)> {
-    let mut iv: Vec<(f32, f32)> = idx.iter().map(|&i| span(&frags[i].d)).collect();
+    let mut iv: Vec<(f32, f32)> = idx.iter().map(|&i| span(&boxes[i])).collect();
     iv.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut end = iv[0].1;
     let mut best: Option<(f32, f32)> = None;
@@ -155,15 +156,16 @@ fn widest_gap(
     best
 }
 
-/// Recursive XY-cut: split at the widest empty band (vertical bands first on ties), top/left
-/// part first. Regions with no band fall back to top-to-bottom, left-to-right.
-fn xy_cut(frags: &[Frag], idx: Vec<usize>, out: &mut Vec<usize>) {
+/// Recursive XY-cut over display boxes: split at the widest empty band (vertical bands first on
+/// ties), top/left part first. Regions with no band fall back to top-to-bottom, left-to-right.
+/// Shared by the PDF layout (fragments) and the OCR layout (line fragments).
+pub fn xy_cut(boxes: &[Rect], idx: Vec<usize>, out: &mut Vec<usize>) {
     if idx.len() <= 1 {
         out.extend(idx);
         return;
     }
-    let v = widest_gap(frags, &idx, |d| (d.x0(), d.x1()));
-    let h = widest_gap(frags, &idx, |d| (d.y0(), d.y1()));
+    let v = widest_gap(boxes, &idx, |d| (d.x0(), d.x1()));
+    let h = widest_gap(boxes, &idx, |d| (d.y0(), d.y1()));
     let vertical = match (v, h) {
         (Some(v), Some(h)) => v.0 >= h.0,
         (Some(_), None) => true,
@@ -171,7 +173,7 @@ fn xy_cut(frags: &[Frag], idx: Vec<usize>, out: &mut Vec<usize>) {
         (None, None) => {
             let mut idx = idx;
             idx.sort_by(|&a, &b| {
-                let (fa, fb) = (&frags[a].d, &frags[b].d);
+                let (fa, fb) = (&boxes[a], &boxes[b]);
                 (fa.y0() + fa.y1())
                     .total_cmp(&(fb.y0() + fb.y1()))
                     .then(fa.x0().total_cmp(&fb.x0()))
@@ -182,11 +184,11 @@ fn xy_cut(frags: &[Frag], idx: Vec<usize>, out: &mut Vec<usize>) {
     };
     let at = if vertical { v.unwrap().1 } else { h.unwrap().1 };
     let (first, second): (Vec<usize>, Vec<usize>) = idx.into_iter().partition(|&i| {
-        let d = &frags[i].d;
+        let d = &boxes[i];
         if vertical { d.x1() <= at } else { d.y1() <= at }
     });
-    xy_cut(frags, first, out);
-    xy_cut(frags, second, out);
+    xy_cut(boxes, first, out);
+    xy_cut(boxes, second, out);
 }
 
 #[cfg(test)]

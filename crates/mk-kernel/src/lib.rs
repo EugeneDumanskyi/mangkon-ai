@@ -5,14 +5,18 @@
 //! The [`Locator`] says where a segment is in its document (INV-CO-03). Its [`Span`] always
 //! points into the segment's stored text (INV-CO-04). PDF locators hold no boxes: the page view
 //! gets a [`PageGeometry`] from the engine that renders the page and maps the span through it
-//! (ADR-0011), which fails loudly if that engine no longer extracts the stored text.
+//! (ADR-0011), which fails loudly if that engine no longer extracts the stored text. OCR
+//! locators keep their word boxes, taken from the [`OcrGeometry`] built when the page was OCR'd,
+//! because OCR is their only source.
 
 mod geometry;
 mod hash;
 mod locator;
+mod ocr;
 mod span;
 
 pub use geometry::{GeometryError, PageGeometry, Rect};
 pub use hash::{ContentHash, ParseHashError};
 pub use locator::{Locator, PageNumber};
+pub use ocr::{ImageSize, OcrGeometry, OcrWord};
 pub use span::{Span, SpanError};

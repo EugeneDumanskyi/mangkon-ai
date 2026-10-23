@@ -223,7 +223,7 @@ Details go in `07-test-corpus.md`, written in M0a.
 - No Docker. One documented build command per OS.
 
 ### Decided in M0 and M1
-- M0: OCR engine: Tesseract vs `ocrs` (quality + build complexity)
+- M0: OCR engine: Tesseract vs `ocrs` (quality + build complexity). Decided in M0c: Tesseract, see ADR-0014.
 - M0: Whether Rust parsing is good enough (if clearly not: optional Python sidecar in v0.2, never required)
 - M1: Model catalog and hardware tiers (real timing on the test corpus)
 - M1: Final precision/recall targets

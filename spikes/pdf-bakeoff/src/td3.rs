@@ -1,6 +1,6 @@
 //! TD-3 PDF rows: every file runs alone in a child process (this binary, `td3-one`), with a
 //! wall-clock deadline and an RSS watchdog read from `/proc` — the ADR-0007 Linux path, as
-//! harness code. Images are M0c.
+//! harness code. The OCR rows (images, M0c) use the same watchdog (`ocr::td3`).
 
 use std::io::Read;
 use std::path::Path;
@@ -135,72 +135,97 @@ pub fn pdf_files(
         .collect()
 }
 
+/// How a watched child ended, what it printed, and what it cost.
+pub struct Watched {
+    /// `Clean` when it exited 0; the caller still has to parse `stdout`.
+    pub ended: Ended,
+    pub stdout: String,
+    pub detail: String,
+    pub secs: f64,
+    pub peak_rss_mb: f64,
+}
+
+/// Runs this binary with `args` in a child process under the deadline and the RSS cap; stderr
+/// goes to `log`.
+pub fn watch(args: &[std::ffi::OsString], log: &Path) -> Watched {
+    let exe = std::env::current_exe().expect("own path");
+    let stderr = std::fs::File::create(log)
+        .map(Stdio::from)
+        .unwrap_or(Stdio::null());
+    let start = Instant::now();
+    let mut child = Command::new(&exe)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(stderr)
+        .spawn()
+        .expect("spawn child");
+    let mut peak = 0u64;
+    let mut killed = None;
+    let status = loop {
+        if let Some(s) = child.try_wait().expect("wait") {
+            break s;
+        }
+        peak = peak.max(rss_bytes(child.id()).unwrap_or(0));
+        if peak > MAX_RSS_BYTES {
+            killed = Some(Ended::OomKill);
+        } else if start.elapsed() > DEADLINE {
+            killed = Some(Ended::Timeout);
+        }
+        if killed.is_some() {
+            child.kill().ok();
+            break child.wait().expect("wait");
+        }
+        std::thread::sleep(POLL);
+    };
+    let secs = start.elapsed().as_secs_f64();
+    let mut stdout = String::new();
+    if let Some(mut o) = child.stdout.take() {
+        o.read_to_string(&mut stdout).ok();
+    }
+    let (ended, detail) = match killed {
+        Some(k) => (
+            k,
+            format!("killed after {secs:.1} s, peak RSS {} MB", peak >> 20),
+        ),
+        None if status.success() => (Ended::Clean, String::new()),
+        None => {
+            use std::os::unix::process::ExitStatusExt;
+            match status.signal() {
+                Some(sig) => (Ended::Signal, format!("signal {sig}")),
+                None => (
+                    Ended::Panic,
+                    format!("exit {status}; see {}", log.display()),
+                ),
+            }
+        }
+    };
+    Watched {
+        ended,
+        stdout,
+        detail,
+        secs,
+        peak_rss_mb: peak as f64 / (1 << 20) as f64,
+    }
+}
+
 /// Parent side: runs every TD-3 PDF in its own child.
 pub fn run(engine: &str, root: &Path, out_dir: &Path) -> Vec<Td3Result> {
     let manifest = mk_bench::load_td3(&root.join("expected.json")).expect("TD-3 manifest");
-    let exe = std::env::current_exe().expect("own path");
     std::fs::create_dir_all(out_dir).ok();
     pdf_files(&manifest, root)
         .into_iter()
         .map(|f| {
             let log = out_dir.join(format!("td3-{engine}-{}.stderr", f.path));
-            let stderr = std::fs::File::create(&log)
-                .map(Stdio::from)
-                .unwrap_or(Stdio::null());
-            let start = Instant::now();
-            let mut child = Command::new(&exe)
-                .args(["td3-one", engine])
-                .arg(root.join(&f.path))
-                .stdout(Stdio::piped())
-                .stderr(stderr)
-                .spawn()
-                .expect("spawn child");
-            let mut peak = 0u64;
-            let mut killed = None;
-            let status = loop {
-                if let Some(s) = child.try_wait().expect("wait") {
-                    break s;
-                }
-                peak = peak.max(rss_bytes(child.id()).unwrap_or(0));
-                if peak > MAX_RSS_BYTES {
-                    killed = Some(Ended::OomKill);
-                } else if start.elapsed() > DEADLINE {
-                    killed = Some(Ended::Timeout);
-                }
-                if killed.is_some() {
-                    child.kill().ok();
-                    break child.wait().expect("wait");
-                }
-                std::thread::sleep(POLL);
-            };
-            let secs = start.elapsed().as_secs_f64();
-            let mut stdout = String::new();
-            if let Some(mut o) = child.stdout.take() {
-                o.read_to_string(&mut stdout).ok();
-            }
-            let (ended, report, detail) = match killed {
-                Some(k) => (
-                    k,
-                    None,
-                    format!("killed after {secs:.1} s, peak RSS {} MB", peak >> 20),
-                ),
-                None if status.success() => {
-                    match serde_json::from_str::<ChildReport>(stdout.trim()) {
-                        Ok(r) => (Ended::Clean, Some(r), String::new()),
-                        Err(e) => (Ended::Panic, None, format!("no report: {e}")),
-                    }
-                }
-                None => {
-                    use std::os::unix::process::ExitStatusExt;
-                    match status.signal() {
-                        Some(sig) => (Ended::Signal, None, format!("signal {sig}")),
-                        None => (
-                            Ended::Panic,
-                            None,
-                            format!("exit {status}; see {}", log.display()),
-                        ),
-                    }
-                }
+            let w = watch(
+                &["td3-one".into(), engine.into(), root.join(&f.path).into()],
+                &log,
+            );
+            let (ended, report, detail) = match w.ended {
+                Ended::Clean => match serde_json::from_str::<ChildReport>(w.stdout.trim()) {
+                    Ok(r) => (Ended::Clean, Some(r), String::new()),
+                    Err(e) => (Ended::Panic, None, format!("no report: {e}")),
+                },
+                e => (e, None, w.detail),
             };
             let outcome = report.as_ref().map_or(Outcome::Fail, outcome);
             Td3Result {
@@ -212,8 +237,8 @@ pub fn run(engine: &str, root: &Path, out_dir: &Path) -> Vec<Td3Result> {
                 matches: outcome == f.expected,
                 report,
                 detail,
-                secs,
-                peak_rss_mb: peak as f64 / (1 << 20) as f64,
+                secs: w.secs,
+                peak_rss_mb: w.peak_rss_mb,
             }
         })
         .collect()

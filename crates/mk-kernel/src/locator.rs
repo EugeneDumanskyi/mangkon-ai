@@ -1,7 +1,7 @@
 use std::fmt;
 use std::num::NonZeroU32;
 
-use crate::Span;
+use crate::{ImageSize, Rect, Span};
 
 /// 1-based page number of a paged document.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -33,13 +33,12 @@ impl fmt::Display for PageNumber {
 ///
 /// The kind must match the document kind. Drafted kinds:
 /// - `PdfText` (M0b): text-layer PDF page.
+/// - `OcrText` (M0c): OCR'd page of an image or scanned PDF.
 ///
-/// Still to come, each in the milestone that adds its parser:
-/// - OCR page: page + word boxes + span (M0c). Unlike `PdfText` it keeps its boxes, because
-///   the OCR result is the only source of them.
-/// - TXT/MD line + span, DOCX paragraph + span, HTML text offset + span, CSV row + column,
-///   JSON path, email header name, MIME part + span (M2/M3).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// Still to come, each in the milestone that adds its parser: TXT/MD line + span, DOCX
+/// paragraph + span, HTML text offset + span, CSV row + column, JSON path, email header name,
+/// MIME part + span (M2/M3).
+#[derive(Clone, PartialEq, Debug)]
 pub enum Locator {
     /// A place in the stored text of one PDF page (US-02.1 AC1). In M0b a page is one segment,
     /// so `span` counts characters of the page's stored text.
@@ -48,18 +47,31 @@ pub enum Locator {
     /// [`PageGeometry`](crate::PageGeometry) when it renders the page (ADR-0011) and maps the
     /// span through it.
     PdfText { page: PageNumber, span: Span },
+    /// A place in the OCR text of one page of an image or scanned PDF (US-02.2, US-08.1 AC2).
+    /// `span` counts characters of the page's stored OCR text.
+    ///
+    /// Unlike `PdfText` it keeps its boxes: OCR is their only source, and OCR'ing again may not
+    /// give the same words (ADR-0011). `boxes` are the boxes of the words the span touches, in
+    /// pixels of the OCR'd image, whose size is `image`; the viewer scales them to its render.
+    /// Built by [`OcrGeometry::locator`](crate::OcrGeometry::locator).
+    OcrText {
+        page: PageNumber,
+        span: Span,
+        boxes: Vec<Rect>,
+        image: ImageSize,
+    },
 }
 
 impl Locator {
     pub fn page(&self) -> Option<PageNumber> {
         match self {
-            Locator::PdfText { page, .. } => Some(*page),
+            Locator::PdfText { page, .. } | Locator::OcrText { page, .. } => Some(*page),
         }
     }
 
     pub fn span(&self) -> Option<Span> {
         match self {
-            Locator::PdfText { span, .. } => Some(*span),
+            Locator::PdfText { span, .. } | Locator::OcrText { span, .. } => Some(*span),
         }
     }
 }

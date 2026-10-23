@@ -158,7 +158,7 @@ pub fn throughput(
     }
 }
 
-fn norm(s: &str) -> Vec<char> {
+pub fn norm(s: &str) -> Vec<char> {
     s.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -166,7 +166,7 @@ fn norm(s: &str) -> Vec<char> {
         .collect()
 }
 
-fn levenshtein(a: &[char], b: &[char]) -> usize {
+pub fn levenshtein(a: &[char], b: &[char]) -> usize {
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0; b.len() + 1];
     for (i, ca) in a.iter().enumerate() {
@@ -181,7 +181,7 @@ fn levenshtein(a: &[char], b: &[char]) -> usize {
     prev[b.len()]
 }
 
-fn sorted_lines(s: &str) -> String {
+pub fn sorted_lines(s: &str) -> String {
     let mut lines: Vec<String> = s
         .lines()
         .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -251,7 +251,7 @@ pub struct RenderTiming {
     pub errors: Vec<String>,
 }
 
-fn pct(sorted: &[f64], p: f64) -> f64 {
+pub fn pct(sorted: &[f64], p: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
     }

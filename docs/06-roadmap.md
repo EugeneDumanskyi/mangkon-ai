@@ -133,7 +133,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | Method | Run each candidate over TD-1 PDFs/scans and TD-3 on RM-1. Score against ground truth. For the round-trip: take 200 random ground-truth identifiers in PDFs/scans, find them in stored text, map span → boxes, check the boxes overlap the right glyphs on the rendered page. |
 | Pass marks | ADR-0013 table: ≥ 20 pages/s text PDF (NFR-PERF-20); ≤ 5 s/page/core OCR (NFR-PERF-21); ≥ 95% OCR characters (NFR-QA-07); ≥ 85% identifier recall on OCR'd files (NFR-QA-06); boxes + one-page render of a 500-page PDF ≤ 1 s; one-command build ≤ 15 min; app ≤ 150 MB; every TD-3 file fails alone; AGPL-compatible. Plus: highlight round-trip ≥ 99% (early NFR-QA-12). |
 | Timebox | Bake-off 1 week after TD-1 exists. ASSUMPTION. |
-| If nothing passes all | Rank: highlight round-trip > OCR accuracy > build simplicity > speed. Take the best by that rank. A native engine is downloaded as a checksum-verified prebuilt binary, like `llama-server` (ADR-0008 pattern). |
+| If nothing passes all | Rank: highlight round-trip > OCR accuracy > build simplicity > speed. Take the best by that rank. A native engine is downloaded as a checksum-verified prebuilt binary, like `llama-server` (ADR-0008 pattern). M0c outcome: Tesseract passed everything and is compiled from pinned sources instead; no download (ADR-0014). |
 | Output | **ADR-0014** (supersedes ADR-0013) with the chosen engines and measured numbers. |
 
 **Acceptance criteria**
@@ -162,10 +162,10 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Goal.** Know, with numbers, whether local models that fit the minimum (8 GB VRAM) can carry Layer 2, which bigger models are worth listing for stronger machines, how fast they are, and whether the chosen embedding model works with binary vectors.
 
 **Scope**
-- **Runtime mechanics (ADR-0008)** from a small Rust harness on RM-1: download a pinned prebuilt `llama-server`, verify SHA-256, start on `127.0.0.1` with a random port and `--api-key`, wait for `/health`, kill, restart. Confirms the supervisor approach before M5 builds it.
+- **Runtime mechanics (ADR-0015)** from a small Rust harness on RM-1: find the user-installed `llama-server` (settings path, then `PATH`), read its build from `--version` and check the minimum, start on `127.0.0.1` with a random port and `--api-key`, wait for `/health`, kill, restart. Confirms the supervisor approach before M5 builds it. Sets the minimum build and writes the install guide.
 - **Extraction**: one people/org prompt with a JSON-schema `response_format` (brief §14). 3 model sizes. Measure on TD-1 segments: precision, recall, segments/s, VRAM/RAM peak, share of outputs that fail the evidence span check (INV-AI span rule, NFR-QA-11) and the schema check (INV-AI-03).
 - **Embeddings (R2, gap A6)**: 2–3 candidate embedding models. Recall@20 of binary + rescore vs exact search on TD-1.
-- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-2 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0008).
+- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-2 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0015).
 - **Optional probe** (≤ ½ day): relations on the best model, to inform the M8 go/no-go.
 
 **Out of scope**
@@ -186,8 +186,8 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 **Acceptance criteria**
 1. A results table covers 3 extraction model sizes and 2–3 embedding models, on RM-1, with commands to reproduce.
-2. The runtime harness starts, health-checks, kills, and restarts `llama-server` on RM-1 from a pinned, checksum-verified binary.
-3. Model catalog v0 exists as a versioned JSON file with a schema (NFR-MNT-09): models, runtime binaries per OS/backend, hardware tiers.
+2. The runtime harness finds the user-installed `llama-server`, refuses a build below the minimum with a plain reason, and starts, health-checks, kills and restarts it on RM-1 (ADR-0015).
+3. Model catalog v0 exists as a versioned JSON file with a schema (NFR-MNT-09): models and hardware tiers (no runtime binaries, ADR-0015).
 4. NFR-PERF-13, -24 and NFR-QA-01, -02, -08, -09 hold measured or confirmed targets (NFR §13).
 5. **Layer 2 decision** recorded: Go, Experimental, or Cut. Gaps A3 and A6 decided.
 6. R2 decided: ADR-0010 confirmed, or a new ADR records the change. The brief §14 mention of `sqlite-vec` is reconciled with ADR-0010 (see §4).
@@ -333,7 +333,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Goal.** On supported hardware a user gets a working local model in a few clicks. No project data can leave the app except through the gate, to a destination the user confirmed.
 
 **Scope**
-- **E09** all: US-09.1–09.8 — hardware check, below-minimum path, catalog and recommendation, resumable checksummed downloads (models, `llama-server`, and the native engine if ADR-0014 chose one), runtime supervisor (domain §7.8), external endpoints, per-project permission (domain §7.6), destination always visible.
+- **E09** all: US-09.1–09.8 — hardware check, below-minimum path, catalog and recommendation, resumable checksummed model downloads (`llama-server` is user-installed and version-checked, ADR-0015; the engines are compiled in, ADR-0014), runtime supervisor (domain §7.8), external endpoints, per-project permission (domain §7.6), destination always visible.
 - **`mk-egress`** (ADR-0009): destination lookup, resolve all addresses, classify (most exposed wins), permission check, `EgressRecord` before send, client pinned to the checked IP, test-text endpoint check (INV-EG-08).
 - **Secrets** (ADR-0012): keyring; session-only key when no Secret Service on Linux.
 - **US-14.4** first-run flow (hardware check → model or endpoint or "Skip" → first project; "Open demo project").
@@ -361,7 +361,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 6. A known test key never appears in the project folder, config files, or logs (NFR-SEC-07).
 7. Network capture during model download + endpoint test: only catalog hosts and user-set endpoints (NFR-SEC-02, with the A1 decision applied).
 8. Endpoint test suite passes against `llama-server`, Ollama, LM Studio (NFR-COMP-05).
-9. ADR-0008, 0009, 0012 **Accepted**.
+9. ADR-0009, 0012 **Accepted**.
 
 **Exit decision.** If M1 said **Cut**, go to M9.
 
@@ -518,7 +518,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 |---|---|---|---|
 | 1 | **Approved (2026-10-22).** Approve this order and renumbering. Brief §10, the story and epic milestone tags in `02-requirements.md`, and milestone references in `03-nfr.md`, `05-architecture.md` and the ADRs are updated (2026-10-22). | This file §1.3 | Start of M0a |
 | 2 | Brief §14 names `sqlite-vec`; ADR-0010 chose a binary flat index + rescoring. The brief wins until changed. Update the brief with the S1 result, or keep `sqlite-vec`. | Brief §14, ADR-0010 | End of M1 |
-| 3 | A1 — download hosts for runtime (and native engine) binaries. | 05-architecture §10 | End of M0c |
+| 3 | **Decided (2026-10-23).** A1 — download hosts for runtime (and native engine) binaries. The app downloads no binaries: `llama-server` is a user-installed prerequisite with a minimum version (ADR-0015), and the PDF and OCR engines are compiled in (ADR-0014). Hugging Face stays the only download host. The source of extra OCR language files is decided in M3. | 05-architecture §10 | End of M0c |
 | 4 | A3 — how Stage B is limited on large projects. | 05-architecture §10 | End of M1 |
 | 5 | A6 — "works with binary vectors" as a catalog rule. | 05-architecture §10 | End of M1 |
 | 6 | Layer 2: Go / Experimental / Cut. | Brief §10 | End of M1 |
