@@ -1,0 +1,14 @@
+# Throwaway bake-off harnesses for spike S0 (M0b PDF, M0c OCR). Not part of the main
+# workspace; removed in M2a once ADR-0014 records the numbers (roadmap M0).
+[workspace]
+resolver = "3"
+members = ["pdf-bakeoff"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[profile.release]
+debug = false

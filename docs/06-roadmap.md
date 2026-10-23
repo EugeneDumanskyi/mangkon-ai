@@ -109,7 +109,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - **TD-1 v1**: the story is written first, then ~80 synthetic files + ~20 public files, with a ground-truth file (brief §11). Built by a reproducible generator in the repo, so TD-2 can be derived from it in M2. Corpus document `07-test-corpus.md` (brief §11): story, file list, ground-truth format, and the source and license of each public file.
 - **TD-3 v1** for PDF/images: encrypted, corrupt, empty, truncated, 2,000-page, wrongly named, "memory bomb", "endless loop".
 - **Engine bake-off harness** (throwaway CLI). Candidates from ADR-0013: pure Rust PDF stack, pdfium; OCR: `ocrs`, Tesseract, an ONNX OCR model. Each adapter is written against the `PdfEngine` / `OcrEngine` trait shapes (ADR-0002), so the winner's adapter carries over.
-- **Locator draft** for PDF text and OCR pages: page + span in stored text + character/word boxes (INV-CO-03). Becomes the `mk-kernel` type.
+- **Locator draft** for PDF text and OCR pages (INV-CO-03). PDF text: page + span in stored text; character boxes are rebuilt by the same engine when the page is rendered (`PageGeometry`, ADR-0011). OCR: page + word boxes + span. Becomes the `mk-kernel` type.
 - **Build probe**: a throwaway CI job builds each native candidate on macOS, Windows, Ubuntu with one command. Record build time and binary-size delta.
 - **Desk check (R3, gap A1)**: list which OS/backend pairs have official prebuilt `llama-server` binaries at a candidate tag. If a native engine wins, its binary needs the same download path, so A1 is decided once for both.
 - **Code layout.** M0 starts a minimal Cargo workspace; M2a extends it and does not move anything.

@@ -1,0 +1,24 @@
+[package]
+name = "pdf-bakeoff"
+description = "Spike S0, PDF rows: PDF engine bake-off over TD-1/TD-3 (M0b, throwaway)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+hayro = ["dep:hayro"]
+oxide = ["dep:pdf_oxide"]
+pdfium = ["dep:pdfium-render"]
+
+[dependencies]
+mk-bench = { path = "../../crates/mk-bench" }
+mk-kernel = { path = "../../crates/mk-kernel" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+
+hayro = { version = "0.8.0", optional = true }
+pdf_oxide = { version = "0.3.78", optional = true, features = ["rendering"] }
+pdfium-render = { version = "0.9.4", optional = true }
