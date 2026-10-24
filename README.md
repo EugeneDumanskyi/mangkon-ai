@@ -20,6 +20,12 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [Roadmap](docs/06-roadmap.md) | Milestones M0–M9, spikes, risk burn-down |
 | [Test corpus](docs/07-test-corpus.md) | Test data story, files, ground-truth format, broken-file set |
 | [Engine bake-off](docs/08-engine-bakeoff.md) | PDF and OCR engine measurements (spike S0), the `Locator` design |
+| [Model check](docs/09-model-check.md) | Local model quality and speed, embeddings with binary vectors, hardware tiers (spike S1) |
+| [Install llama.cpp](docs/install-llama-cpp.md) | The `llama-server` prerequisite: minimum build, install options per OS |
+
+## Prerequisites
+
+Local AI needs `llama-server` from llama.cpp, build 10863 or newer, installed by you ([install guide](docs/install-llama-cpp.md)). The app finds it and checks its version; it never downloads it. Without it, everything except AI extraction and meaning search still works.
 
 ## Planned stack
 

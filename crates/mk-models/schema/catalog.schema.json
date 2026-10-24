@@ -1,0 +1,322 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Catalog",
+  "description": "The model catalog shipped with one app version (US-09.3 AC2).",
+  "type": "object",
+  "properties": {
+    "catalog_version": {
+      "description": "Bumped whenever the catalog content changes.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Model"
+      }
+    },
+    "schema_version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "tiers": {
+      "description": "From the smallest machine to the largest.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tier"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_version",
+    "models",
+    "tiers"
+  ],
+  "$defs": {
+    "Benchmark": {
+      "description": "The M1 measurement behind the entry. Informative; the app shows nothing of it in v0.1.",
+      "type": "object",
+      "properties": {
+        "llama_build": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "machine": {
+          "description": "Reference machine (`RM-1`).",
+          "type": "string"
+        },
+        "precision": {
+          "description": "Extraction: people/org precision and recall on TD-1 (NFR-QA-08/09).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "recall": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "segments_per_s": {
+          "description": "Extraction: segments per second, one request at a time (NFR-PERF-24, NFR-PERF-25).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source": {
+          "description": "Where the numbers come from, e.g. `docs/09-model-check.md §5.1`.",
+          "type": "string"
+        },
+        "windows_per_s": {
+          "description": "Embeddings: ~500-char windows per second.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "machine",
+        "llama_build"
+      ]
+    },
+    "Embedding": {
+      "type": "object",
+      "properties": {
+        "binary_recall_at_20": {
+          "description": "Binary top-200 → float rescore → top 20, against exact float search (ADR-0010, gap A6).",
+          "type": "number",
+          "format": "double"
+        },
+        "dims": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "document_prefix": {
+          "type": "string"
+        },
+        "query_prefix": {
+          "description": "Prepended to search queries and to stored segment text, as the model card says.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "dims",
+        "query_prefix",
+        "document_prefix",
+        "binary_recall_at_20"
+      ]
+    },
+    "License": {
+      "description": "Shown before download (US-09.3 AC3, NFR-LEG-03).",
+      "type": "object",
+      "properties": {
+        "spdx": {
+          "description": "SPDX id, or `LicenseRef-<name>` for a model license with no SPDX id.",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "spdx",
+        "url"
+      ]
+    },
+    "Model": {
+      "type": "object",
+      "properties": {
+        "benchmark": {
+          "$ref": "#/$defs/Benchmark"
+        },
+        "context": {
+          "description": "Context size the app starts the model with (`-c`).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "embedding": {
+          "description": "Embedding models only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Embedding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "files": {
+          "description": "GGUF files; a split model lists every part, the first part first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ModelFile"
+          }
+        },
+        "hf_repo": {
+          "description": "Hugging Face repository, `owner/name`.",
+          "type": "string"
+        },
+        "hf_revision": {
+          "description": "Hugging Face commit the files are pinned to (40 hex).",
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable id, used by tiers, settings and AI runs (INV-AI-02).",
+          "type": "string"
+        },
+        "license": {
+          "$ref": "#/$defs/License"
+        },
+        "min_llama_build": {
+          "description": "Lowest `llama-server` build this model was tested with (ADR-0015).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "name": {
+          "description": "Display name.",
+          "type": "string"
+        },
+        "quant": {
+          "description": "Quantization, as named in the file (`Q4_K_M`, `Q8_0`, `UD-IQ3_XXS`).",
+          "type": "string"
+        },
+        "ram_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        },
+        "vram_bytes": {
+          "description": "Measured peak VRAM and RAM when run as the app runs it (`docs/09-model-check.md`).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role",
+        "name",
+        "hf_repo",
+        "hf_revision",
+        "files",
+        "quant",
+        "license",
+        "context",
+        "vram_bytes",
+        "ram_bytes",
+        "min_llama_build",
+        "benchmark"
+      ]
+    },
+    "ModelFile": {
+      "type": "object",
+      "properties": {
+        "bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "sha256": {
+          "description": "SHA-256 of the file, lowercase hex (INV-MM-01, NFR-SEC-11).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "bytes",
+        "sha256"
+      ]
+    },
+    "Role": {
+      "oneOf": [
+        {
+          "description": "Stage B people/org extraction (and Layer 3, if it ships).",
+          "type": "string",
+          "const": "extraction"
+        },
+        {
+          "description": "Meaning search (US-06.2).",
+          "type": "string",
+          "const": "embeddings"
+        }
+      ]
+    },
+    "Tier": {
+      "description": "A hardware tier and its recommended models (US-09.3 AC1 \"Recommended\" badge).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "min_ram_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "min_unified_bytes": {
+          "description": "… or, on unified-memory machines (Apple silicon), with this much unified memory.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "min_vram_bytes": {
+          "description": "A machine fits the tier with this much dedicated GPU memory and system RAM …",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "recommended_embeddings": {
+          "type": "string"
+        },
+        "recommended_extraction": {
+          "description": "`None`: no extraction model fits; Layer 2 needs an external endpoint.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "min_vram_bytes",
+        "min_ram_bytes",
+        "recommended_embeddings"
+      ]
+    }
+  }
+}

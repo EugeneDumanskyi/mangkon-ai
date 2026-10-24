@@ -9,6 +9,7 @@
 //! pdf-bakeoff roundtrip     --engine <e> [--samples 200] [--seed 1] [--all]
 //! pdf-bakeoff td3           --engine <e>
 //! pdf-bakeoff text          --engine <e> --file <pdf> [--page 1] [--raw]
+//! pdf-bakeoff dump-text     --engine <e> --dir <dir> --out <jsonl>
 //! pdf-bakeoff ocr-text      --engine <e> --file <image|pdf> [--page 1] [--raw]
 //! pdf-bakeoff ocr-quality   --engine <e>
 //! pdf-bakeoff ocr-roundtrip --engine <e>
@@ -164,6 +165,40 @@ fn run(cmd: &str, args: &Args) -> Result<(), String> {
                 }
             }
             println!("{info:?}\n{}", layout::layout(&chars, &info).text);
+            Ok(())
+        }
+        "dump-text" => {
+            // One JSON line per page ({file, page, text}) for every PDF in --dir. Feeds the M1
+            // embedding check (spike S1-E, `docs/09-model-check.md`).
+            let dir = PathBuf::from(args.get("--dir").ok_or("--dir <dir> is required")?);
+            let out = PathBuf::from(args.get("--out").ok_or("--out <jsonl> is required")?);
+            let e = args.engine()?;
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+                .map_err(|e| format!("{}: {e}", dir.display()))?
+                .flatten()
+                .map(|d| d.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "pdf"))
+                .collect();
+            files.sort();
+            let mut lines = String::new();
+            let mut pages = 0;
+            for f in &files {
+                let doc = e.open(f).map_err(|e| format!("{}: {e}", f.display()))?;
+                for page in 0..doc.page_count() {
+                    let info = doc.page_info(page).map_err(|e| e.to_string())?;
+                    let chars = doc.chars(page).map_err(|e| e.to_string())?;
+                    let line = serde_json::json!({
+                        "file": f.file_name().map(|n| n.to_string_lossy().into_owned()),
+                        "page": page + 1,
+                        "text": layout::layout(&chars, &info).text,
+                    });
+                    lines.push_str(&line.to_string());
+                    lines.push('\n');
+                    pages += 1;
+                }
+            }
+            std::fs::write(&out, lines).map_err(|e| format!("{}: {e}", out.display()))?;
+            println!("{} files, {pages} pages → {}", files.len(), out.display());
             Ok(())
         }
         "td3-one" => {

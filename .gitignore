@@ -16,7 +16,8 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Spike harnesses (M0b/M0c): build output, run output, downloaded engine binaries.
+# Spike harnesses (M0b/M0c, M1): build output, run output, downloaded engine binaries.
 /spikes/target/
 /spikes/out/
+/spikes/model-check/out/
 /spikes/vendor/

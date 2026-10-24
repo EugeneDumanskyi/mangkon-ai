@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "catalog_version": 1,
+  "models": [
+    {
+      "id": "qwen3.5-4b-q4_k_m",
+      "role": "extraction",
+      "name": "Qwen3.5 4B",
+      "hf_repo": "bartowski/Qwen_Qwen3.5-4B-GGUF",
+      "hf_revision": "8a544ca068d323358438962fe1880e241e6e0ccf",
+      "files": [
+        {
+          "name": "Qwen_Qwen3.5-4B-Q4_K_M.gguf",
+          "bytes": 2871743520,
+          "sha256": "68c9c6bfeecee13dd3b3c1de7f73b2d86e5feadc100f0f50e5e11fd2388ca66d"
+        }
+      ],
+      "quant": "Q4_K_M",
+      "license": {
+        "spdx": "Apache-2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE"
+      },
+      "context": 8192,
+      "vram_bytes": 3531603968,
+      "ram_bytes": 3313557504,
+      "min_llama_build": 10863,
+      "benchmark": {
+        "source": "docs/09-model-check.md §5.1",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "precision": 0.829,
+        "recall": 0.94,
+        "segments_per_s": 0.66
+      }
+    },
+    {
+      "id": "qwen3.6-35b-a3b-q8_0",
+      "role": "extraction",
+      "name": "Qwen3.6 35B-A3B",
+      "hf_repo": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+      "hf_revision": "1558bc0b88d70748385d92996825d15347d8873c",
+      "files": [
+        {
+          "name": "Qwen_Qwen3.6-35B-A3B-Q8_0.gguf",
+          "bytes": 36914690368,
+          "sha256": "afddb074d3ce9ec8a3f64bfe7288a6c33f0d3a629be3caf4b5de1386a582dbd5"
+        }
+      ],
+      "quant": "Q8_0",
+      "license": {
+        "spdx": "Apache-2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.6-35B-A3B/blob/main/LICENSE"
+      },
+      "context": 8192,
+      "vram_bytes": 7025459200,
+      "ram_bytes": 37511041024,
+      "min_llama_build": 10863,
+      "benchmark": {
+        "source": "docs/09-model-check.md §5.1",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "precision": 0.912,
+        "recall": 0.967,
+        "segments_per_s": 0.17
+      }
+    },
+    {
+      "id": "qwen3.8-flash-next-ud-iq3_xxs",
+      "role": "extraction",
+      "name": "Qwen3.8 Flash-Next",
+      "hf_repo": "unsloth/Qwen3.8-Flash-Next-GGUF",
+      "hf_revision": "766911a6b7369840a91dbcd95f9f997acaab6cd6",
+      "files": [
+        {
+          "name": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00001-of-00003.gguf",
+          "bytes": 10946624,
+          "sha256": "268f81fdedf3149a538f252308927a4d5d1f6e062c178568a51e3b519744f8a8"
+        },
+        {
+          "name": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00002-of-00003.gguf",
+          "bytes": 49567921344,
+          "sha256": "cfe600b236b88c7fad1613a5ca5e83b9f2beb63cbd44c32b2be50a44747c695f"
+        },
+        {
+          "name": "UD-IQ3_XXS/Qwen3.8-Flash-Next-UD-IQ3_XXS-00003-of-00003.gguf",
+          "bytes": 32382955968,
+          "sha256": "f1912ba34c79427d2295a58dcb2b732b5931af5bef7a373c60557a57d9ee7250"
+        }
+      ],
+      "quant": "UD-IQ3_XXS",
+      "license": {
+        "spdx": "LicenseRef-Qwen-Community-1.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE"
+      },
+      "context": 8192,
+      "vram_bytes": 6937378816,
+      "ram_bytes": 50114633728,
+      "min_llama_build": 10863,
+      "benchmark": {
+        "source": "docs/09-model-check.md §5.1",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "precision": 0.934,
+        "recall": 0.985,
+        "segments_per_s": 0.12
+      }
+    },
+    {
+      "id": "qwen3-embedding-0.6b-q8_0",
+      "role": "embeddings",
+      "name": "Qwen3-Embedding 0.6B",
+      "hf_repo": "Qwen/Qwen3-Embedding-0.6B-GGUF",
+      "hf_revision": "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
+      "files": [
+        {
+          "name": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+          "bytes": 639150592,
+          "sha256": "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439"
+        }
+      ],
+      "quant": "Q8_0",
+      "license": {
+        "spdx": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "context": 8192,
+      "vram_bytes": 2990538752,
+      "ram_bytes": 1678372864,
+      "min_llama_build": 10863,
+      "embedding": {
+        "dims": 1024,
+        "query_prefix": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:",
+        "document_prefix": "",
+        "binary_recall_at_20": 0.984
+      },
+      "benchmark": {
+        "source": "docs/09-model-check.md §6",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "windows_per_s": 64.9
+      }
+    },
+    {
+      "id": "nomic-embed-text-v1.5-q8_0",
+      "role": "embeddings",
+      "name": "nomic-embed-text v1.5",
+      "hf_repo": "nomic-ai/nomic-embed-text-v1.5-GGUF",
+      "hf_revision": "0188c9bf409793f810680a5a431e7b899c46104c",
+      "files": [
+        {
+          "name": "nomic-embed-text-v1.5.Q8_0.gguf",
+          "bytes": 146146432,
+          "sha256": "3e24342164b3d94991ba9692fdc0dd08e3fd7362e0aacc396a9a5c54a544c3b7"
+        }
+      ],
+      "quant": "Q8_0",
+      "license": {
+        "spdx": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "context": 8192,
+      "vram_bytes": 482344960,
+      "ram_bytes": 817995776,
+      "min_llama_build": 10863,
+      "embedding": {
+        "dims": 768,
+        "query_prefix": "search_query: ",
+        "document_prefix": "search_document: ",
+        "binary_recall_at_20": 0.954
+      },
+      "benchmark": {
+        "source": "docs/09-model-check.md §6",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "windows_per_s": 532.8
+      }
+    },
+    {
+      "id": "bge-m3-q8_0",
+      "role": "embeddings",
+      "name": "BGE-M3",
+      "hf_repo": "ggml-org/bge-m3-Q8_0-GGUF",
+      "hf_revision": "9eba04c5d75ba5a1595e45de734d36bef4e5cb98",
+      "files": [
+        {
+          "name": "bge-m3-q8_0.gguf",
+          "bytes": 634553760,
+          "sha256": "aa473d51f451a22f0fcf39ba3330c14bed38a385712b1113440f69df4047a173"
+        }
+      ],
+      "quant": "Q8_0",
+      "license": {
+        "spdx": "MIT",
+        "url": "https://opensource.org/license/mit"
+      },
+      "context": 8192,
+      "vram_bytes": 543162368,
+      "ram_bytes": 1772507136,
+      "min_llama_build": 10863,
+      "embedding": {
+        "dims": 1024,
+        "query_prefix": "",
+        "document_prefix": "",
+        "binary_recall_at_20": 0.972
+      },
+      "benchmark": {
+        "source": "docs/09-model-check.md §6",
+        "machine": "RM-1",
+        "llama_build": 10863,
+        "windows_per_s": 225.8
+      }
+    }
+  ],
+  "tiers": [
+    {
+      "id": "minimum",
+      "name": "Minimum: 8 GB VRAM + 16 GB RAM, or 32 GB unified memory",
+      "min_vram_bytes": 8589934592,
+      "min_ram_bytes": 17179869184,
+      "min_unified_bytes": 34359738368,
+      "recommended_extraction": "qwen3.5-4b-q4_k_m",
+      "recommended_embeddings": "bge-m3-q8_0"
+    },
+    {
+      "id": "large-ram",
+      "name": "8 GB VRAM + 48 GB RAM, or 64 GB unified memory",
+      "min_vram_bytes": 8589934592,
+      "min_ram_bytes": 51539607552,
+      "min_unified_bytes": 68719476736,
+      "recommended_extraction": "qwen3.6-35b-a3b-q8_0",
+      "recommended_embeddings": "bge-m3-q8_0"
+    }
+  ]
+}

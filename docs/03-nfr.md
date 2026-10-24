@@ -52,7 +52,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-10 | First cross-source identifier visible after dropping TD-1 ("within seconds") | ≤ 10 s | Timer from drop to first row on connections screen | Brief ("seconds") · ASSUMPTION (10 s) |
 | NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION |
 | NFR-PERF-12 | First cross-source person/org visible after drop on TD-1 ("within minutes") | ≤ 5 min | Timer | Brief ("minutes") · ASSUMPTION (5 min) |
-| NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 | Timer | ASSUMPTION · final after M1 |
+| NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 with the recommended minimum-tier model, 4 slots (NFR-PERF-25). Bigger models are a quality choice and show an estimate instead | Timer | M1: estimate ~11 min for Qwen3.5-4B with 4 slots (~24 min with 1); 35B-A3B ~94 min (`09-model-check.md` §5.1) · ASSUMPTION (estimate, measured in M6) |
 | NFR-PERF-14 | Click on a link → source viewer shows highlight | ≤ 1 s p95 (PDF ≤ 500 pages, CSV ≤ 1,000,000 rows, MBOX message) | Timer, 50 random clicks on TD-1 and TD-2 | Brief ("one click") · ASSUMPTION (1 s) |
 
 ### 3.3 Throughput
@@ -63,8 +63,8 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core (decode + OCR + layout, one thread) | Benchmark on TD-1 scans | M0: Tesseract, slowest clean A4 page 0.26 s on RM-1 (ADR-0014) |
 | NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION |
 | NFR-PERF-23 | Email parsing (MBOX) | ≥ 200 messages/s (without attachments OCR) | Benchmark on public Enron slice | ASSUMPTION |
-| NFR-PERF-24 | LLM extraction speed | ≥ 2 segments/s on RM-1 (segment ≈ 500 tokens) | Benchmark in M1 | ASSUMPTION · final after M1 |
-| NFR-PERF-25 | Parallel workers | Stage A uses up to (CPU cores − 1) workers; Stage B uses 1 request at a time per local model by default | Config check | ASSUMPTION |
+| NFR-PERF-24 | LLM extraction speed | ≥ 1 segment/s on RM-1 with the minimum-tier model (segment ≤ 2,000 chars) | Benchmark | M1: Qwen3.5-4B 1.39 segments/s with 4 slots, 0.66 with 1; no model reached the earlier 2/s (`09-model-check.md` §5.1). Target lowered 2026-10-24 (gap A3) |
+| NFR-PERF-25 | Parallel workers | Stage A uses up to (CPU cores − 1) workers; Stage B uses up to 4 parallel requests (server slots) per local model | Config check | ASSUMPTION · M1: 4 slots give 2.1× throughput at the same quality (decided 2026-10-24, gap A3) |
 
 ### 3.4 Search and incremental work
 
@@ -132,17 +132,17 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-QA-01 | Link recall (known links found) | ≥ 80% | Benchmark | Brief · final after M1 |
-| NFR-QA-02 | Link precision (shown links correct) | ≥ 90% | Benchmark | Brief · final after M1 |
+| NFR-QA-01 | Link recall (known links found) | ≥ 80% | Benchmark | Brief · M1: confirmed; name-key estimate 97.4% for every model (`09-model-check.md` §5.2). Measured in M4 (identifiers) and M7 (entities) |
+| NFR-QA-02 | Link precision (shown links correct) | ≥ 90% | Benchmark | Brief · M1: confirmed; name-key estimate 75.5% (4B), 90.2% (35B-A3B), 92.5% (Flash-Next). Measured in M4 and M7 |
 | NFR-QA-03 | Identifier precision, checksum types (IBAN, BTC, EVM checksum, TRON) | ≥ 99% | Benchmark | ASSUMPTION |
 | NFR-QA-04 | Identifier precision, other types (email, phone, domain, Solana) | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-05 | Identifier recall, text-native files | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-06 | Identifier recall, OCR'd files (clean 300 DPI scans) | ≥ 85% | Benchmark | ASSUMPTION |
 | NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · ASSUMPTION (definition) |
-| NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% | Benchmark | ASSUMPTION · final after M1 |
-| NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | ASSUMPTION · final after M1 |
+| NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% (micro, per-segment name keys, `09-model-check.md` §3.1) | Benchmark | M1: confirmed. Qwen3.5-4B 82.9% (minimum tier), 35B-A3B 91.2%, Flash-Next 93.4% → Layer 2 Experimental until M6 re-measures |
+| NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | M1: confirmed. 94.0% / 96.7% / 98.5% on reference text; OCR noise measured in M6 |
 | NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
-| NFR-QA-11 | LLM mentions with evidence not found in source text | 0 shown | Automated span check | Brief ("never invent") |
+| NFR-QA-11 | LLM mentions with evidence not found in source text | 0 shown | Automated span check | Brief ("never invent") · M1: the span check discarded 0–4 mentions per run (≤ 1.0%) |
 | NFR-QA-12 | Highlight lands on the right text | ≥ 99% of 200 random clicks | Semi-automated check | ASSUMPTION |
 | NFR-QA-13 | CSV column-mapping suggestions correct | ≥ 90% of columns in TD-1 | Benchmark | ASSUMPTION |
 
@@ -162,7 +162,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-SEC-08 | Logs | No document content in logs by default; max 50 MB, rotated | Log review | ASSUMPTION |
 | NFR-SEC-09 | Viewer safety | 0 network requests and 0 script runs when viewing TD-1 emails/HTML | Network capture + CSP check | ASSUMPTION |
 | NFR-SEC-10 | Tauri security | Strict content security policy; only needed IPC commands exposed; no remote URLs loaded in the app window | Config review | ASSUMPTION |
-| NFR-SEC-11 | Downloaded binaries and models | SHA-256 checked against the catalog before use | Tamper test | Brief (checksum) |
+| NFR-SEC-11 | Downloaded models | SHA-256 checked against the catalog before use. The app downloads no binaries: `llama-server` is user-installed (ADR-0015) | Tamper test | Brief (checksum) · M1: binaries dropped from scope (ADR-0015) |
 | NFR-SEC-12 | Dependency vulnerabilities | 0 known critical/high at release (`cargo audit`, `npm audit`) | CI | ASSUMPTION |
 | NFR-SEC-13 | Data at rest | Not encrypted by the app in v0.1; README tells users to use OS disk encryption | README review | ASSUMPTION (Open question Q8) |
 | NFR-SEC-14 | Card-like numbers | Never shown unmasked in lists; never written to logs | UI + log check | ASSUMPTION |
@@ -173,7 +173,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + model download, normal connection, supported hardware) | Timed fresh run on RM-1 | Brief |
+| NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + llama.cpp install + model download, normal connection, supported hardware) | Timed fresh run on RM-1 | Brief · M1: the install step is part of the run (ADR-0015, [install guide](install-llama-cpp.md)). ASSUMPTION: a few minutes with a package manager; a prebuilt Vulkan archive is 35 MB (~3 s at 100 Mbit/s), CUDA + its runtime 772 MB (~1 min). Not timed in M1 |
 | NFR-USE-02 | "Normal connection" for NFR-USE-01 | 100 Mbit/s | — | ASSUMPTION |
 | NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION |
 | NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief |
@@ -212,7 +212,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-MNT-06 | LLM quality benchmark | Run manually before each release on RM-1 | Release checklist | ASSUMPTION |
 | NFR-MNT-07 | DB migrations | Forward-only, numbered, tested on a copy of TD-2 | CI | ASSUMPTION |
 | NFR-MNT-08 | Code style | `rustfmt`, `clippy` (no warnings), ESLint + Prettier, TypeScript strict mode — enforced in CI | CI | ASSUMPTION |
-| NFR-MNT-09 | Model catalog format | Versioned JSON file with schema; validated in CI | CI | ASSUMPTION |
+| NFR-MNT-09 | Model catalog format | Versioned JSON file with schema; validated in CI | CI | ASSUMPTION · M1: `crates/mk-models` (catalog v0, schema, `cargo test -p mk-models`); CI from M2a |
 
 ---
 
@@ -224,7 +224,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-LEG-02 | Dependency licenses | All compatible with AGPL-3.0; checked with `cargo-deny` and an npm license checker | CI | ASSUMPTION |
 | NFR-LEG-03 | Model licenses | Shown in catalog before download; only models whose license allows local use are listed | Catalog review | ASSUMPTION |
 | NFR-LEG-04 | Demo data | Only synthetic or public data; no real private people | Corpus review | Brief |
-| NFR-LEG-05 | Third-party notices | `THIRD_PARTY_NOTICES` file generated for each build (incl. llama.cpp, OCR engine) | Build output | ASSUMPTION |
+| NFR-LEG-05 | Third-party notices | `THIRD_PARTY_NOTICES` file generated for each build (incl. the OCR engine; not llama.cpp, which is user-installed and not shipped, ADR-0015) | Build output | ASSUMPTION · M1: llama.cpp removed (ADR-0015) |
 
 ---
 
@@ -232,5 +232,5 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 These are placeholders until the M0 and M1 spikes produce real data (`06-roadmap.md`):
 - After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07, NFR-RES-07. **Done in M0c:** targets kept, measured values in the rows above (ADR-0014, `08-engine-bakeoff.md` §13). NFR-RES-07 still needs the shell share (M2a).
-- After M1 (local models): NFR-PERF-13, -24 (LLM speed), NFR-QA-01, -02, -08, -09 (quality targets), model tiers and catalog (brief §14)
+- After M1 (local models): NFR-PERF-13, -24 (LLM speed), NFR-QA-01, -02, -08, -09 (quality targets), model tiers and catalog (brief §14). **Done in M1 (2026-10-24):** quality and link targets kept; NFR-PERF-24 lowered to ≥ 1 segment/s and NFR-PERF-25 raised to 4 slots (gap A3); NFR-PERF-13 kept for the minimum-tier model; tiers in brief §8; catalog v0 in `crates/mk-models` (`09-model-check.md`). ADR-0015 follow-ups applied to NFR-SEC-11, -LEG-05, -USE-01.
 - NFR-PERF-11 (Stage A incl. OCR): M0 gives about 0.2 s per OCR page on one core (TD-1 has 22 OCR pages, about 5 s). The 3-min target is kept and checked in M3.

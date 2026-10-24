@@ -249,3 +249,4 @@ Byte identity has been checked on Linux only (two runs, same bytes). **Cross-OS 
 - The public slice depends on government URLs staying up. `corpus-gen fetch` fails loudly when a file is gone or changed.
 - Real-world email is synthetic only (§8); revisit in M3.
 - Public files are partly annotated; full name annotation of real documents is out of scope for v0.1.
+- **Gold gap found in M1:** "Port Authority", printed as a short form of Velmora Port Authority, is not annotated as a mention, so extractors get false positives for it (`09-model-check.md` §5.3). Add it to the entity's aliases at the next regeneration.

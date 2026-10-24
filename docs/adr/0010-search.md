@@ -65,3 +65,4 @@
 
 **Follow-ups**
 - Benchmarks: recall@20 of binary + rescore vs exact on TD-1 in M1 (spike S1); 100 keyword queries on TD-2 in M4 (spike S4); 100 meaning queries on TD-2 in M6 (spike S6).
+- **M1 result (2026-10-24, `09-model-check.md` §6):** on 3,163 TD-1 windows and 100 queries, binary top 200 → f32 rescore → top 20 keeps recall@20 at 0.984 (Qwen3-Embedding-0.6B), 0.972 (bge-m3) and 0.954 (nomic-embed-text-v1.5). Pool 100 also passes (0.903–0.954); binary alone does not (0.57–0.70). f16 rescoring gives the same recall, so f16 storage is fine. R2 (quality) is retired for TD-1; the fallbacks are not needed. At 1024 dims the index is 128 MB per 1M segments. Brief §14 now names this design. Status stays Proposed: FTS5 (S4) and latency plus recall at TD-2 scale (S6) are still open.

@@ -84,11 +84,11 @@ The brief's first milestone plan (approved 2026-09-22) said its estimates would 
 
 | M0 | M1 | M2 | M3 | M4 | M5 | M6 | M7 | M8 | M9 | Total |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1.5 | 0.5 | 1.5 | 2 | 1.5 | 1 | 1.5 | 1.5 | (1) | 1 | **~12** without M8 |
+| 1.5 | 0.5 | 1.5 | 2 | 1.5 | 1.25 | 1.5 | 1.5 | (1) | 1 | **~12.25** without M8 |
 
 Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
 
-All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. Re-baseline after M1.
+All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. **Re-baselined after M1 (2026-10-24):** M5 1 → 1.25 (the external path moved in from M1); M6 stays 1.5 (it adds the identifier-overlap rule and 4-slot Stage B); M7 and M8 unchanged, with the M8 go/no-go leaning no (`09-model-check.md` §7).
 
 **Cut order if behind** (brief §10): M8 first, then Layer 2. Inside Layer 2, ASSUMPTION: US-12.2 (edit entity) → US-06.2 (meaning search) → US-11.2/11.3 (proposals + review queue, keeping US-11.1 exact-name groups) → E10 marked experimental.
 
@@ -118,7 +118,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
   - `tools/corpus-gen` — the TD-1/TD-3 generator, in Rust. Deterministic: a fixed seed and generator version give the same files byte for byte.
   - `testdata/td1/`, `testdata/td3/` — the generated files and the ground-truth file, built locally and **never committed** (`.gitignore`). The generator's committed hash list (`corpus.sha256`) keeps the ground truth from drifting. Public files are downloaded into `testdata/td1/public/` by `corpus-gen fetch` from a committed manifest (source URL, license, SHA-256) (NFR-LEG-04).
   - `testdata/td2/` — generated locally from TD-1 in M2b, never committed.
-  - `spikes/` — throwaway bake-off harnesses. Not in the workspace's default members. Removed in M2a once ADR-0014 records their numbers.
+  - `spikes/` — throwaway bake-off harnesses. Not in the workspace's default members. `pdf-bakeoff` is removed in M2a once ADR-0014 records its numbers. `model-check` (M1) stays until the M6 LLM benchmark (NFR-MNT-06) replaces it (decided 2026-10-24).
 
 **Out of scope**
 - Worker processes, database, job queue, UI.
@@ -165,7 +165,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - **Runtime mechanics (ADR-0015)** from a small Rust harness on RM-1: find the user-installed `llama-server` (settings path, then `PATH`), read its build from `--version` and check the minimum, start on `127.0.0.1` with a random port and `--api-key`, wait for `/health`, kill, restart. Confirms the supervisor approach before M5 builds it. Sets the minimum build and writes the install guide.
 - **Extraction**: one people/org prompt with a JSON-schema `response_format` (brief §14). 3 model sizes. Measure on TD-1 segments: precision, recall, segments/s, VRAM/RAM peak, share of outputs that fail the evidence span check (INV-AI span rule, NFR-QA-11) and the schema check (INV-AI-03).
 - **Embeddings (R2, gap A6)**: 2–3 candidate embedding models. Recall@20 of binary + rescore vs exact search on TD-1.
-- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-2 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0015).
+- **External path**: the same harness against Ollama and LM Studio on RM-1, called from RM-2 over the LAN. Record which support structured output (`structuredOutput` flag, ADR-0015). **Moved to M5 (decided 2026-10-24).**
 - **Optional probe** (≤ ½ day): relations on the best model, to inform the M8 go/no-go.
 
 **Out of scope**
@@ -193,6 +193,14 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 6. R2 decided: ADR-0010 confirmed, or a new ADR records the change. The brief §14 mention of `sqlite-vec` is reconciled with ADR-0010 (see §4).
 
 **Exit decision.** Layer 2 scope and hardware tiers fixed. Estimates for M5–M8 re-baselined.
+
+**Outcome (M1, 2026-10-24).** Results in `09-model-check.md`; the runtime check and install guide in §4 there and `install-llama-cpp.md`.
+- **Layer 2: Experimental** (decided 2026-10-24). The minimum-tier model (Qwen3.5-4B) has precision 82.9% and recall 94.0%; the bigger-tier models pass (35B-A3B 91.2% / 96.7%, Flash-Next 93.4% / 98.5%). M6 ships Layer 2 behind the US-10.3 "Experimental" flag, builds the identifier-overlap rule (§5.3 there: 4B at 92.0% precision once identifier-like names are dropped) and re-measures on Stage A output. If the minimum-tier model then passes NFR-QA-08/09, the label is dropped at the M6 exit. The hardware minimum is unchanged.
+- **Tiers** (decided 2026-10-24): `minimum` (8 GB VRAM + 16 GB RAM, or 32 GB unified) → Qwen3.5-4B; `large-ram` (8 GB VRAM + 48 GB RAM, or 64 GB unified) → Qwen3.6-35B-A3B; bge-m3 for embeddings in both. Catalog v0: `crates/mk-models/catalog/catalog.json`.
+- **Runtime:** ADR-0015's path works on RM-1; minimum build 10863.
+- **Vectors (R2):** binary top 200 → float rescore keeps recall@20 at 0.954–0.984 for all three embedding models. ADR-0010 holds on TD-1.
+- **Speed (A3):** no model reaches 2 segments/s; Stage B uses up to 4 slots (1.39 segments/s for the 4B).
+- **Relations probe:** P 48%, R 72% on the best model. M8 stays cut first; its go/no-go leans no.
 
 ---
 
@@ -337,6 +345,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - **`mk-egress`** (ADR-0009): destination lookup, resolve all addresses, classify (most exposed wins), permission check, `EgressRecord` before send, client pinned to the checked IP, test-text endpoint check (INV-EG-08).
 - **Secrets** (ADR-0012): keyring; session-only key when no Secret Service on Linux.
 - **US-14.4** first-run flow (hardware check → model or endpoint or "Skip" → first project; "Open demo project").
+- **External path moved from M1** (decided 2026-10-24): the M1 harness (`spikes/model-check`) against Ollama and LM Studio on RM-1, called from RM-2 over the LAN; record which support structured output (`structuredOutput` flag, ADR-0015).
 
 **Out of scope**
 - AI extraction and embedding jobs (M6). Only endpoint test calls go out.
@@ -372,7 +381,8 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Goal.** Brief §4 step 3: people and companies in 2+ sources appear within minutes, each with evidence that exists in the source text.
 
 **Scope**
-- **E10** all: US-10.1–10.4 — Stage B lane, schema check with one retry, evidence span check, confidence, "experimental" label if M1 said so, re-run with another model via pending run + switch (ADR-0005, gap A4).
+- **E10** all: US-10.1–10.4 — Stage B lane, schema check with one retry, evidence span check, confidence, "experimental" label (M1 said Experimental), re-run with another model via pending run + switch (ADR-0005, gap A4).
+- From M1: an AI mention that overlaps an identifier mention from Stage A is dropped (`09-model-check.md` §5.3); Stage B uses up to 4 slots on the local model (NFR-PERF-25); on large projects Stage B runs on documents the user picks, segments with identifiers first (gap A3). Re-measure NFR-QA-08/09 with the minimum-tier model on Stage A output; if it passes, drop the "Experimental" label.
 - **E06** US-06.2 meaning search: embeddings lane, float vectors in `project.db`, binary index file, rescoring, idle release (ADR-0010). Query embedding goes through the gate (INV-SR-03).
 - **US-11.1** exact-name groups (needed to show entities).
 - **US-07.7** first part: entities with mentions in 2+ sources on the connections screen.
@@ -388,9 +398,9 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 | | |
 |---|---|
-| Question | Binary scan + rescore + query embedding ≤ 1 s p95 for top 20 on TD-2? M1 proved recall on TD-1, not latency at scale. |
-| Method | 100 queries on TD-2-sized synthetic vectors from the chosen model. |
-| Pass mark | ≤ 1 s p95 (NFR-PERF-31); index memory within NFR-RES-01 when not in use. |
+| Question | Binary scan + rescore + query embedding ≤ 1 s p95 for top 20 on TD-2? M1 proved recall on TD-1, not latency or recall at scale. |
+| Method | 100 queries on TD-2-sized synthetic vectors from the chosen model. Also recall@20 against exact search at TD-2 scale (added 2026-10-24: the M1 pool of 200 was 6.3% of TD-1 but is 0.02% of TD-2). |
+| Pass mark | ≤ 1 s p95 (NFR-PERF-31); recall@20 ≥ 0.9 (ADR-0010); index memory within NFR-RES-01 when not in use. |
 | Timebox | 1 day. |
 | If it fails | int8 index, then HNSW (ADR-0010). Additive. |
 
@@ -470,7 +480,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Scope**
 - **E14** all: US-14.1–14.4 (build from source, README, published corpus and benchmark, first run).
 - README: hardware minimum at the top, tested-platform matrix (brief §8), "Responsible use" (brief §13), disk-encryption note (NFR-SEC-13).
-- `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. llama.cpp and the chosen engines.
+- `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. the chosen engines. llama.cpp is user-installed and not shipped (ADR-0015).
 - Full NFR sweep on RM-1 and RM-2.
 - Demo video and README GIFs from TD-1 only.
 - Tag v0.1.
@@ -499,7 +509,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 |---|---|---|---|
 | R4 PDF/OCR quality (K1) | S0 | M0b, M0c | No — that is why it is first. |
 | R3 prebuilt `llama-server` per OS/GPU (K5). **Retired in M0c:** prebuilt builds exist for every desktop OS and GPU backend; `llama-server` is user-installed (ADR-0015). | Desk check | M0c (done), M1 (install guide) | Yes (install guide names the build per GPU). |
-| R2 binary vectors: quality (K2) | S1 | M1 | Yes (int8, HNSW). |
+| R2 binary vectors: quality (K2). **Retired in M1 for TD-1:** recall@20 0.954–0.984 with pool 200 for all three embedding models (`09-model-check.md` §6); recall at TD-2 scale checked in S6. | S1 | M1 (done), M6 | Yes (int8, HNSW). |
 | R2 binary vectors: latency at scale (K6) | S6 | M6 | Yes. |
 | R6 CSV streaming (K3) | S2a | M2c | Mostly (chunking, frames). |
 | R5 macOS memory limit (K3) | S2b | M2c | Yes (wording + sampling). |
@@ -517,11 +527,11 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | # | Decision | Source | Needed by |
 |---|---|---|---|
 | 1 | **Approved (2026-10-22).** Approve this order and renumbering. Brief §10, the story and epic milestone tags in `02-requirements.md`, and milestone references in `03-nfr.md`, `05-architecture.md` and the ADRs are updated (2026-10-22). | This file §1.3 | Start of M0a |
-| 2 | Brief §14 names `sqlite-vec`; ADR-0010 chose a binary flat index + rescoring. The brief wins until changed. Update the brief with the S1 result, or keep `sqlite-vec`. | Brief §14, ADR-0010 | End of M1 |
+| 2 | **Decided (2026-10-24).** Brief §14 named `sqlite-vec`; ADR-0010 chose a binary flat index + rescoring. S1 passed (recall@20 0.954–0.984), so brief §14 now names the binary index with float rescoring (ADR-0010). | Brief §14, ADR-0010 | End of M1 |
 | 3 | **Decided (2026-10-23).** A1 — download hosts for runtime (and native engine) binaries. The app downloads no binaries: `llama-server` is a user-installed prerequisite with a minimum version (ADR-0015), and the PDF and OCR engines are compiled in (ADR-0014). Hugging Face stays the only download host. The source of extra OCR language files is decided in M3. | 05-architecture §10 | End of M0c |
-| 4 | A3 — how Stage B is limited on large projects. | 05-architecture §10 | End of M1 |
-| 5 | A6 — "works with binary vectors" as a catalog rule. | 05-architecture §10 | End of M1 |
-| 6 | Layer 2: Go / Experimental / Cut. | Brief §10 | End of M1 |
+| 4 | **Decided (2026-10-24).** A3 — Stage B uses up to 4 slots on the local model; on large projects it runs on documents the user picks, segments with identifiers first; NFR-PERF-24 is ≥ 1 segment/s. | 05-architecture §10 | End of M1 |
+| 5 | **Decided (2026-10-24).** A6 — a listed embedding model needs binary recall@20 ≥ 0.9; `Catalog::validate` checks it. | 05-architecture §10 | End of M1 |
+| 6 | **Decided (2026-10-24).** Layer 2: **Experimental**, label dropped at the M6 exit if the minimum-tier model passes NFR-QA-08/09 there (M1 outcome above). | Brief §10 | End of M1 |
 | 7 | A2, A5 — memory budget counting and NFR-REL-07 wording. | 05-architecture §10 | End of M2c |
 | 8 | A7 — one open project at a time. | 05-architecture §10 | End of M2d |
 | 9 | A8 — emails/HTML as text only. | 05-architecture §10 | Start of M3 |

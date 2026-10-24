@@ -2,7 +2,7 @@
 
 > Name: **Mangkon AI** · Repo: `mangkon-ai`
 > Type: Open-source, local-first desktop app
-> Status: Brief approved after PM interview (2026-09-22). §10 milestone order updated to match `06-roadmap.md`; §11 and §17 doc references updated to the docs that exist (2026-10-22). Nothing is built yet.
+> Status: Brief approved after PM interview (2026-09-22). §10 milestone order updated to match `06-roadmap.md`; §11 and §17 doc references updated to the docs that exist (2026-10-22). §8 tiers, §10 Layer 2 outcome and §14 vectors updated after M1 (2026-10-24). Nothing is built yet.
 > Input: `00-idea.md`. **If this brief and `00-idea.md` disagree, this brief wins.**
 
 ---
@@ -142,7 +142,14 @@ Reason: a slow, bad first run hurts the project's reputation more than a smaller
 - The maintainer tests two paths: a machine at or above the minimum, and a below-minimum machine using an external endpoint on the local network.
 - Other platforms: CI builds + community testing in v0.1. The README says honestly what is tested.
 
-Final model tiers and timing numbers are set after M1.
+Model tiers, set in M1 (2026-10-24, `09-model-check.md` §9):
+
+| Tier | Machine | Recommended extraction model | Embeddings |
+|---|---|---|---|
+| Minimum | 8 GB VRAM + 16 GB RAM, or 32 GB unified memory | Qwen3.5-4B (Q4_K_M) | bge-m3 |
+| Large RAM | 8 GB VRAM + 48 GB RAM, or 64 GB unified memory | Qwen3.6-35B-A3B (Q8_0) | bge-m3 |
+
+The minimum is unchanged. Unified-memory thresholds are an estimate (no Mac measured in M1). The catalog (`crates/mk-models/catalog/catalog.json`) lists more models than it recommends.
 
 ---
 
@@ -161,6 +168,7 @@ Final model tiers and timing numbers are set after M1.
 
 - **Rule:** if behind, **cut scope** (Layer 3 → Layer 2), don't grow the release. Layer 3 is its own milestone (M8), so it is cut first.
 - If M1 shows local models extract poorly: v0.1 = Layer 1 (identifier-based connections) + AI extraction marked "experimental".
+- **M1 outcome (2026-10-24): Layer 2 ships marked "experimental".** The minimum-tier model reached 82.9% precision (target 85%) and 94.0% recall; bigger models pass. M6 re-measures with a rule that drops AI mentions overlapping identifiers; if the minimum-tier model then passes, the label goes (`06-roadmap.md` M1 outcome).
 - **Order:** the riskiest unknown is proven first. Goal, scope, acceptance criteria and spikes for each milestone are in `06-roadmap.md`.
 
 ### Milestones (estimates)
@@ -216,7 +224,7 @@ Details go in `07-test-corpus.md`, written in M0a.
 
 ### Confirmed (can change only with a strong M0 or M1 result)
 - Tauri 2 shell, React + TypeScript + Tailwind frontend, Rust core
-- SQLite per project, FTS5 for keyword search, sqlite-vec for vectors, plain tables for the graph
+- SQLite per project, FTS5 for keyword search, a binary vector index with float rescoring for vectors (ADR-0010; was sqlite-vec, changed after M1), plain tables for the graph
 - `llama-server` (llama.cpp) as a sidecar, or any OpenAI-compatible endpoint
 - JSON-schema (grammar-constrained) output for LLM extraction
 - **Rust-native parsing by default.** No Python required to build or run.
@@ -225,8 +233,9 @@ Details go in `07-test-corpus.md`, written in M0a.
 ### Decided in M0 and M1
 - M0: OCR engine: Tesseract vs `ocrs` (quality + build complexity). Decided in M0c: Tesseract, see ADR-0014.
 - M0: Whether Rust parsing is good enough (if clearly not: optional Python sidecar in v0.2, never required). Decided in M0c: yes for PDF (hayro, pure Rust); OCR uses Tesseract, compiled in from pinned sources; no Python sidecar. See ADR-0014.
-- M1: Model catalog and hardware tiers (real timing on the test corpus)
-- M1: Final precision/recall targets
+- M1: Model catalog and hardware tiers (real timing on the test corpus). Decided in M1: catalog v0 and two tiers (§8), `09-model-check.md`.
+- M1: Final precision/recall targets. Decided in M1: 85% precision / 70% recall kept; Layer 2 ships as "experimental" (§10).
+- M1: Vectors. Decided in M1: the binary index with float rescoring holds (recall@20 0.954–0.984 on TD-1); `sqlite-vec` dropped (ADR-0010).
 
 ---
 
