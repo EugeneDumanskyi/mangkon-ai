@@ -1,0 +1,13 @@
+[package]
+name = "mk-identifiers"
+description = "BC-04: identifier validators and extractors, pure functions (filled in M2b)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mk-kernel.workspace = true

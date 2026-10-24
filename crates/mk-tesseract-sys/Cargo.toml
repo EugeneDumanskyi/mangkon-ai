@@ -1,0 +1,23 @@
+[package]
+name = "mk-tesseract-sys"
+description = "Tesseract and Leptonica built from SHA-256-pinned sources, with a minimal FFI (ADR-0014)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "tesseract"
+
+# The one crate that may use `unsafe` (ADR-0002): `deny` here, allowed only in `src/ffi.rs`.
+# Cargo cannot override a single workspace lint, so the rest of the workspace set is repeated.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[build-dependencies]
+cmake = "0.1.58"
+serde = { version = "1.0.229", features = ["derive"] }
+sha2 = "0.11.1"
+toml = { version = "0.9.8", default-features = false, features = ["parse", "serde"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }

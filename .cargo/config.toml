@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+
+[env]
+# ts-rs writes the IPC bindings here when `cargo test` runs (ADR-0003).
+TS_RS_EXPORT_DIR = { value = "ui/src/ipc/bindings", relative = true }

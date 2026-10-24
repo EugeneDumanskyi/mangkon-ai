@@ -1,0 +1,13 @@
+[package]
+name = "mk-graph"
+description = "BC-07..09: identifier, connection and entity rows, rebuilt together (filled in M2b)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mk-kernel.workspace = true

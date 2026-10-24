@@ -252,6 +252,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-01 Workspace | `mk-workspace` | Core |
 | BC-02 Corpus (model, re-scan, presence) | `mk-corpus` | Core |
 | BC-02 Corpus (parsers, OCR) | `mk-parsers` | Workers |
+| BC-02 Corpus (OCR engine build) | `mk-tesseract-sys`: Tesseract + Leptonica from pinned sources, the only crate with `unsafe` (FFI, ADR-0002 rule 6, ADR-0014) | Workers (through `mk-parsers`) |
 | BC-03 Processing | `mk-jobs` | Core |
 | BC-04 Identifier extraction | `mk-identifiers` (pure functions) | Workers (Stage A), core (custom-pattern re-runs), CLI |
 | BC-05 Structured mapping | `mk-mapping` | Core |
@@ -263,6 +264,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-13 Evaluation | `mk-bench` | CLI only |
 | Storage adapters, migrations | `mk-store` | Core |
 | App entry points | `apps/desktop` (Tauri), `apps/cli` | — |
+| Repo tasks (build, CI gates, layer check, notices) | `tools/xtask` | Developer machine, CI |
 
 ---
 

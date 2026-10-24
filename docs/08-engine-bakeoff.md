@@ -37,7 +37,7 @@ Not candidates:
 
 Machine: **RM-1, Linux x86_64, 24 threads**, release build, `rustc 1.99.1`. All runs single-threaded. Measured 2026-10-23 03:22 UTC on an idle machine. One run per engine; every timing is at least 15× inside its pass mark, so run-to-run noise does not change a result.
 
-Harness: `spikes/` is its own Cargo workspace (own `Cargo.lock`, excluded from the main workspace) with one crate, `pdf-bakeoff`. Each engine sits behind a cargo feature (`hayro`, `oxide`, `pdfium`), so build time and size can be measured per engine. Throwaway: removed in M2a once ADR-0014 records the numbers (roadmap M0 scope).
+Harness: `spikes/` is its own Cargo workspace (own `Cargo.lock`, excluded from the main workspace) with one crate, `pdf-bakeoff`. Each engine sits behind a cargo feature (`hayro`, `oxide`, `pdfium`), so build time and size can be measured per engine. Throwaway: removed in M3, once the hayro adapter and the OCR path are ported to `mk-parsers` (moved from M2a, decided 2026-10-24).
 
 ```sh
 # needs testdata/ (07-test-corpus.md §9)
@@ -100,7 +100,7 @@ The 15 TD-3 files a PDF engine takes (PDF magic bytes, or a `.pdf` name without 
 
 - **Build:** `build-probe.sh` runs a clean `cargo build --release --locked` per engine, each in a fresh target directory, plus a no-engine baseline. Crates come from the local registry cache, so download time is not counted, and neither is the `libpdfium` download (3.6 MB archive).
 - **Size:** binary size over the baseline, plus `libpdfium.so` for pdfium.
-- **Licenses:** the crates each engine adds to the normal-dependency closure (`cargo metadata`, Linux target), checked against an AGPL-3.0-compatible SPDX list. `libpdfium` is checked by hand from the notices bundled in its archive. `cargo-deny` arrives in M2a (§9, conflict 7).
+- **Licenses:** the crates each engine adds to the normal-dependency closure (`cargo metadata`, Linux target), checked against an AGPL-3.0-compatible SPDX list. `libpdfium` is checked by hand from the notices bundled in its archive. `cargo-deny` arrives in M2a (§9, conflict 7); set up there (`deny.toml`).
 
 ---
 
@@ -258,7 +258,7 @@ Listed, not silently resolved.
 4. **Mixed stacks.** ADR-0013 rule 3 (one engine for text and render) excludes pure-Rust combinations such as `lopdf` text + `hayro` render. MuPDF is not in the M0b roadmap row.
 5. **Build on three OSes.** The S0 build criterion is "one-command build on 3 OSes"; M0b and M0c record Linux only. macOS and Windows are not verified here (platform scope: Linux first). The 3-OS wording in the roadmap and NFRs is unchanged for now.
 6. **Thresholds.** The round-trip thresholds, render scale, TD-3 deadline and memory cap are ASSUMPTIONs (§8).
-7. **`cargo-deny`** is not set up yet (M2a). Licenses are checked from `cargo metadata` for now.
+7. **`cargo-deny`** is not set up yet (M2a). Licenses are checked from `cargo metadata` for now. Done in M2a: `deny.toml`, run in CI.
 
 ---
 
@@ -472,7 +472,7 @@ The round-trip in §13.1 runs exactly this path: its Map step reads the boxes fr
 3. **NFR-QA-06** counts extracted identifiers. No extractor exists (M4), so the raw-text presence is the proxy, as M0b did for NFR-PERF-20.
 4. **NFR-QA-07 "≥ 95% characters"** is read as 1 − CER, whitespace-normalised, OCR lines in reference order, clean tier (§12.3). **ASSUMPTION.** The clean tier holds 6 pages (2,461 characters); the office tier (9 pages) gives the same verdict for every engine.
 5. **Scanned-PDF pages are rendered by hayro at 300 DPI**, not taken from the embedded image. This ties OCR of scanned PDFs to the PDF engine. **ASSUMPTION.**
-6. **NFR-RES-07** cannot be measured whole before the Tauri shell exists (M2a). Engine and model shares are measured here.
+6. **NFR-RES-07** cannot be measured whole before the Tauri shell exists (M2a). Engine and model shares are measured here. M2a measured the shell share: ~10.8 MB (`10-walking-skeleton.md` §2).
 7. **Thresholds.** 100 MP / 512 MiB image guard, 300 DPI render and the round-trip thresholds are spike values. **ASSUMPTION.**
 8. **ocrs confidence.** `TextChar` holds only the character and its box. Getting a confidence would mean running the recognition model a second time from the adapter, or an upstream change.
 9. **Build on three OSes**: as §9, conflict 5. Linux only; Tesseract's cmake build on macOS and Windows is not verified here.
@@ -537,3 +537,4 @@ Findings:
 - **Size for NFR-RES-07 (Linux):** hayro 8.8 MB + shared OCR path 1.3 MB + Tesseract 4.6 MB + `eng.traineddata` 4.1 MB = **18.8 MB** of the 150 MB budget, before the shell and the models.
 - **Download hosts (gap A1):** the PDF engine and Tesseract need none at run time. A1 was decided on 2026-10-23: the app downloads no binaries, and `llama-server` is user-installed (ADR-0015). Where extra OCR language files come from is decided in M3.
 - **Decided:** ADR-0014 (hayro, Tesseract) and ADR-0015 (user-installed `llama-server`), both Accepted.
+- **Follow-up timing (decided 2026-10-24):** M2a builds Tesseract 5.5.2 and Leptonica 1.87.0 from the pinned archives in `crates/mk-tesseract-sys` (its own `build.rs`, system `curl`, SHA-256 checked; `tesseract-rs` is not used) and links them, with one smoke test. The hayro adapter, the shared OCR path and removing `spikes/pdf-bakeoff` move to M3 (roadmap M3). The ADR-0014 decision is unchanged.

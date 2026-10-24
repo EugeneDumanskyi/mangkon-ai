@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Theme tokens (ADR-0003, NFR-USE-08): light and dark follow the OS setting. Components use the
+   Tailwind names below (bg-surface, text-muted, …), never raw colours. Pairs are picked for WCAG
+   AA contrast (NFR-USE-09). */
+:root {
+  --mk-surface: #ffffff;
+  --mk-surface-alt: #f3f5f7;
+  --mk-text: #14212b;
+  --mk-muted: #4c5c68;
+  --mk-border: #d5dce2;
+  --mk-accent: #155e75;
+  --mk-accent-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --mk-surface: #11181d;
+    --mk-surface-alt: #18222a;
+    --mk-text: #e6edf2;
+    --mk-muted: #9fb0bc;
+    --mk-border: #2b3a45;
+    --mk-accent: #67c3dd;
+    --mk-accent-text: #0b1419;
+  }
+}
+
+@theme inline {
+  --color-surface: var(--mk-surface);
+  --color-surface-alt: var(--mk-surface-alt);
+  --color-text: var(--mk-text);
+  --color-muted: var(--mk-muted);
+  --color-border: var(--mk-border);
+  --color-accent: var(--mk-accent);
+  --color-accent-text: var(--mk-accent-text);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  font-family: system-ui, sans-serif;
+}

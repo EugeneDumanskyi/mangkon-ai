@@ -1,0 +1,40 @@
+//! Mangkon AI desktop shell (ADR-0003). Thin: every command calls into `mk-core` (ADR-0002).
+//!
+//! The window loads only the embedded UI. Navigation anywhere else and new windows are refused
+//! (NFR-SEC-10); the CSP and the capability files limit what the UI may do.
+
+// No console window on Windows release builds.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod commands;
+mod ipc;
+mod nav;
+
+use tauri::webview::NewWindowResponse;
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+fn main() {
+    let builder = tauri::Builder::default();
+    #[cfg(not(feature = "spike-s2d"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![commands::app_info]);
+    #[cfg(feature = "spike-s2d")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        commands::app_info,
+        commands::synthetic_rows,
+        commands::record_frame_stats
+    ]);
+
+    builder
+        .setup(|app| {
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("Mangkon AI")
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(640.0, 480.0)
+                .on_navigation(nav::allowed)
+                .on_new_window(|_, _| NewWindowResponse::Deny)
+                .build()?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("failed to start Mangkon AI");
+}

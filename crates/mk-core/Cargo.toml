@@ -1,0 +1,26 @@
+[package]
+name = "mk-core"
+description = "Application services: wires the context crates together. No Tauri (ADR-0002)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# Spike S2d (M2a): synthetic connection rows for the WebKitGTK scroll test. Not in shipped builds.
+spike-s2d = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+mk-kernel.workspace = true
+mk-workspace.workspace = true
+mk-corpus.workspace = true
+mk-parsers.workspace = true
+mk-identifiers.workspace = true
+mk-jobs.workspace = true
+mk-graph.workspace = true
+mk-store.workspace = true
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.154", optional = true }

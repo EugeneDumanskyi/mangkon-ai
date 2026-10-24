@@ -43,7 +43,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-01 | Cold start to project list | ≤ 3 s | Timer, RM-1, 10 runs, p95 | ASSUMPTION |
 | NFR-PERF-02 | Open a project of TD-2 size | ≤ 2 s to a usable connections screen | Timer, p95 | ASSUMPTION |
 | NFR-PERF-03 | UI stays responsive during background jobs | UI thread never blocked > 100 ms; input response ≤ 100 ms | Frame/long-task tracing during TD-2 ingestion | ASSUMPTION |
-| NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing | ASSUMPTION |
+| NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing | ASSUMPTION · M2a (S2d, WebKitGTK, RM-1): mean frame 16.7 ms (= idle), p95 18 ms, 0.03–0.24 % of frames > 25 ms. WebKitGTK times frames in whole ms, so "p95 ≤ 16.7 ms" fails even when idle; proposed measure: mean within 1 % of idle, p95 ≤ 18.7 ms, ≤ 1 % > 25 ms (`10-walking-skeleton.md` §S2d) |
 
 ### 3.2 Core workflow timing (brief §4)
 
@@ -103,7 +103,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-RES-04 | Free disk for models + project data | ~30 GB | README + hardware check | Brief |
 | NFR-RES-05 | Model download disk check | Model size + 2 GB headroom required before download | Test with a full disk | ASSUMPTION |
 | NFR-RES-06 | Local model stops after idle | After 10 min with no AI work | Timer | ASSUMPTION |
-| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION · M0: PDF + OCR engines with English OCR data add 18.8 MB on Linux (ADR-0014); `llama-server` is not shipped (ADR-0015); shell share measured in M2a |
+| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION · M0: PDF + OCR engines with English OCR data add 18.8 MB on Linux (ADR-0014); `llama-server` is not shipped (ADR-0015); M2a: shell share ~10.8 MB (release binary 10.91 MB with Tesseract linked, 10.77 MB without; `10-walking-skeleton.md` §2), so ~30 MB expected with the engines |
 
 ---
 
@@ -175,7 +175,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 |---|---|---|---|---|
 | NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + llama.cpp install + model download, normal connection, supported hardware) | Timed fresh run on RM-1 | Brief · M1: the install step is part of the run (ADR-0015, [install guide](install-llama-cpp.md)). ASSUMPTION: a few minutes with a package manager; a prebuilt Vulkan archive is 35 MB (~3 s at 100 Mbit/s), CUDA + its runtime 772 MB (~1 min). Not timed in M1 |
 | NFR-USE-02 | "Normal connection" for NFR-USE-01 | 100 Mbit/s | — | ASSUMPTION |
-| NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION |
+| NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION · M2a: `cargo xtask build --release` from `cargo clean` 54.8 s on RM-1, incl. source download, `npm ci`, Tesseract (`10-walking-skeleton.md` §2) |
 | NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief |
 | NFR-USE-05 | Error messages | Every failed file has a plain-English reason + path; no raw stack traces in the main UI | TD-3 review | Brief · ASSUMPTION (wording rule) |
 | NFR-USE-06 | Keyboard | Connections screen, source viewer, and review queue fully usable by keyboard | Manual test | ASSUMPTION |
@@ -204,7 +204,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-MNT-01 | Build requirements | One documented command per OS; no Python, no Docker | Fresh VM test | Brief |
+| NFR-MNT-01 | Build requirements | One documented command per OS; no Python, no Docker | Fresh VM test | Brief · M2a: `cargo xtask build` checks prerequisites (Rust, Node 20.19+/22.12+, CMake 3.18+, C++ compiler, curl, WebKitGTK on Linux) and builds; README "Build from source". Linux only; fresh VM test not run |
 | NFR-MNT-02 | CI | Build + tests on macOS, Windows, Ubuntu for every PR | CI config | Brief |
 | NFR-MNT-03 | CI duration | ≤ 30 min per PR | CI logs | ASSUMPTION |
 | NFR-MNT-04 | Rust core test coverage | ≥ 70% line coverage | Coverage report in CI | ASSUMPTION |
@@ -212,7 +212,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-MNT-06 | LLM quality benchmark | Run manually before each release on RM-1 | Release checklist | ASSUMPTION |
 | NFR-MNT-07 | DB migrations | Forward-only, numbered, tested on a copy of TD-2 | CI | ASSUMPTION |
 | NFR-MNT-08 | Code style | `rustfmt`, `clippy` (no warnings), ESLint + Prettier, TypeScript strict mode — enforced in CI | CI | ASSUMPTION |
-| NFR-MNT-09 | Model catalog format | Versioned JSON file with schema; validated in CI | CI | ASSUMPTION · M1: `crates/mk-models` (catalog v0, schema, `cargo test -p mk-models`); CI from M2a |
+| NFR-MNT-09 | Model catalog format | Versioned JSON file with schema; validated in CI | CI | ASSUMPTION · M1: `crates/mk-models` (catalog v0, schema, `cargo test -p mk-models`) · M2a: in CI through `cargo test --workspace` (`.github/workflows/ci.yml`) |
 
 ---
 
@@ -221,16 +221,16 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-LEG-01 | Project license | AGPL-3.0 | LICENSE file | Brief |
-| NFR-LEG-02 | Dependency licenses | All compatible with AGPL-3.0; checked with `cargo-deny` and an npm license checker | CI | ASSUMPTION |
+| NFR-LEG-02 | Dependency licenses | All compatible with AGPL-3.0; checked with `cargo-deny` and an npm license checker | CI | ASSUMPTION · M2a: `deny.toml` and `npm run licenses` in CI |
 | NFR-LEG-03 | Model licenses | Shown in catalog before download; only models whose license allows local use are listed | Catalog review | ASSUMPTION |
 | NFR-LEG-04 | Demo data | Only synthetic or public data; no real private people | Corpus review | Brief |
-| NFR-LEG-05 | Third-party notices | `THIRD_PARTY_NOTICES` file generated for each build (incl. the OCR engine; not llama.cpp, which is user-installed and not shipped, ADR-0015) | Build output | ASSUMPTION · M1: llama.cpp removed (ADR-0015) |
+| NFR-LEG-05 | Third-party notices | `THIRD_PARTY_NOTICES` file generated for each build (incl. the OCR engine; not llama.cpp, which is user-installed and not shipped, ADR-0015) | Build output | ASSUMPTION · M1: llama.cpp removed (ADR-0015) · M2a: `cargo xtask notices` writes it (crates, native sources, npm); CI fails if it is stale. It lists names, versions and licenses; full license texts in the release bundle are an M9 item |
 
 ---
 
 ## 13. Numbers to fix after M0 and M1
 
 These are placeholders until the M0 and M1 spikes produce real data (`06-roadmap.md`):
-- After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07, NFR-RES-07. **Done in M0c:** targets kept, measured values in the rows above (ADR-0014, `08-engine-bakeoff.md` §13). NFR-RES-07 still needs the shell share (M2a).
+- After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07, NFR-RES-07. **Done in M0c:** targets kept, measured values in the rows above (ADR-0014, `08-engine-bakeoff.md` §13). NFR-RES-07 still needs the shell share (M2a). **Done in M2a:** shell share ~10.8 MB (row above).
 - After M1 (local models): NFR-PERF-13, -24 (LLM speed), NFR-QA-01, -02, -08, -09 (quality targets), model tiers and catalog (brief §14). **Done in M1 (2026-10-24):** quality and link targets kept; NFR-PERF-24 lowered to ≥ 1 segment/s and NFR-PERF-25 raised to 4 slots (gap A3); NFR-PERF-13 kept for the minimum-tier model; tiers in brief §8; catalog v0 in `crates/mk-models` (`09-model-check.md`). ADR-0015 follow-ups applied to NFR-SEC-11, -LEG-05, -USE-01.
 - NFR-PERF-11 (Stage A incl. OCR): M0 gives about 0.2 s per OCR page on one core (TD-1 has 22 OCR pages, about 5 s). The 3-min target is kept and checked in M3.

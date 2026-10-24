@@ -1,0 +1,13 @@
+[package]
+name = "mk-jobs"
+description = "BC-03: persistent job queue and scheduler (filled in M2b)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mk-kernel.workspace = true

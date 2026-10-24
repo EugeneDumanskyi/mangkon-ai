@@ -1,0 +1,33 @@
+[package]
+name = "mangkon-desktop"
+description = "Mangkon AI desktop shell: Tauri 2, IPC commands that call mk-core (ADR-0003)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+default-run = "mangkon"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mangkon"
+path = "src/main.rs"
+
+[features]
+default = ["custom-protocol"]
+# Serve the UI embedded from `ui/dist`. Turn it off (`--no-default-features`) to load the Vite dev
+# server at `devUrl` instead.
+custom-protocol = ["tauri/custom-protocol"]
+# Spike S2d (M2a): the 100,000-row scroll test screen and its commands. Not in shipped builds.
+spike-s2d = ["mk-core/spike-s2d"]
+
+[dependencies]
+mk-core.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+# Default features minus `dynamic-acl`: capabilities are fixed at build time.
+tauri = { version = "=2.12.5", default-features = false, features = ["wry", "compression", "common-controls-v6", "x11", "dbus"] }
+ts-rs = "12.0.1"
+
+[build-dependencies]
+tauri-build = "=2.7.4"

@@ -1,0 +1,108 @@
+# CI for every pull request and push to main (NFR-MNT-02/03/08/09, M2 acceptance criteria 5 and 6).
+# The same gates run locally with `cargo xtask ci`.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  build-test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04 is the oldest supported Ubuntu (NFR-COMP-01).
+        os: [ubuntu-22.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev build-essential pkg-config
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned native sources
+        uses: actions/cache@v6
+        with:
+          path: target/mk-native-cache
+          key: native-${{ hashFiles('crates/mk-tesseract-sys/native/sources.toml') }}
+      - name: UI checks
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run lint
+          npm run format:check
+          npm test
+          npm run build
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # Includes the mk-models catalog check (NFR-MNT-09) and the Tesseract smoke test (ADR-0014).
+      - run: cargo test --workspace --all-features --locked
+      - name: One-command build (US-14.1)
+        run: cargo xtask build
+
+  rules:
+    name: Dependency rules, licenses, bindings
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev build-essential pkg-config
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned native sources
+        uses: actions/cache@v6
+        with:
+          path: target/mk-native-cache
+          key: native-${{ hashFiles('crates/mk-tesseract-sys/native/sources.toml') }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: UI build and npm licenses (NFR-LEG-02)
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run licenses
+          npm run build
+      - name: cargo deny (licenses, bans, advisories, sources)
+        run: cargo deny --locked check
+      - name: Dependency layers (ADR-0002, ADR-0009)
+        run: cargo xtask check-layers
+      - name: IPC bindings match the Rust types (ADR-0003)
+        run: cargo xtask check-bindings
+      - name: THIRD_PARTY_NOTICES is current (NFR-LEG-05)
+        run: cargo xtask notices --check

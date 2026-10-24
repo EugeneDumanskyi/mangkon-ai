@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The main window: Mangkon's own commands only. No core or plugin permissions (ADR-0003, NFR-SEC-10).",
+  "windows": ["main"],
+  "permissions": ["allow-app-info"]
+}

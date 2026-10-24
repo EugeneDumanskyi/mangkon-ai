@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "spike-s2d",
+  "description": "Spike S2d only (feature spike-s2d): the synthetic row and frame-stats commands. Not loaded otherwise.",
+  "windows": ["main"],
+  "permissions": ["allow-synthetic-rows", "allow-record-frame-stats"]
+}

@@ -1,0 +1,40 @@
+# Native sources compiled into the parser workers (ADR-0014, NFR-MNT-01, NFR-SEC-11).
+#
+# build.rs fetches each file with the system `curl` into `target/mk-native-cache/`, checks its
+# SHA-256 and fails the build on a mismatch. Set MK_NATIVE_SRC_DIR to a folder that holds these
+# files (by `file` name) to build offline; nothing is downloaded then.
+#
+# GitHub publishes no digest for tag archives or for files in a tag, so the SHA-256 values were
+# pinned on first download (2026-10-24), as in M0c. The tessdata value matches
+# spikes/pdf-bakeoff/ocr-models.json. To bump a version: change `version`, `url` and `file`,
+# download once, check the release notes, and pin the new hash.
+
+[[source]]
+name = "leptonica"
+version = "1.87.0"
+kind = "archive"
+url = "https://github.com/DanBloomberg/leptonica/archive/refs/tags/1.87.0.zip"
+file = "leptonica-1.87.0.zip"
+sha256 = "2cfb7ebe6036f3d017280fa9a000c9699ab28be8dff8be8e2e948e2c79917eda"
+license = "BSD-2-Clause"
+homepage = "https://github.com/DanBloomberg/leptonica"
+
+[[source]]
+name = "tesseract"
+version = "5.5.2"
+kind = "archive"
+url = "https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.2.zip"
+file = "tesseract-5.5.2.zip"
+sha256 = "449621680d529fde7a2d079805dce4687fef0a692c272be3ce431c30c69162d2"
+license = "Apache-2.0"
+homepage = "https://github.com/tesseract-ocr/tesseract"
+
+[[source]]
+name = "tessdata_fast-eng"
+version = "4.1.0"
+kind = "data"
+url = "https://github.com/tesseract-ocr/tessdata_fast/raw/4.1.0/eng.traineddata"
+file = "eng.traineddata"
+sha256 = "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
+license = "Apache-2.0"
+homepage = "https://github.com/tesseract-ocr/tessdata_fast"

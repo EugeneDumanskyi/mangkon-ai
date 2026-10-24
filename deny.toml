@@ -1,0 +1,79 @@
+# cargo-deny: licenses, bans, advisories and sources (NFR-LEG-02, ADR-0002, ADR-0009).
+# Run: cargo deny check. `cargo xtask check-layers` adds a full-graph check of the same bans.
+
+[graph]
+# Desktop targets only, the same list as tools/xtask/src/layers.rs. Tauri pulls an HTTP client
+# on iOS and Android, which the app does not build for.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+# Unmaintained notices (not vulnerabilities) with no upgrade available. Review when bumping Tauri.
+ignore = [
+    # proc-macro-error: build-time macro crate under gtk-rs 0.18, which Tauri 2 uses on Linux.
+    { id = "RUSTSEC-2024-0370", reason = "via Tauri's gtk-rs 0.18; build-time only" },
+    # ttf-parser: under ab_glyph, used only by tools/corpus-gen and a mk-parsers test.
+    { id = "RUSTSEC-2026-0192", reason = "test data generator and tests only, not shipped" },
+]
+
+[licenses]
+version = 2
+# Licenses compatible with distributing the app under AGPL-3.0-only.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+unused-allowed-license = "allow"
+# jpeg-encoder ports libjpeg code under the IJG license (permissive, GPL-compatible). It is used
+# only by tools/corpus-gen to write test scans; it is not in the app.
+exceptions = [{ crate = "jpeg-encoder", allow = ["IJG"] }]
+
+[licenses.private]
+# Workspace crates are AGPL-3.0-only and never published.
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+deny = [
+    # ADR-0002 rule 3: only the desktop shell depends on Tauri.
+    { crate = "tauri", wrappers = ["mangkon-desktop"] },
+    # Tauri builds with tauri-build itself.
+    { crate = "tauri-build", wrappers = ["mangkon-desktop", "tauri"] },
+    { crate = "tauri-runtime", wrappers = ["tauri", "tauri-runtime-wry"] },
+    { crate = "tauri-runtime-wry", wrappers = ["tauri"] },
+    # ADR-0009: HTTP clients only in mk-egress and mk-models.
+    { crate = "reqwest", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "ureq", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "hyper", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "hyper-util", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "isahc", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "attohttpc", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "curl", wrappers = ["mk-egress", "mk-models"] },
+    { crate = "surf", wrappers = ["mk-egress", "mk-models"] },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

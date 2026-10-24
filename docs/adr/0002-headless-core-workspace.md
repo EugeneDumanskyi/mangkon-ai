@@ -40,6 +40,7 @@ mangkon-ai/
     mk-workspace    BC-01
     mk-corpus       BC-02 model, re-scan, presence
     mk-parsers      BC-02 parsers + OCR adapters (used by workers)
+    mk-tesseract-sys  Tesseract + Leptonica from pinned sources, minimal FFI (ADR-0014)
     mk-identifiers  BC-04 validators and extractors (pure functions)
     mk-jobs         BC-03 queue and scheduler
     mk-mapping      BC-05
@@ -54,6 +55,9 @@ mangkon-ai/
   apps/
     desktop/        Tauri 2 shell: IPC commands → mk-core; also the --worker entry
     cli/            mangkon-cli: bench, ingest, rebuild, kill-test driver
+  tools/
+    corpus-gen/     TD-1/TD-3 generator (M0a)
+    xtask/          cargo xtask: one-command build, local CI, layer check, notices
   ui/               React + TypeScript (ADR-0003)
 ```
 
@@ -63,6 +67,7 @@ Rules:
 3. Only `apps/desktop` depends on Tauri.
 4. Dependencies point inward: apps → `mk-core` → context crates → `mk-kernel`. Never the other way.
 5. The worker entry point is a subcommand of the desktop binary. It links `mk-parsers` and `mk-identifiers` only, so there is one binary to ship (NFR-RES-07).
+6. No `unsafe` code: the workspace sets `unsafe_code = "forbid"`. The one exception is `mk-tesseract-sys`, the FFI to Tesseract's C API. It sets `deny` and allows `unsafe` only in `src/ffi.rs`, behind a safe handle; `mk-parsers` wraps that handle (added in M2a).
 
 ## Consequences
 
@@ -76,5 +81,5 @@ Rules:
 - Incremental builds are fast, but a clean build compiles more units. Watch NFR-USE-03 (≤ 15 min).
 
 **Follow-ups**
-- Add a CI check that `mk-core` and context crates do not depend on `tauri`.
-- Keep `mk-egress` and `mk-models` the only crates that may use an HTTP client (ADR-0009).
+- Add a CI check that `mk-core` and context crates do not depend on `tauri`. **Done in M2a:** `[bans]` in `deny.toml` (`cargo deny check`) and `cargo xtask check-layers`, which walks the whole resolved graph, so a transitive dependency is caught too. Both run in CI; a test PR adding `tauri` to `mk-core` fails both (M2 acceptance criterion 6, checked locally).
+- Keep `mk-egress` and `mk-models` the only crates that may use an HTTP client (ADR-0009). **Done in M2a**, by the same two checks (`ureq` added to `mk-kernel` fails both). Both checks cover the desktop targets only; Tauri pulls an HTTP client on iOS and Android, which are not built.

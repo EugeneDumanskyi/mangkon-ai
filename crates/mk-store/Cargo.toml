@@ -1,0 +1,13 @@
+[package]
+name = "mk-store"
+description = "SQLite adapters, schema and migrations (filled in M2b)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mk-kernel.workspace = true

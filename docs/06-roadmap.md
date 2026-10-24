@@ -118,7 +118,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
   - `tools/corpus-gen` — the TD-1/TD-3 generator, in Rust. Deterministic: a fixed seed and generator version give the same files byte for byte.
   - `testdata/td1/`, `testdata/td3/` — the generated files and the ground-truth file, built locally and **never committed** (`.gitignore`). The generator's committed hash list (`corpus.sha256`) keeps the ground truth from drifting. Public files are downloaded into `testdata/td1/public/` by `corpus-gen fetch` from a committed manifest (source URL, license, SHA-256) (NFR-LEG-04).
   - `testdata/td2/` — generated locally from TD-1 in M2b, never committed.
-  - `spikes/` — throwaway bake-off harnesses. Not in the workspace's default members. `pdf-bakeoff` is removed in M2a once ADR-0014 records its numbers. `model-check` (M1) stays until the M6 LLM benchmark (NFR-MNT-06) replaces it (decided 2026-10-24).
+  - `spikes/` — throwaway bake-off harnesses. Not in the workspace's default members. `pdf-bakeoff` is removed in M3, once its hayro adapter and OCR path are ported to `mk-parsers` (moved from M2a, decided 2026-10-24). `model-check` (M1) stays until the M6 LLM benchmark (NFR-MNT-06) replaces it (decided 2026-10-24).
 
 **Out of scope**
 - Worker processes, database, job queue, UI.
@@ -253,10 +253,12 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 | Sub | Focus | Scope items | Spikes | Acceptance criteria | Needs |
 |---|---|---|---|---|---|
-| **M2a** | Workspace, CI, shell | Workspace with the slice's crates (empty where not yet needed); dependency rules in CI; Tauri shell with CSP and capabilities; typed IPC tool; one-command build, including Tesseract and Leptonica compiled from the SHA-256-pinned sources (cmake and a C++ compiler as documented prerequisites, ADR-0014); CI on 3 OSes with the same prerequisites; lint and format gates; virtualized list over synthetic rows. | S2d | 5, 6; ADR-0002, 0003 ready for acceptance | M0 exit |
+| **M2a** (done) | Workspace, CI, shell | Workspace with the slice's crates (empty where not yet needed); dependency rules in CI; Tauri shell with CSP and capabilities; typed IPC tool; one-command build, including Tesseract and Leptonica compiled from the SHA-256-pinned sources (cmake and a C++ compiler as documented prerequisites, ADR-0014); CI on 3 OSes with the same prerequisites; lint and format gates; virtualized list over synthetic rows. | S2d | 5, 6; ADR-0002, 0003 ready for acceptance | M0 exit |
 | **M2b** | Store, jobs, corpus, derived data | `mk-store` (writer + readers, WAL, schema v1, migrations with backup, decision-log triggers); `mk-jobs` (persistent jobs, Stage A lane, restart recovery); corpus re-scan + BLAKE3; TXT/CSV parsers and email identifiers called in process; derived rebuild per touched key; `ConnectionsChanged`; TD-2 generator. | S2c | 3, 4; ADR-0004, 0005, 0006 ready for acceptance | M2a |
 | **M2c** | Worker isolation | `--worker` mode, framed protocol, heartbeats, deadline kill, memory limits per OS, recycling, memory budget; parsing moves from in process to workers; TD-3 TXT/CSV additions; CLI kill-test driver. | S2a, S2b | 1, 2, 7; ADR-0001, 0007 ready for acceptance; gaps A2, A5 | M2b |
 | **M2d** | End-to-end slice | UI: create/open project, add folder, progress counts, raw connections list, click → highlighted text; CLI `ingest` and `rebuild`; ADR acceptance; gap A7. | — | 8, 9 | M2c |
+
+**Outcome (M2a, 2026-10-24).** Workspace per ADR-0002 with `mk-tesseract-sys` (Tesseract 5.5.2 + Leptonica 1.87.0 from SHA-256-pinned sources, fetched with the system `curl`) and `tools/xtask`; `deny.toml` and `cargo xtask check-layers`; Tauri 2.12 shell with CSP, capabilities and a navigation guard; typed IPC with `ts-rs`; `cargo xtask build` and `cargo xtask ci`; `.github/workflows/ci.yml` (Ubuntu 22.04, macOS 14, Windows 2022). Criterion 5: clean build 54.8 s on RM-1; lint and format gates pass locally; CI on 3 OSes and its duration are **not verified** until the repo is pushed. Criterion 6: verified locally (both checks fail on `tauri` in `mk-core` and on `ureq` in `mk-kernel`). S2d: met with the pass mark read for WebKitGTK's 1 ms clock, pending approval (`10-walking-skeleton.md`). ADR-0002 and ADR-0003 follow-ups done; both stay Proposed until M2d (criterion 9). Scope change: the OCR part of M2a is build + link + one smoke test; the hayro adapter, the shared OCR path and removing `spikes/pdf-bakeoff` moved to M3 (decided 2026-10-24).
 
 **Exit decision.** Architecture confirmed. From here, work is breadth on proven structure.
 
@@ -268,7 +270,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 **Scope**
 - **E01** all: US-01.1–01.6 (incl. remove files, project settings, relocatable roots per domain D12/D13).
-- **E02** all: US-02.1–02.8. Parsers per ADR-0013 (pure Rust part) and ADR-0014 (PDF/OCR). Encodings UTF-8, UTF-16 BOM, Windows-1252. MBOX streamed. OCR content ordered after text-native (INV-PR-03).
+- **E02** all: US-02.1–02.8. Parsers per ADR-0013 (pure Rust part) and ADR-0014 (PDF/OCR). Port the hayro adapter and the shared OCR path (image guard, layout, `OcrGeometry`) from `spikes/pdf-bakeoff` into `mk-parsers` behind `PdfEngine` / `OcrEngine`, then remove `spikes/pdf-bakeoff` (moved from M2a, decided 2026-10-24; M2a built and linked Tesseract only). Encodings UTF-8, UTF-16 BOM, Windows-1252. MBOX streamed. OCR content ordered after text-native (INV-PR-03).
 - **E03** all: US-03.1–03.5 — progress with ETA, project-wide pause (D11), cancel → "Not processed" (D10), restart, fast results first.
 - **E08** all: US-08.1–08.6 — text view for every type, page view for PDFs and scans via `RenderPage` (ADR-0011), page cache, "Original file missing" mode, open original, safe rendering.
 - Full **TD-3**.
@@ -480,7 +482,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 **Scope**
 - **E14** all: US-14.1–14.4 (build from source, README, published corpus and benchmark, first run).
 - README: hardware minimum at the top, tested-platform matrix (brief §8), "Responsible use" (brief §13), disk-encryption note (NFR-SEC-13).
-- `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. the chosen engines. llama.cpp is user-installed and not shipped (ADR-0015).
+- `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. the chosen engines, with the full license texts (M2a generates the list: `cargo xtask notices`). llama.cpp is user-installed and not shipped (ADR-0015).
 - Full NFR sweep on RM-1 and RM-2.
 - Demo video and README GIFs from TD-1 only.
 - Tag v0.1.
@@ -514,7 +516,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | R6 CSV streaming (K3) | S2a | M2c | Mostly (chunking, frames). |
 | R5 macOS memory limit (K3) | S2b | M2c | Yes (wording + sampling). |
 | R7 decisions in every commit (K4) | S2c, re-run in M7a | M2b, M7a | Yes (batching, indexes). |
-| WebKitGTK scroll (K7) | S2d | M2a | Yes. |
+| WebKitGTK scroll (K7). **Retired in M2a:** 60 fps on average over 100,000 rows, p95 18 ms (1 ms clock), ≤ 0.24 % of frames over 25 ms (`10-walking-skeleton.md` §S2d). | S2d | M2a (done) | Yes. |
 | R1 FTS5 at 1M segments (K6) | S4 | M4 | Yes (Tantivy derived index). |
 | Egress pinning (K8) | S5 | M5 | Yes (contained in `mk-egress`). |
 | Proposal quality (K9) | S7 | M7a | Yes (fewer proposal rules). |
