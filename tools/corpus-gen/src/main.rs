@@ -6,6 +6,7 @@
 //! corpus-gen generate [--out testdata]   write the corpus and update corpus.sha256
 //! corpus-gen check    [--out testdata]   regenerate into a temp dir and compare with corpus.sha256
 //! corpus-gen td2 [--copies 99] [--out testdata]   write TD-2 (scale corpus) from TD-1
+//! corpus-gen csv-rows [--rows 1000000] [--out testdata]   write s2a/rows-<n>.csv (spike S2a)
 //! ```
 
 mod afm;
@@ -30,7 +31,7 @@ use std::process::ExitCode;
 use mk_bench::Generator;
 
 /// Bump when any output byte changes for the same seed.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 pub const SEED: u64 = 20261022;
 
 /// SHA-256 of every generated file, committed so that drift shows up without committing data.
@@ -41,6 +42,7 @@ fn main() -> ExitCode {
     let mut out = PathBuf::from("testdata");
     let mut cmd = None;
     let mut copies = td2::DEFAULT_COPIES;
+    let mut rows = 1_000_000usize;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -52,7 +54,13 @@ fn main() -> ExitCode {
                 Some(n) => copies = n,
                 None => return usage(),
             },
-            "fetch" | "generate" | "check" | "td2" if cmd.is_none() => cmd = Some(a.clone()),
+            "--rows" => match it.next().and_then(|n| n.parse().ok()) {
+                Some(n) => rows = n,
+                None => return usage(),
+            },
+            "fetch" | "generate" | "check" | "td2" | "csv-rows" if cmd.is_none() => {
+                cmd = Some(a.clone())
+            }
             _ => return usage(),
         }
     }
@@ -81,6 +89,20 @@ fn main() -> ExitCode {
                 out.join("td2").display()
             )
         }),
+        Some("csv-rows") => {
+            let name = if rows.is_multiple_of(1_000_000) {
+                format!("rows-{}m.csv", rows / 1_000_000)
+            } else {
+                format!("rows-{rows}.csv")
+            };
+            let path = out.join("s2a").join(name);
+            td2::csv_rows(&path, rows, SEED).map(|(bytes, emails)| {
+                println!(
+                    "wrote {} ({rows} rows, {emails} with an email, {bytes} bytes)",
+                    path.display()
+                )
+            })
+        }
         _ => return usage(),
     };
     match result {
@@ -95,7 +117,10 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: corpus-gen (fetch | generate | check | td2 [--copies N]) [--out DIR]");
+    eprintln!(
+        "usage: corpus-gen (fetch | generate | check | td2 [--copies N] | csv-rows [--rows N]) \
+         [--out DIR]"
+    );
     ExitCode::from(2)
 }
 

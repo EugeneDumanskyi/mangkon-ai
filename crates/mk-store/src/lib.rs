@@ -24,14 +24,14 @@ use std::path::{Path, PathBuf};
 use mk_corpus::StoredRef;
 use mk_graph::model::{DerivedState, Facts};
 use mk_graph::{ConnectionRow, DecisionKind, RankKey};
-use mk_jobs::{PendingItem, Trigger};
+use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 
 pub use ops::{
     CommitOutcome, DocumentOut, MentionOut, NewContent, Recovery, RescanChange, RescanOutcome,
     SegmentOut, StageAOutput, StartedItem,
 };
-pub use read::{ContentRow, MentionRow, Progress, RootRow, SegmentRow};
+pub use read::{ContentRow, MentionRow, PendingWork, Progress, RootRow, SegmentRow};
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 
 /// Read connections (architecture §7).
@@ -234,7 +234,7 @@ impl Store {
         self.readers.with(read::stored_refs)
     }
 
-    pub fn pending_items(&self) -> Result<Vec<PendingItem>, StoreError> {
+    pub fn pending_items(&self) -> Result<Vec<PendingWork>, StoreError> {
         self.readers.with(read::pending_items)
     }
 

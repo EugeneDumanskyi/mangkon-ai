@@ -18,7 +18,9 @@ fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("src");
     std::fs::create_dir_all(src.join("sub")).unwrap();
-    let (project, _) = Project::open(&tmp.path().join("project")).unwrap();
+    let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
+    *project.worker_config_mut() =
+        mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
     project.add_source_root(&src).unwrap();
     Fixture {
         _tmp: tmp,

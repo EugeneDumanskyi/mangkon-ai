@@ -7,6 +7,7 @@ use std::str::FromStr;
 /// SHA-256 (architecture §5.4). Ground-truth files keep SHA-256 (`mk-bench`). Displays as 64
 /// lowercase hex characters.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ContentHash([u8; 32]);
 
 impl ContentHash {

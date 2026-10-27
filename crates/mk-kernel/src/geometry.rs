@@ -10,11 +10,35 @@ use crate::{ContentHash, Span};
 /// text ([`OcrGeometry`](crate::OcrGeometry), [`Locator::OcrText`](crate::Locator)). Always
 /// finite with `x0 ≤ x1` and `y0 ≤ y1`; zero width or height is allowed.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawRect")
+)]
 pub struct Rect {
     x0: f32,
     y0: f32,
     x1: f32,
     y1: f32,
+}
+
+/// The decoded form of a [`Rect`], checked like [`Rect::new`] before it becomes one.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawRect {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawRect> for Rect {
+    type Error = &'static str;
+
+    fn try_from(r: RawRect) -> Result<Self, Self::Error> {
+        Rect::new(r.x0, r.y0, r.x1, r.y1).ok_or("not a finite, ordered box")
+    }
 }
 
 impl Rect {

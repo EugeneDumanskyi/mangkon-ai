@@ -1,5 +1,5 @@
-//! TD-1 TXT/MD/CSV end to end through the real pipeline (re-scan → Stage A in process → one
-//! commit per file → derived rows): US-01.3 AC2, US-02.3 AC1, US-02.4, US-02.7 AC1, US-04.1 AC1,
+//! TD-1 TXT/MD/CSV end to end through the real pipeline (re-scan → Stage A in worker processes
+//! → one commit per file → derived rows): US-01.3 AC2, US-02.3 AC1, US-02.4, US-02.7 AC1, US-04.1 AC1,
 //! US-07.1 AC1. Skipped without `testdata/` unless `MK_REQUIRE_TESTDATA=1`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -32,7 +32,9 @@ fn slice_td1_text_and_csv_end_to_end() {
     let Some(td1) = td1() else { return };
     let gt = mk_bench::load(&td1.join("ground-truth.json")).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let (project, _) = mk_core::Project::open(dir.path()).unwrap();
+    let (mut project, _) = mk_core::Project::open(dir.path()).unwrap();
+    *project.worker_config_mut() =
+        mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
     let root = project.add_source_root(&td1.join("synthetic")).unwrap();
 
     let scan = project.rescan(false).unwrap();

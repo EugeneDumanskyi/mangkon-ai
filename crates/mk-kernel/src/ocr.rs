@@ -3,6 +3,7 @@ use crate::{ContentHash, GeometryError, Locator, PageNumber, Rect, Span};
 /// Pixel size of the image a page was OCR'd from. OCR boxes are in pixels of this image, so the
 /// viewer can scale them to whatever size it renders the page at (ADR-0011).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ImageSize {
     pub width: u32,
     pub height: u32,

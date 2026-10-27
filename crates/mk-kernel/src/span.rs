@@ -5,6 +5,11 @@ use std::fmt;
 /// Half-open: `start` is included, `end` is not. Always `0 ≤ start < end ≤ len`,
 /// so a span is never empty and never runs past its text.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawSpan")
+)]
 pub struct Span {
     start: usize,
     end: usize,
@@ -30,6 +35,24 @@ impl fmt::Display for SpanError {
 }
 
 impl std::error::Error for SpanError {}
+
+/// The decoded form of a [`Span`], checked for `start < end` before it becomes one. The text
+/// length is not known here; the store checks the span against its segment.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawSpan {
+    start: usize,
+    end: usize,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawSpan> for Span {
+    type Error = SpanError;
+
+    fn try_from(r: RawSpan) -> Result<Self, SpanError> {
+        Span::new(r.start, r.end, r.end)
+    }
+}
 
 impl Span {
     /// Checked constructor. `len` is the length of the text the span points into.

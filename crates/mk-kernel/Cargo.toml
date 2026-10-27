@@ -9,8 +9,13 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Serde derives for the value objects that cross the worker protocol (ADR-0007). No I/O.
+serde = ["dep:serde"]
+
 [dependencies]
 blake3 = { version = "1.8.7", features = ["pure"] }
+serde = { version = "1.0.229", features = ["derive"], optional = true }
 
 [dev-dependencies]
 proptest = "1.12.0"

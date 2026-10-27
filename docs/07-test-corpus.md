@@ -142,9 +142,9 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 
 ---
 
-## 6. TD-3 v1 (broken-file set)
+## 6. TD-3 (broken-file set)
 
-`testdata/td3/expected.json` (schema: `crates/mk-bench/schema/td3-expected.schema.json`) lists each file with `category`, `expected` outcome and the reason. `fail` means the file fails alone with a plain reason (NFR-USE-05); `success` means it is processed, possibly with zero text. Whatever the outcome, each file finishes within the per-file limits (NFR-REL-06/07) and never stops the batch (NFR-REL-01). v1 covers PDF and images; the brief's ~30 files are reached when M3 adds broken email, CSV and DOCX files.
+`testdata/td3/expected.json` (schema: `crates/mk-bench/schema/td3-expected.schema.json`) lists each file with `category`, `expected` outcome and the reason. `fail` means the file fails alone with a plain reason (NFR-USE-05); `success` means it is processed, possibly with zero text. Whatever the outcome, each file finishes within the per-file limits (NFR-REL-06/07) and never stops the batch (NFR-REL-01). v1 (M0) covers PDF and images; v2 (M2c, `GENERATOR_VERSION` 2) adds TXT and CSV files and three test-fault files, 36 files in all. M3 adds broken email and DOCX files.
 
 | File | Category | Expected | What it does |
 |---|---|---|---|
@@ -166,6 +166,27 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `loop-page-tree.pdf` | endless loop | fail | Two `/Pages` nodes that list each other; no leaf pages. |
 | `loop-xref-prev.pdf` | endless loop | success | An update xref whose `/Prev` points to itself; objects intact. |
 | `loop-form-xobject.pdf` | endless loop | success | A Form XObject that draws itself; the page text sits outside it. |
+
+**v2: TXT and CSV (M2c).** Test `nfr_rel_01_td3_txt_csv_fail_alone` (`mk-core`) runs these with the TD-1 TXT/CSV subset through worker processes and checks every outcome.
+
+| File | Category | Expected | What it does |
+|---|---|---|---|
+| `empty.txt`, `empty.csv` | empty | success | Zero bytes; no segments. |
+| `header-only.csv` | blank | success | A header row, no data rows. |
+| `binary-named.txt` | wrong extension | fail | A PNG named `.txt`: "Unknown text encoding". **ASSUMPTION:** no content sniffing for text names. |
+| `pdf-named.csv` | wrong extension | fail | A PDF named `.csv`: "Unknown text encoding". **ASSUMPTION** as above. |
+| `invalid-utf8.txt` | corrupt | fail | Latin-1 bytes that are not UTF-8; fails until M3 reads other encodings. |
+| `truncated-utf8.txt` | truncated | fail | UTF-8 cut in the middle of the last character. **ASSUMPTION:** no repair of a cut tail. |
+| `nul-bytes.txt` | corrupt | success | NUL characters inside lines, kept as text. |
+| `one-line-16mb.txt` | huge | success | One 16 MB line with an email every 50,000 cells. |
+| `wide-row-100k-columns.csv` | huge | success | A header and one row of 100,000 columns; the last cell is an email. |
+| `ragged-rows.csv` | corrupt | success | Two of four data rows with the wrong cell count: kept, marked malformed, one warning (US-02.4 AC3). |
+| `unclosed-quote.csv` | corrupt | success | A quote never closed; the rest of the file is one cell. **ASSUMPTION:** no repair. |
+| `fault-memory-bomb.txt` | memory bomb | fail | Test fault: the worker allocates without end. "Needed too much memory". |
+| `fault-endless-loop.txt` | endless loop | fail | Test fault: the worker spins. "Took too long to read". |
+| `fault-crash.txt` | crash | fail | Test fault: the worker aborts. "The file could not be read: the reader stopped unexpectedly". |
+
+The fault files start with `mk-test-fault: <kind>`. A worker acts on that line only when the core turns test faults on through its API (tests only); in the app they are ordinary text files.
 
 Checked on the build machine with poppler (`pdfinfo`, `pdftotext`) under a 2 GB memory cap and a 20 s timeout: every file behaved as expected, and the user password opens the encrypted file. poppler draws `bomb-image-dimensions.pdf` scaled down instead of refusing it. Its `fail` describes our guard, not poppler.
 
@@ -232,7 +253,10 @@ cargo run -p corpus-gen --release -- generate                  # write td1/synth
 cargo run -p corpus-gen --release -- check                     # regenerate into a temp dir and compare with corpus.sha256
 cargo run -p corpus-gen --release -- td2                       # TD-2 from TD-1 (§11): 99 copies, 3.4 GB, about 1 min
 MK_REQUIRE_TESTDATA=1 cargo test -p mk-bench                   # US-14.3 AC1 and TD-3 manifest checks
+cargo run -p corpus-gen --release -- csv-rows --rows 1000000   # testdata/s2a/rows-1m.csv (75 MB) for spike S2a
 ```
+
+`csv-rows` writes one CSV with a header (`date,description,iban,amount,counterparty_email`) and the given number of rows, filled like TD-2's CSV rows (§11): 30 % carry an email. Like TD-2 it has no hash list.
 
 All commands take `--out DIR` (default `testdata`). `generate` needs the public slice, because the ground truth lists it. Without `testdata/`, the corpus tests print a notice and pass; `MK_REQUIRE_TESTDATA=1` makes them fail instead (for CI). After a change to the ground-truth types, `MK_BLESS=1 cargo test -p mk-bench` rewrites the schemas.
 
@@ -245,8 +269,8 @@ Byte identity has been checked on Linux only (two runs, same bytes). **Cross-OS 
 ## 10. Open points
 
 - **ASSUMPTION:** made-up IBAN bank codes match no real account (§7).
-- **ASSUMPTION:** TD-3 expected outcomes for rebuilt xrefs, partial images and wrong extensions (§6) are product policy, not yet confirmed.
-- Local disk: `testdata/` takes about 37 MB (synthetic 20 MB, mostly the noisy lossless `poor` scans; public 13.2 MB; TD-3 1.3 MB), plus 3.4 GB with TD-2. None of it is in git.
+- **ASSUMPTION:** TD-3 expected outcomes for rebuilt xrefs, partial images, wrong extensions, cut UTF-8 and unclosed CSV quotes (§6) are product policy, not yet confirmed.
+- Local disk: `testdata/` takes about 37 MB (synthetic 20 MB, mostly the noisy lossless `poor` scans; public 13.2 MB; TD-3 18 MB, most of it the two v2 huge files), plus 3.4 GB with TD-2 and 75 MB with `s2a/rows-1m.csv`. None of it is in git.
 - The public slice depends on government URLs staying up. `corpus-gen fetch` fails loudly when a file is gone or changed.
 - Real-world email is synthetic only (§8); revisit in M3.
 - Public files are partly annotated; full name annotation of real documents is out of scope for v0.1.

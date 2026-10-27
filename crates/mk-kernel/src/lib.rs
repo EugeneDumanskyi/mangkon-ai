@@ -1,6 +1,7 @@
 //! Shared kernel: evidence value objects used by every context (domain §3.3).
 //!
-//! No I/O and no async runtime (ADR-0002 rule 1).
+//! No I/O and no async runtime (ADR-0002 rule 1). Feature `serde` adds the derives the worker
+//! protocol needs (ADR-0007); decoding re-checks the [`Span`] and [`Rect`] rules.
 //!
 //! The [`Locator`] says where a segment is in its document (INV-CO-03). Its [`Span`] always
 //! points into the segment's stored text (INV-CO-04). PDF locators hold no boxes: the page view

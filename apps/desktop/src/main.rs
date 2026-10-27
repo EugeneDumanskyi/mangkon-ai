@@ -13,7 +13,11 @@ mod nav;
 use tauri::webview::NewWindowResponse;
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    // `mangkon --worker`: a parser worker (ADR-0001, ADR-0007). Before Tauri starts anything.
+    if let Some(code) = mk_core::worker_main_if_requested() {
+        return code;
+    }
     let builder = tauri::Builder::default();
     #[cfg(not(feature = "spike-s2d"))]
     let builder = builder.invoke_handler(tauri::generate_handler![commands::app_info]);
@@ -37,4 +41,5 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("failed to start Mangkon AI");
+    std::process::ExitCode::SUCCESS
 }

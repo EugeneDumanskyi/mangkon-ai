@@ -1,7 +1,7 @@
 # 10 — Walking skeleton: Mangkon AI v0.1
 
-> Input: `06-roadmap.md` §2 M2 (spikes S2a–S2d), ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0014, `03-nfr.md` (NFR-PERF-04, NFR-PERF-32/33/34, NFR-RES-07, NFR-USE-03, NFR-MNT-01/02/03/08). **If this file disagrees with them, they win.**
-> Status: §S2d and §2 measured in M2a on RM-1 (2026-10-24). §S2c and §3 measured in M2b on RM-1 (2026-10-27). S2a and S2b are added in M2c. Linux only; macOS and Windows are not verified here.
+> Input: `06-roadmap.md` §2 M2 (spikes S2a–S2d), ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0014, `03-nfr.md` (NFR-PERF-04, NFR-PERF-22, NFR-PERF-32/33/34, NFR-REL-02/03/04/07, NFR-RES-01/02/07, NFR-USE-03, NFR-MNT-01/02/03/08). **If this file disagrees with them, they win.**
+> Status: §S2d and §2 measured in M2a on RM-1 (2026-10-24). §S2c and §3 measured in M2b on RM-1 (2026-10-27). §S2a, §S2b, §4 and §5 measured in M2c on RM-1 (2026-10-27). Linux only; macOS and Windows are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -88,7 +88,7 @@ Scale at the measured phases: 10,000 documents, 823,193 segments, **296,887 iden
 ### Follow-ups
 
 - The writer queue is the lever if latency grows (wider lanes on RM-2, heavier Stage A in M3): batching several items per transaction would change ADR-0004 and is **not** done. A cheaper first step is bounding how many finished results wait for the writer.
-- M2c: the same numbers with parsers in worker processes (results cross a pipe before the writer).
+- M2c: re-run with parsers in worker processes (23 `mk-test-worker` workers, results cross a pipe before the writer), RM-1 idle, 2026-10-27. Lane p50 / p95 / max 167 / 585 / 838 ms with 0 decisions and 205 / 840 / 1,041 ms with 10,000; **p95 + debounce 1.08 s and 1.34 s** ✅. Commits alone: hot keys 12.3 / 14.3 ms p50, 5,000-row CSV 73.6 / 81.7 ms p50. Step 1: 8.6 s, commit p95 602 ms, max 920 ms. Same shape as in process; the pipe adds no visible cost.
 - M4: domain mentions (INV-ID-05) roughly double the keys a commit touches; re-run S2c then.
 
 ---
@@ -157,3 +157,152 @@ The baseline row (grid, six cells) stays. The single-text-node row is the record
 - NFR-PERF-04: the measure is reworded once the reading above is approved.
 - M2d: the real connections list needs a position → key lookup for long jumps and scrollbar drags (keyset pages cannot seek by position).
 - macOS (WKWebView) and Windows (WebView2): run the same script when those platforms are tested (platform scope: Linux first). Repeat on a 60 Hz display and in a native Wayland webview.
+
+---
+
+## S2a — CSV streaming worker → core → commit (R6, K3)
+
+### Question and method
+
+Since M2c every file is parsed in a worker process (ADR-0001, ADR-0007): the worker reads the file, checks its hash, parses it, finds the identifier mentions and streams the result to the core as postcard frames (`u32` length + payload) in chunks of segments. The core assembles the chunks of one item and commits them once, at Done (INV-PR-04). Does a 1M-row CSV get through at ≥ 50,000 rows/s including the commit (NFR-PERF-22)? How long does a worker take to start, and to be killed and replaced? How much memory does the buffering cost?
+
+Machine RM-1 (§1), idle (confirmed before the runs), release build. Measured 2026-10-27, two runs; the table shows the second (the first agreed within 3 %).
+
+```sh
+cargo run -p corpus-gen --release -- csv-rows --rows 1000000          # testdata/s2a/rows-1m.csv
+cargo xtask build --release                                          # for the desktop worker start
+MK_S2A_DESKTOP=target/release/mangkon \
+  cargo test -p mk-core --release --test s2a_csv_stream -- --ignored --nocapture
+```
+
+- **Input:** 1,000,000 rows + header, 74.9 MB: date, description, IBAN, amount, and an email in 30 % of rows (300,265 mentions), filled like TD-2 (`07-test-corpus.md` §9).
+- **End to end:** fresh project, one lane, one worker: re-scan, then Stage A (worker: read + hash check, parse, extract, stream; core: decode, assemble, commit with the derived rebuild). Chunks of 1,024, 4,096 and 16,384 segments. Peak resident memory of the core and of core + worker, sampled every 100 ms. The same bytes once more as a `.txt` file, for the plain-text memory factor.
+- **Breakdown:** the same steps in one process, timed one by one.
+- **Worker start:** 100 × start to `Hello`, and 100 × kill + wait + start + `Hello`, for the test worker (`mk-test-worker`, as small as `mangkon-cli`) and the desktop binary (`mangkon --worker`, which maps the WebKitGTK libraries).
+
+**Pass mark:** ≥ 50,000 rows/s including the commit.
+
+### Results
+
+| Chunk size (segments) | Stage A | Rows/s | Commit | Peak core + worker | Peak core |
+|---|---|---|---|---|---|
+| 1,024 | 2.57 s | 388,541 | 1.64 s | 733 MB | 317 MB |
+| **4,096 (default)** | **2.59 s** | **385,386** ✅ | 1.62 s | 740 MB | 323 MB |
+| 16,384 | 2.61 s | 383,486 | 1.62 s | 764 MB | 347 MB |
+| Same bytes as TXT, 4,096 | 1.89 s | 528,879 lines/s | 1.50 s | 579 MB | 321 MB |
+
+Re-scan (read + BLAKE3) of the file: 24–39 ms.
+
+| Breakdown, in one process | Time |
+|---|---|
+| Read + hash | 47 ms |
+| Parse (CSV, delimiter and header detection) | 496 ms |
+| Extract mentions, build chunks | 200 ms |
+| Encode frames (115 MB in 491 chunks) | 144 ms |
+| Decode + assemble | 143 ms |
+| Commit (segments, mentions, derived rebuild, Done) | 1,560 ms |
+
+| Worker start (100 runs) | Start to `Hello` p50 / p95 / max | Kill + replace p50 / p95 / max |
+|---|---|---|
+| `mk-test-worker` | 4.5 / 5.1 / 5.2 ms | 5.4 / 5.9 / 6.1 ms |
+| `mangkon --worker` (desktop binary) | 18.8 / 29.1 / 58.9 ms | 20.1 / 31.4 / 37.1 ms |
+
+### What the numbers say
+
+- **The process boundary is cheap.** Encoding, the pipe and decoding together cost ~0.3 s of 2.6 s. The commit is 60 % of Stage A, and it is the same commit as in process.
+- **Chunk size does not matter** between 1k and 16k segments; larger chunks only raise the peak a little. 4,096 stays.
+- **Frames are 1.5 × the file** (115 MB for 75 MB): text plus locators and cell offsets. Not worth trimming at this speed.
+- **Buffering in the core costs memory, not time.** Peak core + worker is ≈ 10 × the file size for CSV and ≈ 8 × for TXT; the core alone holds ≈ 4.5 × until the commit. `Format::memory_estimate` uses these factors for the memory budget (gap A2, §5).
+- **The desktop binary starts 4 × slower** than a small one (dynamic linking of WebKitGTK and GTK) but still in ~20 ms; a replacement after a kill is not noticeable.
+
+### Verdict
+
+**Met.** ~385,000 rows/s against 50,000, with the commit. Workers for CSV stay (ADR-0001); no CSV special case is needed. R6 is retired.
+
+### Follow-ups
+
+- **CSV size limit:** at ≈ 10 × the file size, a 500 MB CSV (NFR-CAP-05) would need ~2.9 GB in the worker and ~2.2 GB in the core, over the 1 GB per-file limit (NFR-REL-07) and the 2 GB of NFR-RES-02. The worker's share (≈ 5.8 × the file) puts today's practical limit at ≈ 175 MB per CSV. Raising it needs a streaming CSV parser and a commit that does not hold the whole result (ADR-0007's "write chunks into one open transaction"). **Decided (2026-10-27):** NFR-CAP-05 stays at 500 MB; M3 builds the streaming parser and commit.
+- S2c with workers: re-run, still met (§S2c follow-ups: p95 + debounce 1.08 s / 1.34 s).
+
+---
+
+## S2b — Memory bomb stopped (R5, gap A5)
+
+### Question and method
+
+Is a memory bomb stopped within 200 ms after it passes 1 GB, and failed with "Needed too much memory", while other files finish (NFR-REL-07)?
+
+Machine RM-1 (§1), idle, release build, 2026-10-27.
+
+```sh
+cargo test -p mk-core --release --test s2b_memory_bomb -- --ignored --nocapture
+```
+
+- 20 bomb files (test fault `memory-bomb`: the worker allocates 64 MB blocks and touches every page) mixed with 20 plain files, one lane, default limits.
+- **Limits:** the core samples each worker's resident memory every 100 ms and kills it over 1 GB. On Linux the worker also caps its own address space at start (`RLIMIT_AS` = its size at start + 1 GB + 512 MB headroom), so an allocation that runs away between two samples fails inside the worker (Rust aborts with "memory allocation of N bytes failed", which the core reads as a memory stop). macOS: the watchdog only. Windows: the watchdog only for now (below).
+- **Measured per bomb:** how it was stopped, the highest RSS sampled, and the time from the last sample under 1 GB to the stop: an upper bound on how long it ran over the limit.
+
+**Pass mark:** every bomb stopped ≤ 200 ms after passing 1 GB; every bomb Failed with "Needed too much memory"; every plain file Done.
+
+### Results
+
+| | |
+|---|---|
+| Bombs stopped | 20 of 20, all by the watchdog (the `RLIMIT_AS` cap was never reached) |
+| Time over the limit (upper bound) | 144.8–160.2 ms |
+| Highest RSS sampled | 1,348–1,349 MB |
+| Failure reason | "Needed too much memory" for all 20 |
+| Plain files | 20 of 20 Done |
+| Whole run | 7.1 s |
+
+### Verdict
+
+**Met on Linux.** Every bomb was stopped ≤ 160 ms after passing 1 GB, with the plain reason, and the other files finished. At 64 MB per step a bomb grows ~325 MB past the limit before the next sample sees it, so RSS can briefly reach ~1.35 GB. The `RLIMIT_AS` cap is a backstop for faster growth. R5 is retired on Linux.
+
+### Follow-ups
+
+- **Windows hard cap:** a Job Object with a per-process memory limit needs a Win32 call; no maintained crate offers it without `unsafe` in our code (the `win32job` crate sets only working-set limits), and ADR-0002 allows `unsafe` only in `mk-tesseract-sys`. Windows has the watchdog alone, like macOS. **Decided (2026-10-27):** accepted; no ADR-0002 exception.
+- macOS and Windows: `s2b_memory_bomb_short` runs in CI on all three OSes once the repo is pushed; **not verified here**.
+- NFR-REL-07 wording (gap A5): "stopped within 200 ms after its memory passes 1 GB (sampled every 100 ms); on Linux an address-space cap stops faster growth" (proposal, roadmap M2c outcome).
+
+---
+
+## 4. Kill test (M2 criterion 1; NFR-REL-02/03/04)
+
+```sh
+cargo build --release -p mangkon-cli
+target/release/mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1
+target/release/mangkon-cli kill-test --source testdata/td2 --runs 20 --seed 1
+```
+
+The driver runs `mangkon-cli kill-test-target` (open, add the folder, re-scan, Stage A in workers) three times without a kill, then 20 times with a kill (`SIGKILL`) at a seeded random moment between the start and the end of ingestion (the shortest reference run). After each kill it checks: every worker of the killed process exits by itself within 2 s; reopening (restart recovery, ADR-0006) loses at most one in-progress item per lane and no item the target saw committed; SQLite integrity and foreign keys hold and the derived rows equal a rebuild; no item stays in progress. Then it ingests again and compares the result with the reference runs.
+
+RM-1, release build, 2026-10-27, 23 lanes.
+
+| Source | Ingestion (shortest reference) | Kill moments | Passed | Orphan workers | Items recovered per kill |
+|---|---|---|---|---|---|
+| TD-1 TXT/CSV subset (8 files) | 38 ms | 12 at process start, 6 in project open, 2 in Stage A | **20 / 20** | 0 | 0–5 |
+| TD-2 TXT/CSV (792 stored files) | 9.0 s | 19 in Stage A, 1 just after it | **20 / 20** | 0 | 0–23 |
+
+**Met.** 0 corrupted projects in 40 kills; lost work never exceeded the files in progress (at most 23 = the lane width); no item stayed in progress after reopening, and every resumed project ended equal to the reference. The TD-1 subset is so small that most kills land before Stage A; the TD-2 run (the same files × 99) puts the kills in the middle of Stage A. `nfr_rel_02_kill_test_short` (3 kills on a generated folder) runs on every OS in CI; macOS and Windows are **not verified here**.
+
+---
+
+## 5. Memory (M2 criterion 7; NFR-RES-01/02)
+
+| Measure | Result | Limit |
+|---|---|---|
+| **Idle (7a):** `target/release/mangkon` with the window open, 60 s, sum over the process tree (the app, `WebKitWebProcess`, `WebKitNetworkProcess`), sampled every 10 s | **439 MB** RSS (190 + 201 + 47); 207 MB PSS; flat from 10 s to 60 s | 500 MB ✅ |
+| **Stage A on the CSV part of TD-2 (7b):** 396 CSV files, 23 lanes, core + workers sampled every 100 ms, `nfr_res_02_stage_a_memory_td2_csv` | **233 MB** with `mk-test-worker`; **908 MB** with the desktop binary as worker; core alone 58 MB; 8.6 s | 2 GB ✅ |
+| Idle worker, one process | `mangkon --worker` 35 MB RSS (28 MB of it shared libraries), 22 MB PSS; `mangkon-cli --worker` 5.7 MB | — |
+
+```sh
+MK_WORKER_PROGRAM=target/release/mangkon \
+  cargo test -p mk-core --release --test nfr_res_02 -- --ignored --nocapture
+```
+
+- **7a is partial:** the app has no project screens yet (M2d). It is measured again there. The margin is small (61 MB), and two thirds of it is WebKitGTK.
+- **7b:** resident memory counts each worker's shared library pages again, so 23 desktop workers count ~800 MB before they read a file; PSS would be ~40 % lower. The budget counts RSS, the cautious measure (gap A2). Of the 396 files, 99 (the Windows-1252 TD-1 CSV × 99) fail alone with "Unknown text encoding" until M3.
+- No worker stays after a Stage A run: the lanes shut their workers down at the end (NFR-RES-01).
+- **Memory budget (gap A2):** 1.5 GB for the items in flight; an item's need is 40 MB + 8 × its size for TXT/MD and 40 MB + 10 × for CSV (§S2a). Small files keep going past a large one that waits; a file larger than the budget runs alone. Workers are replaced after 200 files, or when idle above 300 MB.
+

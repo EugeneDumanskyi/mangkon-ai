@@ -40,10 +40,12 @@ pub enum Td3Category {
     WrongExtension,
     MemoryBomb,
     EndlessLoop,
+    /// The parser process dies (TD-3 v2: a test fault).
+    Crash,
 }
 
 impl Td3Category {
-    pub const ALL: [Td3Category; 9] = [
+    pub const ALL: [Td3Category; 10] = [
         Td3Category::Empty,
         Td3Category::Blank,
         Td3Category::Encrypted,
@@ -53,6 +55,7 @@ impl Td3Category {
         Td3Category::WrongExtension,
         Td3Category::MemoryBomb,
         Td3Category::EndlessLoop,
+        Td3Category::Crash,
     ];
 }
 

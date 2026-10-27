@@ -414,6 +414,49 @@ fn csv_scaled(
     Ok((out, lines.len() + CSV_ROWS))
 }
 
+/// One CSV of `rows` generated bank-statement rows plus a header, with the TD-2 row filler
+/// (dates, IBANs, amounts, 30% counterparty emails, Zipf-spread keys), for spike S2a
+/// (`docs/10-walking-skeleton.md` §S2a). Written as it is generated. Returns the bytes written
+/// and the rows with an email.
+pub fn csv_rows(path: &Path, rows: usize, seed: u64) -> Result<(u64, usize), Vec<String>> {
+    use std::io::Write as _;
+    let err = |e: std::io::Error| vec![format!("{}: {e}", path.display())];
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(err)?;
+    }
+    let file = std::fs::File::create(path).map_err(err)?;
+    let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
+    let pools = Pools::new(seed);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed ^ 0x52a_0001);
+    let mut bytes = 0u64;
+    let mut with_email = 0;
+    let mut line = String::new();
+    let header = "date,description,iban,amount,counterparty_email\n";
+    out.write_all(header.as_bytes()).map_err(err)?;
+    bytes += header.len() as u64;
+    for row in 0..rows {
+        let email = if unit(&mut rng) < EMAIL_SHARE {
+            with_email += 1;
+            pools.emails[pools.email_zipf.sample(&mut rng)].as_str()
+        } else {
+            ""
+        };
+        line.clear();
+        line.push_str(&format!(
+            "2025-{:02}-{:02},Generated row {row:07},{},{}.{:02},{email}\n",
+            1 + rng.next_u32() % 12,
+            1 + rng.next_u32() % 28,
+            pools.ibans[pools.iban_zipf.sample(&mut rng)],
+            rng.next_u32() % 100_000,
+            rng.next_u32() % 100,
+        ));
+        out.write_all(line.as_bytes()).map_err(err)?;
+        bytes += line.len() as u64;
+    }
+    out.flush().map_err(err)?;
+    Ok((bytes, with_email))
+}
+
 /// A `tEXt` chunk before `IEND`.
 fn png_with_text(bytes: &[u8], text: &str) -> Result<Vec<u8>, String> {
     let iend = bytes

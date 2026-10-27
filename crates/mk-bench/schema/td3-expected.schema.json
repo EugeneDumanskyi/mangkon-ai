@@ -66,17 +66,26 @@
       ]
     },
     "Td3Category": {
-      "type": "string",
-      "enum": [
-        "empty",
-        "blank",
-        "encrypted",
-        "corrupt",
-        "truncated",
-        "huge",
-        "wrong_extension",
-        "memory_bomb",
-        "endless_loop"
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "empty",
+            "blank",
+            "encrypted",
+            "corrupt",
+            "truncated",
+            "huge",
+            "wrong_extension",
+            "memory_bomb",
+            "endless_loop"
+          ]
+        },
+        {
+          "description": "The parser process dies (TD-3 v2: a test fault).",
+          "type": "string",
+          "const": "crash"
+        }
       ]
     },
     "Td3File": {

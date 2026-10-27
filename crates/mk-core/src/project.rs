@@ -1,10 +1,11 @@
 //! One open project: its store, source roots, re-scan and the Stage A lane.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::mpsc::Receiver;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use mk_corpus::fs::{FileTypes, Skipped};
@@ -13,16 +14,21 @@ use mk_graph::DecisionKind;
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_parsers::Format;
-use mk_store::{OpenReport, Recovery, RescanChange, RescanOutcome, Store, StoreError};
+use mk_store::{
+    OpenReport, Progress, Recovery, RescanChange, RescanOutcome, StageAOutput, Store, StoreError,
+};
 use mk_workspace::{ProjectLayout, RootKind};
 
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
-use crate::stage_a;
+use crate::stage_a::Failure;
+use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
 
 #[derive(Debug)]
 pub enum ProjectError {
     Store(StoreError),
     Io(PathBuf, std::io::Error),
+    /// No worker could be started; the remaining items stay Pending.
+    Worker(WorkerError),
 }
 
 impl fmt::Display for ProjectError {
@@ -30,6 +36,7 @@ impl fmt::Display for ProjectError {
         match self {
             ProjectError::Store(e) => e.fmt(f),
             ProjectError::Io(p, e) => write!(f, "{}: {e}", p.display()),
+            ProjectError::Worker(e) => e.fmt(f),
         }
     }
 }
@@ -39,6 +46,12 @@ impl std::error::Error for ProjectError {}
 impl From<StoreError> for ProjectError {
     fn from(e: StoreError) -> Self {
         ProjectError::Store(e)
+    }
+}
+
+impl From<WorkerError> for ProjectError {
+    fn from(e: WorkerError) -> Self {
+        ProjectError::Worker(e)
     }
 }
 
@@ -75,6 +88,33 @@ pub struct StageASummary {
     /// For each committed item: time from "parse finished" to "commit done", which includes
     /// waiting for the writer (spike S2c, NFR-PERF-34).
     pub commit_latencies: Vec<Duration>,
+    /// Highest sampled resident memory of this process plus its workers, in bytes, sampled
+    /// every [`WorkerConfig::sample_every`] (NFR-RES-02).
+    pub peak_memory: u64,
+    /// The same for this process alone (results are buffered here until commit).
+    pub peak_core_memory: u64,
+    /// Workers started: the first of each lane, replacements and recycled ones.
+    pub workers_started: usize,
+    /// Workers stopped in the middle of an item (deadline, memory, crash), in order.
+    pub stops: Vec<WorkerStop>,
+}
+
+/// A project's health after a crash or a kill (NFR-REL-02 kill test, ADR-0006).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct HealthReport {
+    /// `PRAGMA integrity_check` lines other than `ok`.
+    pub integrity_errors: Vec<String>,
+    /// Rows reported by `PRAGMA foreign_key_check`.
+    pub foreign_key_errors: usize,
+    /// The derived tables equal a rebuild from the facts (ADR-0005).
+    pub derived_consistent: bool,
+    pub progress: Progress,
+}
+
+impl HealthReport {
+    pub fn is_healthy(&self) -> bool {
+        self.integrity_errors.is_empty() && self.foreign_key_errors == 0 && self.derived_consistent
+    }
 }
 
 /// An open project (ADR-0002: the shell and the CLI reach the core only through services like
@@ -84,6 +124,7 @@ pub struct Project {
     store: Store,
     events: Events,
     workers: usize,
+    worker_config: WorkerConfig,
 }
 
 /// The file types with a parser (US-01.3 AC3).
@@ -107,6 +148,7 @@ impl Project {
                 store,
                 events: Events::start(DEBOUNCE),
                 workers,
+                worker_config: WorkerConfig::default(),
             },
             OpenSummary { schema, recovered },
         ))
@@ -121,9 +163,19 @@ impl Project {
         &self.store
     }
 
+    /// The Stage A lane width: at most this many items are in progress at once.
+    pub fn stage_a_workers(&self) -> usize {
+        self.workers
+    }
+
     /// Overrides the Stage A lane width (default cores − 1, NFR-PERF-25).
     pub fn set_stage_a_workers(&mut self, n: usize) {
         self.workers = n.max(1);
+    }
+
+    /// How Stage A workers are started and limited (default: this executable with `--worker`).
+    pub fn worker_config_mut(&mut self) -> &mut WorkerConfig {
+        &mut self.worker_config
     }
 
     /// `ConnectionsChanged` events, debounced 500 ms.
@@ -241,84 +293,210 @@ impl Project {
         out.into_inner().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Runs the Stage A lane until no item is pending: up to `cores − 1` threads take items in
-    /// scheduler order (INV-PR-03), parse in process and send each result to the one writer,
-    /// which commits it with its derived rebuild (ADR-0005). A failure fails only its item
-    /// (INV-CO-09, US-02.7).
+    /// Runs the Stage A lane until no item is pending: up to `cores − 1` lanes, each with its
+    /// own worker process, take items in scheduler order (INV-PR-03) as the memory budget allows
+    /// (gap A2); each result goes to the one writer, which commits it with its derived rebuild
+    /// (ADR-0005). A failure, a deadline, a memory limit or a worker crash fails only its item
+    /// (INV-CO-09, NFR-REL-01/06/07); the lane then starts a fresh worker. Workers are shut down
+    /// when the run ends, so none stays idle (NFR-RES-01).
     pub fn run_stage_a(&self) -> Result<StageASummary, ProjectError> {
         let summary = Mutex::new(StageASummary::default());
-        let fatal: Mutex<Option<StoreError>> = Mutex::new(None);
+        let peak = AtomicU64::new(0);
+        let peak_core = AtomicU64::new(0);
         loop {
             let pending = self.store.pending_items()?;
             if pending.is_empty() {
                 break;
             }
-            let order = mk_jobs::next_batch(&pending, 0, pending.len());
-            let queue = Mutex::new(VecDeque::from(order));
+            let needs: HashMap<i64, u64> = pending
+                .iter()
+                .map(|p| {
+                    let size = p.item.size;
+                    let need =
+                        Format::from_name(&p.file_type).map_or(size, |f| f.memory_estimate(size));
+                    (p.item.id, need)
+                })
+                .collect();
+            let items: Vec<_> = pending.iter().map(|p| p.item).collect();
+            let order = mk_jobs::next_batch(&items, 0, items.len());
+            let queue = Budget::new(
+                order.iter().map(|id| (*id, needs[id])).collect(),
+                self.worker_config.budget,
+            );
+            let lanes = self.workers.min(pending.len());
+            let slots: Vec<AtomicU64> = (0..lanes).map(|_| AtomicU64::new(0)).collect();
+            let fatal: Mutex<Option<ProjectError>> = Mutex::new(None);
             std::thread::scope(|s| {
-                for _ in 0..self.workers.min(pending.len()) {
-                    s.spawn(|| {
-                        while fatal.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
-                            let Some(id) =
-                                queue.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
-                            else {
-                                return;
-                            };
-                            if let Err(e) = self.run_item(id, &summary) {
-                                fatal
-                                    .lock()
-                                    .unwrap_or_else(|e| e.into_inner())
-                                    .get_or_insert(e);
-                            }
+                let (stop, stopped) = std::sync::mpsc::channel::<()>();
+                let (slots, peak, peak_core) = (&slots, &peak, &peak_core);
+                let sampler = s.spawn(move || {
+                    let mut sys = sysinfo::System::new();
+                    loop {
+                        let workers: u64 = slots.iter().map(|r| r.load(Ordering::Relaxed)).sum();
+                        let core = own_rss(&mut sys);
+                        peak_core.fetch_max(core, Ordering::Relaxed);
+                        peak.fetch_max(core + workers, Ordering::Relaxed);
+                        if let Err(RecvTimeoutError::Disconnected) =
+                            stopped.recv_timeout(self.worker_config.sample_every)
+                        {
+                            return;
                         }
-                    });
+                    }
+                });
+                let handles: Vec<_> = slots
+                    .iter()
+                    .map(|slot| {
+                        let (queue, fatal, summary) = (&queue, &fatal, &summary);
+                        s.spawn(move || {
+                            let mut worker = None;
+                            while let Some((id, need)) = queue.take() {
+                                let r = self.run_item(id, &mut worker, slot, summary);
+                                queue.release(need);
+                                if let Err(e) = r {
+                                    fatal
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .get_or_insert(e);
+                                    queue.stop();
+                                }
+                            }
+                            if let Some(w) = worker.take() {
+                                w.shutdown();
+                            }
+                            slot.store(0, Ordering::Relaxed);
+                        })
+                    })
+                    .collect();
+                for h in handles {
+                    let _ = h.join();
                 }
+                drop(stop);
+                let _ = sampler.join();
             });
-            if let Some(e) = fatal.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                return Err(e.into());
+            if let Some(e) = fatal.into_inner().unwrap_or_else(|e| e.into_inner()) {
+                return Err(e);
             }
         }
-        Ok(summary.into_inner().unwrap_or_else(|e| e.into_inner()))
+        let mut summary = summary.into_inner().unwrap_or_else(|e| e.into_inner());
+        summary.peak_memory = peak.into_inner();
+        summary.peak_core_memory = peak_core.into_inner();
+        Ok(summary)
     }
 
-    fn run_item(&self, id: i64, summary: &Mutex<StageASummary>) -> Result<(), StoreError> {
+    /// One item on this lane's worker, started first if needed (so no item is started without
+    /// one). The worker is dropped when it was stopped and recycled after
+    /// [`WorkerConfig::recycle_after`] files or when idle over
+    /// [`WorkerConfig::recycle_idle_memory`].
+    fn run_item(
+        &self,
+        id: i64,
+        worker: &mut Option<WorkerProcess>,
+        rss: &AtomicU64,
+        summary: &Mutex<StageASummary>,
+    ) -> Result<(), ProjectError> {
+        let cfg = &self.worker_config;
+        let lock = || summary.lock().unwrap_or_else(|e| e.into_inner());
+        if worker.is_none() {
+            *worker = Some(WorkerProcess::spawn(cfg)?);
+            lock().workers_started += 1;
+        }
         let Some(started) = self.store.start_item(id)? else {
             return Ok(());
         };
-        let result = stage_a::process(&started);
-        let lock = || summary.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(path) = started.path.as_ref().and_then(|p| p.to_str()) else {
+            self.fail(
+                id,
+                &Failure::new("file_missing", "The file is no longer there"),
+                summary,
+            )?;
+            return Ok(());
+        };
+        let w = worker.as_mut().expect("started above");
+        let result = w.run(
+            cfg,
+            path.to_string(),
+            started.hash,
+            started.file_type.clone(),
+            rss,
+        );
         match result {
-            Ok(output) => {
-                let parsed_at = Instant::now();
-                match self.store.commit_stage_a(id, output) {
-                    Ok(outcome) => {
-                        let latency = parsed_at.elapsed();
-                        if outcome.connections_changed {
-                            self.events.changed();
-                        }
-                        let mut s = lock();
-                        s.done += 1;
-                        s.changed_commits += usize::from(outcome.connections_changed);
-                        s.commit_latencies.push(latency);
-                    }
-                    // The commit rolled back. Record why on the item, so it does not come back.
-                    Err(e @ StoreError::Invalid(_)) => {
-                        self.store.fail_item(
-                            id,
-                            "internal_error",
-                            &format!("Could not store the results: {e}"),
-                        )?;
-                        lock().failed += 1;
-                    }
-                    Err(e) => return Err(e),
-                }
+            ItemResult::Done(output) => self.commit(id, output, summary)?,
+            ItemResult::Failed(f) => self.fail(id, &f, summary)?,
+            ItemResult::Stopped(stop) => {
+                *worker = None;
+                self.fail(id, &stop.why.failure(), summary)?;
+                lock().stops.push(stop);
             }
-            Err(f) => {
-                self.store.fail_item(id, f.code, &f.reason)?;
-                lock().failed += 1;
+        }
+        if let Some(w) = worker.as_mut() {
+            let idle = w.rss().unwrap_or(0);
+            rss.store(idle, Ordering::Relaxed);
+            if w.files() >= cfg.recycle_after || idle > cfg.recycle_idle_memory {
+                worker.take().expect("checked").shutdown();
+                rss.store(0, Ordering::Relaxed);
             }
         }
         Ok(())
+    }
+
+    fn commit(
+        &self,
+        id: i64,
+        output: StageAOutput,
+        summary: &Mutex<StageASummary>,
+    ) -> Result<(), StoreError> {
+        let parsed_at = Instant::now();
+        match self.store.commit_stage_a(id, output) {
+            Ok(outcome) => {
+                let latency = parsed_at.elapsed();
+                if outcome.connections_changed {
+                    self.events.changed();
+                }
+                let mut s = summary.lock().unwrap_or_else(|e| e.into_inner());
+                s.done += 1;
+                s.changed_commits += usize::from(outcome.connections_changed);
+                s.commit_latencies.push(latency);
+                Ok(())
+            }
+            // The commit rolled back. Record why on the item, so it does not come back.
+            Err(e @ StoreError::Invalid(_)) => self.fail(
+                id,
+                &Failure::new(
+                    "internal_error",
+                    format!("Could not store the results: {e}"),
+                ),
+                summary,
+            ),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn fail(&self, id: i64, f: &Failure, summary: &Mutex<StageASummary>) -> Result<(), StoreError> {
+        self.store.fail_item(id, &f.code, &f.reason)?;
+        summary.lock().unwrap_or_else(|e| e.into_inner()).failed += 1;
+        Ok(())
+    }
+
+    /// Checks the project after a crash or kill: SQLite integrity and foreign keys, derived
+    /// rows against a rebuild from the facts (ADR-0005), and the item and job counts.
+    pub fn check_health(&self) -> Result<HealthReport, ProjectError> {
+        let (integrity_errors, foreign_key_errors) = self.store.read_raw(|c| {
+            let mut stmt = c.prepare("PRAGMA integrity_check")?;
+            let lines: Vec<String> = stmt
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            let mut stmt = c.prepare("PRAGMA foreign_key_check")?;
+            let fk = stmt.query_map([], |_| Ok(()))?.count();
+            Ok((lines.into_iter().filter(|l| l != "ok").collect(), fk))
+        })?;
+        let derived = self.store.derived_state()?;
+        let reference = mk_graph::model::reference(&self.store.facts()?);
+        Ok(HealthReport {
+            integrity_errors,
+            foreign_key_errors,
+            derived_consistent: derived == reference,
+            progress: self.store.progress()?,
+        })
     }
 
     /// Ignores (or un-ignores) an identifier connection: appends the decision and rebuilds its
@@ -339,5 +517,67 @@ impl Project {
             self.events.changed();
         }
         Ok(seq)
+    }
+}
+
+/// The Stage A queue in scheduler order, handed out as the memory budget allows (gap A2).
+struct Budget {
+    state: Mutex<BudgetState>,
+    changed: Condvar,
+    total: u64,
+}
+
+struct BudgetState {
+    ids: Vec<i64>,
+    needs: Vec<u64>,
+    in_use: u64,
+    in_flight: usize,
+    stopped: bool,
+}
+
+impl Budget {
+    fn new(items: Vec<(i64, u64)>, total: u64) -> Self {
+        let (ids, needs) = items.into_iter().unzip();
+        Budget {
+            state: Mutex::new(BudgetState {
+                ids,
+                needs,
+                in_use: 0,
+                in_flight: 0,
+                stopped: false,
+            }),
+            changed: Condvar::new(),
+            total,
+        }
+    }
+
+    /// The next item and its need; waits while nothing fits. `None` when the queue is empty or
+    /// the run stopped.
+    fn take(&self) -> Option<(i64, u64)> {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if s.stopped || s.ids.is_empty() {
+                return None;
+            }
+            if let Some(i) = mk_jobs::pick_next(&s.needs, s.in_use, s.in_flight, self.total) {
+                let (id, need) = (s.ids.remove(i), s.needs.remove(i));
+                s.in_use += need;
+                s.in_flight += 1;
+                return Some((id, need));
+            }
+            s = self.changed.wait(s).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    fn release(&self, need: u64) {
+        let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        s.in_use -= need;
+        s.in_flight -= 1;
+        self.changed.notify_all();
+    }
+
+    fn stop(&self) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).stopped = true;
+        self.changed.notify_all();
     }
 }

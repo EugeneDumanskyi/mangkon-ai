@@ -33,6 +33,20 @@ impl Format {
     pub fn from_name(name: &str) -> Option<Format> {
         Self::ALL.into_iter().find(|f| f.as_str() == name)
     }
+
+    /// Estimated Stage A memory for a file of `size` bytes in bytes: a worker's base plus the
+    /// file, its parse and the result buffered in the core until commit. The memory budget
+    /// uses it (gap A2, ADR-0007). Measured in spike S2a on a 75 MB file
+    /// (`docs/10-walking-skeleton.md` §S2a): peak worker + core memory ≈ 10 × size for CSV and
+    /// ≈ 8 × size for the same bytes as TXT; an idle desktop worker holds ≈ 35 MB resident.
+    pub fn memory_estimate(&self, size: u64) -> u64 {
+        const BASE: u64 = 40 << 20;
+        let factor = match self {
+            Format::Text | Format::Markdown => 8,
+            Format::Csv => 10,
+        };
+        BASE.saturating_add(size.saturating_mul(factor))
+    }
 }
 
 /// Row state of a segment: CSV rows with the wrong number of cells are kept, marked

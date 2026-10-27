@@ -49,10 +49,20 @@ fn inv_pr_05_inv_pr_07_restart_recovery() {
         let pending = project.store().pending_items().unwrap();
         assert_eq!(pending.len(), 4);
         // Item 0 finishes; item 1 is in progress when the app stops.
-        let done = project.store().start_item(pending[0].id).unwrap().unwrap();
-        let output = mk_core::stage_a::process(&done).unwrap();
+        let done = project
+            .store()
+            .start_item(pending[0].item.id)
+            .unwrap()
+            .unwrap();
+        let bytes = std::fs::read(done.path.as_ref().unwrap()).unwrap();
+        let parsed = mk_parsers::parse(mk_parsers::Format::Text, &bytes).unwrap();
+        let output = mk_core::stage_a::extract(&parsed);
         project.store().commit_stage_a(done.item, output).unwrap();
-        let started = project.store().start_item(pending[1].id).unwrap().unwrap();
+        let started = project
+            .store()
+            .start_item(pending[1].item.id)
+            .unwrap()
+            .unwrap();
         // A paused job (pause itself comes in M3) to check that its state survives.
         project
             .store()
@@ -72,7 +82,9 @@ fn inv_pr_05_inv_pr_07_restart_recovery() {
         // Dropped here with item 1 in progress and its content Processing.
     };
 
-    let (project, summary) = Project::open(&dir).unwrap();
+    let (mut project, summary) = Project::open(&dir).unwrap();
+    *project.worker_config_mut() =
+        mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
     assert_eq!(
         (summary.recovered.items, summary.recovered.contents),
         (1, 1)

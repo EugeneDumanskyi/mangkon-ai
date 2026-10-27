@@ -3,6 +3,7 @@ use std::str::FromStr;
 
 /// Identifier type. M2b has email only; the other types come in M4 (US-04.2 – US-04.7).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IdentifierKind {
     Email,
 }
@@ -30,6 +31,7 @@ impl fmt::Display for IdentifierKind {
 /// holds it. Displays as `type:value` (for example `email:john.smith@example.com`), which is
 /// also its stored form and the anchor of decisions on it (domain §9.5).
 #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IdentifierKey {
     kind: IdentifierKind,
     value: String,

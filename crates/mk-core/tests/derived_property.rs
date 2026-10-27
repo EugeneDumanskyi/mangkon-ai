@@ -168,7 +168,8 @@ proptest! {
         let src = tmp.path().join("src");
         let trash = src.join(".trash");
         std::fs::create_dir_all(&trash).unwrap();
-        let (project, _) = Project::open(&tmp.path().join("project")).unwrap();
+        let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
+        *project.worker_config_mut() = mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
         project.add_source_root(&src).unwrap();
         let mut world = World { src, trash, clock: 0 };
         for (i, op) in ops.iter().enumerate() {

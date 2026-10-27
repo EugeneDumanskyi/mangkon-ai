@@ -2,7 +2,8 @@
 //! No I/O: `mk-store` persists the states, `mk-core` runs the lanes.
 //!
 //! M2b: every state of domain §7.2 (so schema v1 needs no migration later), the Stage A lane
-//! and the restart rule. Pause and cancel commands come in M3; AI lanes in M5.
+//! and the restart rule. M2c: the worker memory budget ([`pick_next`], gap A2). Pause and
+//! cancel commands come in M3; AI lanes in M5.
 
 use std::fmt;
 
@@ -188,8 +189,9 @@ impl ItemState {
     }
 }
 
-/// Stage A lane limit: cores − 1, at least 1 (NFR-PERF-25). The memory budget (ADR-0007) joins
-/// this in M2c.
+/// Stage A lane limit by cores: cores − 1, at least 1 (NFR-PERF-25). The lane runs
+/// `min(this, what the memory budget allows)` workers at once: [`pick_next`] holds an item back
+/// while its memory need does not fit (ADR-0007, architecture §7).
 pub fn stage_a_limit(cores: usize) -> usize {
     cores.saturating_sub(1).max(1)
 }
@@ -201,6 +203,8 @@ pub struct PendingItem {
     pub priority: i64,
     /// Text-native content (no OCR needed). In M2b every content is text-native.
     pub text_native: bool,
+    /// File size in bytes; with the file type it gives the item's memory need.
+    pub size: u64,
 }
 
 /// Priority of a Stage A item: text-native first (INV-PR-03), then smaller files first, so
@@ -217,6 +221,23 @@ pub fn next_batch(pending: &[PendingItem], in_flight: usize, limit: usize) -> Ve
     let mut items: Vec<&PendingItem> = pending.iter().collect();
     items.sort_by_key(|i| (!i.text_native, i.priority, i.id));
     items.into_iter().take(room).map(|i| i.id).collect()
+}
+
+/// The index in `needs` (memory needs in bytes, in scheduler order) of the next item to start,
+/// given `in_use` bytes and `in_flight` items already running under a `total` budget (gap A2,
+/// ADR-0007):
+///
+/// - the first item whose need fits the room left runs, so small files keep flowing past a big
+///   one that waits;
+/// - if none fits and nothing runs, the first item runs alone, even over the budget (it is still
+///   held to the per-file limit, NFR-REL-07), so the lane never stalls;
+/// - otherwise `None`: wait until a running item finishes.
+pub fn pick_next(needs: &[u64], in_use: u64, in_flight: usize, total: u64) -> Option<usize> {
+    let room = total.saturating_sub(in_use);
+    needs
+        .iter()
+        .position(|n| *n <= room)
+        .or_else(|| (in_flight == 0 && !needs.is_empty()).then_some(0))
 }
 
 #[cfg(test)]
@@ -286,6 +307,7 @@ mod tests {
             id,
             priority,
             text_native,
+            size: 0,
         };
         let pending = [
             item(1, stage_a_priority(false, 10), false),
@@ -297,5 +319,54 @@ mod tests {
         assert_eq!(next_batch(&pending, 2, 3), vec![3]);
         assert_eq!(next_batch(&pending, 3, 3), Vec::<i64>::new());
         assert_eq!(next_batch(&pending, 0, 10), vec![3, 4, 2, 1]);
+    }
+
+    /// Gap A2: small files pass a big one that does not fit; the big one runs once the lane is
+    /// idle; nothing starts while the budget is full.
+    #[test]
+    fn a2_budget_lets_small_files_pass() {
+        const MB: u64 = 1 << 20;
+        let needs = [900 * MB, 50 * MB, 50 * MB];
+        assert_eq!(pick_next(&needs, 0, 0, 1500 * MB), Some(0));
+        assert_eq!(pick_next(&needs, 700 * MB, 1, 1500 * MB), Some(1));
+        assert_eq!(pick_next(&needs[..1], 700 * MB, 1, 1500 * MB), None);
+        assert_eq!(pick_next(&needs[..1], 0, 0, 500 * MB), Some(0));
+        assert_eq!(pick_next(&[], 0, 0, 500 * MB), None);
+        assert_eq!(pick_next(&needs, 1500 * MB, 3, 1500 * MB), None);
+    }
+
+    proptest::proptest! {
+        /// Gap A2: a simulated lane never goes over the budget unless one item runs alone, and
+        /// always finishes every item.
+        #[test]
+        fn a2_budget_never_over_unless_alone_and_never_stalls(
+            needs in proptest::collection::vec(1u64..2_000, 0..40),
+            total in 1u64..3_000,
+            lanes in 1usize..8,
+            finish_order in proptest::collection::vec(0usize..8, 0..200),
+        ) {
+            let mut queue = needs.clone();
+            let mut running: Vec<u64> = Vec::new();
+            let mut finished = 0;
+            let mut steps = finish_order.into_iter();
+            while !queue.is_empty() || !running.is_empty() {
+                // Start what the budget allows, up to the lane width.
+                while running.len() < lanes {
+                    let in_use = running.iter().sum();
+                    let Some(i) = pick_next(&queue, in_use, running.len(), total) else {
+                        break;
+                    };
+                    running.push(queue.remove(i));
+                    let sum: u64 = running.iter().sum();
+                    proptest::prop_assert!(sum <= total || running.len() == 1);
+                }
+                // Idle lane with work left would be a stall.
+                proptest::prop_assert!(!running.is_empty());
+                let k = steps.next().unwrap_or(0) % running.len();
+                running.remove(k);
+                finished += 1;
+            }
+            proptest::prop_assert_eq!(finished, needs.len());
+        }
     }
 }

@@ -5,6 +5,11 @@ use crate::{ImageSize, Rect, Span};
 
 /// 1-based page number of a paged document.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
 pub struct PageNumber(NonZeroU32);
 
 impl PageNumber {
@@ -31,6 +36,11 @@ impl fmt::Display for PageNumber {
 
 /// 1-based line number of a text file, counting every line of the decoded file (empty ones too).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
+)]
 pub struct LineNumber(NonZeroU32);
 
 impl LineNumber {
@@ -53,6 +63,7 @@ impl fmt::Display for LineNumber {
 /// A CSV column: its header name when the file has a header with a unique, non-empty name for
 /// it, otherwise its 0-based index.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Column {
     Name(String),
     Index(u32),
@@ -70,6 +81,7 @@ pub enum Column {
 /// Still to come, each in the milestone that adds its parser: DOCX paragraph + span, HTML text
 /// offset + span, JSON path, email header name, MIME part + span (M3).
 #[derive(Clone, PartialEq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Locator {
     /// A place in the stored text of one PDF page (US-02.1 AC1). In M0b a page is one segment,
     /// so `span` counts characters of the page's stored text.

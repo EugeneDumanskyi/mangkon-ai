@@ -1,6 +1,6 @@
 [package]
 name = "mangkon-cli"
-description = "Mangkon AI command line: bench, ingest, rebuild, kill-test driver (filled from M2c)."
+description = "Mangkon AI command line: kill-test driver (M2c); ingest, rebuild and bench later."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,3 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 mk-core.workspace = true
+serde_json = "1.0.154"
+
+[dev-dependencies]
+tempfile = "3.27.0"

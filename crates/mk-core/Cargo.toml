@@ -22,8 +22,11 @@ mk-identifiers.workspace = true
 mk-jobs.workspace = true
 mk-graph.workspace = true
 mk-store.workspace = true
+mk-worker.workspace = true
 serde = { version = "1.0.229", features = ["derive"], optional = true }
 serde_json = { version = "1.0.154", optional = true }
+# Worker RSS for the memory watchdog and the Stage A peak (ADR-0007).
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 mk-bench.workspace = true

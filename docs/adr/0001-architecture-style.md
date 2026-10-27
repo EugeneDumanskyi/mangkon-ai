@@ -68,5 +68,5 @@ Use **Option B**.
 - There are more processes to supervise: workers and `llama-server`.
 
 **Follow-ups**
-- M2 spike (S2a): measure worker start time and the cost to stream a 1M-row CSV (risk R6).
-- Re-check this decision if M2 shows the worker overhead breaks NFR-PERF-20/22.
+- M2 spike (S2a): measure worker start time and the cost to stream a 1M-row CSV (risk R6). **Done in M2c** (`docs/10-walking-skeleton.md` §S2a): ~385,000 rows/s end to end including the commit, against 50,000 (NFR-PERF-22); the pipe and frames cost ~0.3 s of 2.6 s. Worker start 4.5–18.8 ms (p50), kill and replace 5.4–20.1 ms.
+- Re-check this decision if M2 shows the worker overhead breaks NFR-PERF-20/22. **Checked in M2c:** it does not; workers stay for every format, CSV included. NFR-PERF-20 is measured with PDFs in M3.

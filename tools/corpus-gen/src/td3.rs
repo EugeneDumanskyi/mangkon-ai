@@ -1,5 +1,5 @@
-//! TD-3 v1: broken and edge-case PDF and image files, with `expected.json`
-//! (`docs/07-test-corpus.md` §6). Every file must finish within the per-file limits
+//! TD-3: broken and edge-case PDF and image files (v1), TXT and CSV files (v2, M2c), with
+//! `expected.json` (`docs/07-test-corpus.md` §6). Every file must finish within the per-file limits
 //! (NFR-REL-06/07) and never stop the batch (NFR-REL-01).
 
 use std::io::Write as _;
@@ -268,6 +268,8 @@ pub fn build(dir: &Path, generator: Generator, noto: &Noto) -> Result<usize, Vec
     o.add("loop-xref-prev.pdf", &xref_prev_loop(&base), Cat::EndlessLoop, Success, "An incremental-update xref whose /Prev points to itself. The objects are intact; a reader must stop following the chain.")?;
     o.add("loop-form-xobject.pdf", &form_cycle(), Cat::EndlessLoop, Success, "A Form XObject that draws itself. The page text sits outside the form; a reader must cap the recursion.")?;
 
+    text_and_csv(&mut o, &png, &small)?;
+
     o.files.sort_by(|a, b| a.path.cmp(&b.path));
     let n = o.files.len();
     let manifest = Td3Manifest {
@@ -280,6 +282,93 @@ pub fn build(dir: &Path, generator: Generator, noto: &Noto) -> Result<usize, Vec
     std::fs::write(dir.join("expected.json"), json)
         .map_err(|e| vec![format!("expected.json: {e}")])?;
     Ok(n + 1)
+}
+
+/// TD-3 v2 (M2c): TXT and CSV files, and the three fault files of the worker tests. `png` and
+/// `pdf` are valid files of those types, reused under a text name.
+fn text_and_csv(o: &mut Out, png: &[u8], pdf: &[u8]) -> Result<(), Vec<String>> {
+    use Outcome::{Fail, Success};
+    o.add(
+        "empty.txt",
+        &[],
+        Cat::Empty,
+        Success,
+        "Zero bytes. Processed with no segments.",
+    )?;
+    o.add(
+        "empty.csv",
+        &[],
+        Cat::Empty,
+        Success,
+        "Zero bytes. Processed with no rows.",
+    )?;
+    o.add(
+        "header-only.csv",
+        b"date,description,amount,email\n",
+        Cat::Blank,
+        Success,
+        "A header row and no data rows. Processed; the header is row 0.",
+    )?;
+
+    o.add("binary-named.txt", png, Cat::WrongExtension, Fail, "A PNG image named .txt. Not text: fails with \"Unknown text encoding\". ASSUMPTION: no content sniffing for text names.")?;
+    o.add("pdf-named.csv", pdf, Cat::WrongExtension, Fail, "A PDF with compressed streams named .csv. Not text: fails with \"Unknown text encoding\". ASSUMPTION: no content sniffing for text names.")?;
+
+    let mut latin1 = b"Invoice for M\xfcller GmbH, contact anna.mueller@example.de\n".to_vec();
+    latin1.extend_from_slice(b"Stra\xdfe 12, 10115 Berlin\n");
+    o.add("invalid-utf8.txt", &latin1, Cat::Corrupt, Fail, "Latin-1 bytes (0xFC, 0xDF) that are not UTF-8. Fails with \"Unknown text encoding\" until other encodings are read (M3).")?;
+    let mut cut = "Grüße aus Köln, max@example.org\nZweite Zeile ü"
+        .as_bytes()
+        .to_vec();
+    cut.pop();
+    o.add("truncated-utf8.txt", &cut, Cat::Truncated, Fail, "UTF-8 cut in the middle of the last character (half of ü). Fails with \"Unknown text encoding\". ASSUMPTION: no repair of a cut tail.")?;
+    o.add(
+        "nul-bytes.txt",
+        b"before\0after nul@example.com\n\0\0\0\nlast line\n",
+        Cat::Corrupt,
+        Success,
+        "Valid UTF-8 with NUL characters inside lines. Processed; NULs are kept as text.",
+    )?;
+
+    let mut line = String::with_capacity(16 << 20);
+    let mut i = 0usize;
+    while line.len() < (16 << 20) - 64 {
+        line.push_str(&format!("cell {i} "));
+        if i.is_multiple_of(50_000) {
+            line.push_str(&format!("long{i}@line.example "));
+        }
+        i += 1;
+    }
+    line.push('\n');
+    o.add("one-line-16mb.txt", line.as_bytes(), Cat::Huge, Success, "One 16 MB line with an email every 50,000 cells. Processed as one segment within the per-file limits.")?;
+    let mut wide = (0..100_000)
+        .map(|c| format!("c{c}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    wide.push('\n');
+    wide.push_str(
+        &(0..100_000)
+            .map(|c| {
+                if c == 99_999 {
+                    "wide@cols.example".to_string()
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    wide.push('\n');
+    o.add("wide-row-100k-columns.csv", wide.as_bytes(), Cat::Huge, Success, "A header and one row of 100,000 columns; the last cell is an email. Processed within the per-file limits.")?;
+
+    o.add("ragged-rows.csv", b"name,email,amount\nAnna,anna@ragged.example,10\nBen,ben@ragged.example\nCara,cara@ragged.example,30,extra\nDan,dan@ragged.example,40\n", Cat::Corrupt, Success, "Two of four data rows have the wrong number of cells. Processed; the rows are kept, marked malformed, with one warning (US-02.4 AC3).")?;
+    o.add("unclosed-quote.csv", b"name,note,email\nAnna,\"fine\",anna@quote.example\nBen,\"never closed,ben@quote.example\nCara,after,cara@quote.example\n", Cat::Corrupt, Success, "A quote opened in row 2 is never closed, so the rest of the file is one cell. Processed with a malformed-row warning. ASSUMPTION: no repair of the quoting.")?;
+
+    // Fault files: honoured only when the core enables test faults (tests); otherwise they are
+    // plain text.
+    o.add("fault-memory-bomb.txt", b"mk-test-fault: memory-bomb\nhidden@fault.example\n", Cat::MemoryBomb, Fail, "With test faults on, the worker allocates without end. Stopped over 1 GB: \"Needed too much memory\" (NFR-REL-07). Plain text otherwise.")?;
+    o.add("fault-endless-loop.txt", b"mk-test-fault: endless-loop\nhidden@fault.example\n", Cat::EndlessLoop, Fail, "With test faults on, the worker spins and sends heartbeats. Stopped at the deadline: \"Took too long to read\" (NFR-REL-06). Plain text otherwise.")?;
+    o.add("fault-crash.txt", b"mk-test-fault: crash\nhidden@fault.example\n", Cat::Crash, Fail, "With test faults on, the worker aborts. \"The file could not be read: the reader stopped unexpectedly\" (NFR-REL-01). Plain text otherwise.")?;
+    Ok(())
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {

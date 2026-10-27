@@ -262,6 +262,8 @@ fn s2c_derived_rebuild() {
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     let tmp = tempfile::tempdir().unwrap();
     let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
+    *project.worker_config_mut() =
+        mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
 
     // Step 1: TD-2's TXT/MD/CSV through the real pipeline.
     let t = Instant::now();

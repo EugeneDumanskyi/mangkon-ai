@@ -252,6 +252,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-01 Workspace | `mk-workspace` | Core |
 | BC-02 Corpus (model, re-scan, presence) | `mk-corpus` | Core |
 | BC-02 Corpus (parsers, OCR) | `mk-parsers` | Workers |
+| Worker protocol, framing, worker loop (ADR-0007) | `mk-worker` | Workers (the core uses its message types) |
 | BC-02 Corpus (OCR engine build) | `mk-tesseract-sys`: Tesseract + Leptonica from pinned sources, the only crate with `unsafe` (FFI, ADR-0002 rule 6, ADR-0014) | Workers (through `mk-parsers`) |
 | BC-03 Processing | `mk-jobs` | Core |
 | BC-04 Identifier extraction | `mk-identifiers` (pure functions) | Workers (Stage A), core (custom-pattern re-runs), CLI |
@@ -283,15 +284,16 @@ sequenceDiagram
     S->>W: ProcessContent(path, contentHash, settings, limits)
     W->>W: open read-only, parse, segment, OCR, find identifiers
     loop streamed chunks
-        W-->>DB: Documents / Segments / Mentions chunk
-        DB->>DB: insert into the open transaction
+        W-->>S: Documents / Segments / Mentions chunk
+        S->>S: buffer for this item
     end
-    W-->>DB: Done(warnings)
-    DB->>DB: recompute derived rows for touched keys, apply decisions
+    W-->>S: Done(warnings)
+    S->>DB: commit the buffered result
+    DB->>DB: insert, recompute derived rows for touched keys, apply decisions
     DB->>DB: COMMIT (work item Done)
     DB-->>UI: event "ConnectionsChanged" (debounced 500 ms)
     UI->>DB: query visible rows
-    Note over S,W: Timeout or memory limit: core kills the worker,<br/>rolls back the transaction, marks the file Failed with a plain reason,<br/>starts a fresh worker. Other files go on.
+    Note over S,W: Timeout or memory limit: core kills the worker,<br/>drops the buffered chunks, marks the file Failed with a plain reason,<br/>starts a fresh worker. Other files go on.
 ```
 
 ### 5.2 One AI call through the egress gate
@@ -369,9 +371,11 @@ Rules:
 | Item | Default | Why |
 |---|---|---|
 | Open projects | One at a time. ASSUMPTION. | Keeps memory and the scheduler simple. Matches the screens in the requirements. |
-| Stage A workers | `min(CPU cores − 1, memory budget)` | NFR-PERF-25, NFR-RES-02. See gap A2. |
-| Worker memory budget | 1.5 GB total across workers; one file may use up to 1 GB. ASSUMPTION. | NFR-REL-07 vs NFR-RES-02. |
-| Worker recycle | After 200 files or when idle RSS > 300 MB. ASSUMPTION. | Stops slow leaks in parser libraries. |
+| Stage A workers | `min(CPU cores − 1, memory budget)`; one worker per lane, started when the lane takes its first item, shut down when the run ends | NFR-PERF-25, NFR-RES-01/02. See gap A2. |
+| Worker memory budget | 1.5 GB for the items in flight; an item needs 40 MB + 8 × size (TXT/MD) or 10 × size (CSV), measured in S2a (`10-walking-skeleton.md` §S2a). One file may use up to 1 GB. ASSUMPTION for 1.5 GB. | NFR-REL-07 vs NFR-RES-02. M2c: TD-2's CSVs peak at 233 MB (908 MB counted with the desktop binary's shared libraries per worker). |
+| Worker limits | 120 s per file; 1 GB per file, sampled every 100 ms; Linux `RLIMIT_AS` = start size + 1 GB + 512 MB; heartbeat every 500 ms, silent 15 s = stuck | NFR-REL-06/07. S2b: bombs stopped ≤ 160 ms over 1 GB. |
+| Worker start | ~5 ms (CLI-sized binary), ~19 ms p50 (desktop binary); kill + replace ~20 ms | ADR-0007, S2a. |
+| Worker recycle | After 200 files or when idle RSS > 300 MB. ASSUMPTION (no leak seen on TXT/CSV in M2c). | Stops slow leaks in parser libraries. |
 | AI requests in flight | 1 per loaded model | NFR-PERF-25 |
 | Loaded local models | Up to 2 (extraction + embeddings) | Both roles are needed for Stage B and meaning search. |
 | Model idle stop | 10 min | NFR-RES-06 |
@@ -405,8 +409,8 @@ Milestones as in `06-roadmap.md`.
 | R2 | The embedding model loses too much quality with binary vectors. **Retired in M1 for TD-1:** recall@20 0.954–0.984 for three models (`09-model-check.md` §6, ADR-0010); recall and speed at TD-2 scale are checked in M6 (S6). | NFR-PERF-31, search quality | Recall@20 of binary + rescore vs exact search on TD-1. | M1 (quality), M6 (speed at scale) | Store int8 instead, or add an HNSW index (usearch). |
 | R3 | No prebuilt `llama-server` with CUDA for Linux. **Retired in M0c:** llama.cpp `b11829` has Linux x64 CUDA 12.8/13.4, Vulkan, ROCm, SYCL and OpenVINO builds (`08-engine-bakeoff.md` §16). With ADR-0015 the user installs llama.cpp, so this is install guidance, not an app risk. | NFR-COMP-03, NFR-USE-01 | Desk check of the release list. | M0 (done), M1 (install guide) | Vulkan build, or a local build of llama.cpp. |
 | R4 | Rust-native PDF/OCR quality is not good enough. **Decided in M0 (ADR-0014):** hayro (pure Rust) passes for PDF; for OCR the pure-Rust `ocrs` lacks word confidence, so Tesseract is used, built from pinned sources. | NFR-QA-06/07, NFR-PERF-21 | Benchmark candidates on TD-1 scans (`08-engine-bakeoff.md`). | M0 (done) | pdfium for PDF; `ocrs` once it gives word confidence. |
-| R5 | macOS cannot enforce a hard memory limit on a process. | NFR-REL-07 | Kill test with a "memory bomb" file. | M2 | RSS watchdog every 100 ms; the limit is "1 GB + one sampling step". |
-| R6 | Large CSV/MBOX results are slow to stream from worker to core. | NFR-PERF-22/23 | Benchmark 1M-row CSV. | M2 | Larger chunks; compact binary frames. |
+| R5 | macOS cannot enforce a hard memory limit on a process. **Retired on Linux in M2c (S2b):** 20 of 20 bombs stopped by the watchdog ≤ 160 ms after passing 1 GB. macOS and Windows run the short test in CI; not verified here. Windows has the watchdog only, like macOS (decided 2026-10-27, ADR-0007 follow-up). | NFR-REL-07 | Kill test with a "memory bomb" file. | M2 | RSS watchdog every 100 ms; the limit is "1 GB + one sampling step". |
+| R6 | Large CSV/MBOX results are slow to stream from worker to core. **Retired for CSV in M2c (S2a):** ~385,000 rows/s with the commit, against 50,000. MBOX is checked in M3. | NFR-PERF-22/23 | Benchmark 1M-row CSV. | M2 | Larger chunks; compact binary frames. |
 | R7 | Re-applying decisions inside each commit is too slow when a project has many decisions. | NFR-PERF-34 | Load test with 10,000 decisions. | M2, re-run in M7 | Index decisions by anchor (already planned); batch commits. |
 
 ---
@@ -416,10 +420,10 @@ Milestones as in `06-roadmap.md`.
 | # | Finding | Proposal |
 |---|---|---|
 | A1 | NFR-SEC-02 allows only Hugging Face hosts. But the runtime binary (`llama-server`) must also be downloaded (NFR-SEC-11 already says "downloaded binaries"). | **Decided in M0c (2026-10-23):** the app downloads no binaries. `llama-server` is a user-installed prerequisite with a minimum version (ADR-0015); the PDF and OCR engines are compiled in (ADR-0014). Hugging Face stays the only download host. Where extra OCR language files come from is decided in M3. |
-| A2 | NFR-REL-07 (1 GB per file) × NFR-PERF-25 (cores − 1 workers) can reach 7 GB. NFR-RES-02 says 2 GB for the whole app. | NFR-RES-02 counts all app processes except the model. The scheduler keeps a total memory budget and starts big files only when the budget allows. |
+| A2 | NFR-REL-07 (1 GB per file) × NFR-PERF-25 (cores − 1 workers) can reach 7 GB. NFR-RES-02 says 2 GB for the whole app. | NFR-RES-02 counts all app processes except the model. The scheduler keeps a total memory budget and starts big files only when the budget allows. **Decided (2026-10-27), as built in M2c:** 1.5 GB for the items in flight, need = 40 MB + 8 × size (TXT/MD) or 10 × size (CSV); a file larger than the budget runs alone; resident memory (RSS) is counted, which counts shared libraries once per worker (cautious). TD-2's CSVs: 233–908 MB peak against 2 GB. |
 | A3 | NFR-PERF-24 (2 segments/s) × TD-2 (1M segments) ≈ 6 days of Stage B. | **Decided in M1 (2026-10-24):** no local model reached 2 segments/s (`09-model-check.md` §5.1). Stage B uses up to 4 slots per local model (NFR-PERF-25; 1.39 segments/s for the minimum-tier model); NFR-PERF-24 is ≥ 1 segment/s. Stage B targets are measured on TD-1 only. On large projects, Stage B runs on the documents the user picks, segments with identifiers first. |
 | A4 | Re-run with a new model: show old results until the new run is done, or replace segment by segment? | Show old results until done, then switch in one step (5.3). Never mix two models' output. |
-| A5 | NFR-REL-07 on macOS can only be a watchdog, not a hard OS limit (R5). | Reword: "killed within 200 ms after passing 1 GB". |
+| A5 | NFR-REL-07 on macOS can only be a watchdog, not a hard OS limit (R5). | Reword: "killed within 200 ms after passing 1 GB". **Decided (2026-10-27).** On Linux every bomb was stopped ≤ 160 ms after passing 1 GB (S2b). Windows has the watchdog only, like macOS (no hard cap without `unsafe`, ADR-0007 follow-up). NFR-REL-07 now reads: "A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with 'Needed too much memory'." |
 | A6 | The embedding model must work well with binary vectors (R2). | **Decided in M1 (2026-10-24):** a listed embedding model needs binary top 200 → float rescore recall@20 ≥ 0.9; `Catalog::validate` in `mk-models` checks it. All three M1 candidates pass (0.954–0.984). |
 | A7 | Only one open project at a time (section 7). | Please confirm. |
 | A8 | Emails and HTML are shown as safe text, not as styled HTML, in v0.1 (ADR-0011). | Please confirm. Styled HTML can come later inside a locked-down frame. |

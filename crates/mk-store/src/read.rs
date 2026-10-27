@@ -106,14 +106,29 @@ pub(crate) fn stored_refs(conn: &Connection) -> Result<Vec<StoredRef>, StoreErro
     Ok(out)
 }
 
-pub(crate) fn pending_items(conn: &Connection) -> Result<Vec<PendingItem>, StoreError> {
-    let mut stmt =
-        conn.prepare("SELECT id, priority FROM work_item WHERE state = ?1 ORDER BY priority, id")?;
+/// A pending Stage A item with its content's file type, so the lane can estimate its memory
+/// need (gap A2).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PendingWork {
+    pub item: PendingItem,
+    pub file_type: String,
+}
+
+pub(crate) fn pending_items(conn: &Connection) -> Result<Vec<PendingWork>, StoreError> {
+    let mut stmt = conn.prepare(
+        "SELECT w.id, w.priority, COALESCE(c.size, 0), COALESCE(c.file_type, '')
+         FROM work_item w LEFT JOIN content c ON c.id = w.content_id
+         WHERE w.state = ?1 ORDER BY w.priority, w.id",
+    )?;
     let rows = stmt.query_map([ItemState::Pending.as_str()], |r| {
-        Ok(PendingItem {
-            id: r.get(0)?,
-            priority: r.get(1)?,
-            text_native: true,
+        Ok(PendingWork {
+            item: PendingItem {
+                id: r.get(0)?,
+                priority: r.get(1)?,
+                text_native: true,
+                size: r.get::<_, i64>(2)? as u64,
+            },
+            file_type: r.get(3)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)

@@ -77,5 +77,17 @@ Use **option 3**: a pool of long-lived worker processes.
 - Three OS-specific memory-limit code paths.
 
 **Follow-ups**
-- M2 spike (S2a): worker start time, CSV streaming throughput, kill-and-replace time.
-- TD-3 must include a "memory bomb" and an "endless loop" file.
+- M2 spike (S2a): worker start time, CSV streaming throughput, kill-and-replace time. **Done in M2c** (`docs/10-walking-skeleton.md` §S2a): a 1M-row CSV at ~385,000 rows/s including the commit (NFR-PERF-22: 50,000); worker start to `Hello` 4.5 ms (small binary) and 18.8 ms (desktop binary, p50); kill and replace 5.4 / 20.1 ms.
+- TD-3 must include a "memory bomb" and an "endless loop" file. **Done in M2c** as test fault files (`fault-memory-bomb.txt`, `fault-endless-loop.txt`, `fault-crash.txt`, TD-3 v2), plus the PDF and PNG bombs of TD-3 v1 for M3.
+- **Done in M2c**, as decided above, with these choices:
+  - **Crate `mk-worker`:** the protocol, framing and the worker loop; `mk-core` holds the supervisor. Both apps call `mk_core::worker_main_if_requested()` first in `main`.
+  - **Encoding: postcard** (1.x; `bincode` is no longer developed). Frames are a `u32` little-endian length + payload, at most 256 MB. Protocol version 1, checked in `Hello { protocol, app_version, pid }`.
+  - **Chunks are buffered in the core, not written into an open transaction.** The core assembles one item's chunks and commits once at `Done` with `Store::commit_stage_a` (INV-PR-04 holds unchanged; a failure, crash or kill drops the buffer, so nothing is written). The single writer is never held open while a worker is still parsing. Cost: the core holds ≈ 4.5 × the file size until the commit (S2a), which limits the CSV size (below).
+  - **Chunk size:** 4,096 segments; 1k–16k measured the same.
+  - **Heartbeats** every 500 ms with the stage (reading, parsing, sending) and a unit count; a worker silent for 15 s is killed and its file fails with "Took too long to read". ASSUMPTION for both values.
+  - **Limits as decided:** 120 s per file; 1 GB per file, sampled every 100 ms. Linux: the worker sets `RLIMIT_AS` on itself at start to its size then + 1 GB + 512 MB headroom; an allocation failure under it is read as a memory stop. Spike S2b: every bomb stopped ≤ 160 ms after passing 1 GB, by the watchdog (§S2b).
+  - **Windows Job Object: not built.** No maintained crate sets a per-process memory limit without `unsafe` in our code (`win32job` sets only working-set limits), and ADR-0002 rule 6 forbids it. Windows has the watchdog only, like macOS (decided 2026-10-27, roadmap §4 #15).
+  - **Recycling** after 200 files or idle RSS over 300 MB, as decided (not tuned: no leak seen on TXT/CSV). Workers exit when their stdin closes, so a killed core leaves no worker behind (kill test: 0 orphans in 40 kills).
+  - **Total budget** 1.5 GB for the items in flight (gap A2): need = 40 MB + 8 × size (TXT/MD) or 10 × size (CSV), from S2a. The first item that fits runs; if none fits and nothing runs, the first runs alone. RSS is counted, so shared library pages count once per worker.
+  - **Test faults:** a first line `mk-test-fault: memory-bomb | endless-loop | crash | panic` makes the worker misbehave only when the core turns test faults on through its API; the shipped app never does, so such a file is plain text.
+- **CSV size (decided 2026-10-27, roadmap §4 #16):** with whole-file parsing and buffering, a CSV needs ≈ 10 × its size in memory, so files over ≈ 175 MB hit the 1 GB per-file limit; NFR-CAP-05 asks for 500 MB. Meeting it needs a streaming CSV parser and a commit that does not hold the whole result. NFR-CAP-05 stays at 500 MB; M3 builds both.
