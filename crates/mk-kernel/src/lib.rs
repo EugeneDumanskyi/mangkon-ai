@@ -11,12 +11,14 @@
 
 mod geometry;
 mod hash;
+mod identifier;
 mod locator;
 mod ocr;
 mod span;
 
 pub use geometry::{GeometryError, PageGeometry, Rect};
 pub use hash::{ContentHash, ParseHashError};
-pub use locator::{Locator, PageNumber};
+pub use identifier::{IdentifierKey, IdentifierKind, ParseKeyError};
+pub use locator::{Column, LineNumber, Locator, PageNumber};
 pub use ocr::{ImageSize, OcrGeometry, OcrWord};
 pub use span::{Span, SpanError};

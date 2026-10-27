@@ -72,5 +72,6 @@ Use **option 3**.
 - A pending run doubles AI mention storage for a while.
 
 **Follow-ups**
-- Load test in M2 (spike S2c): 10,000 decisions + TD-2, measure commit time (risk R7).
-- Property test: "rebuild from scratch" equals "incremental updates" for random sequences of results and decisions.
+- Load test in M2 (spike S2c): 10,000 decisions + TD-2, measure commit time (risk R7). **Done in M2b** (`10-walking-skeleton.md` §S2c): at 10,000 documents and ~297,000 mentions, p95 "parse finished → commit done" through the 23-thread lane is 601 ms with 0 decisions and 736 ms with 10,000 (1.10 / 1.24 s with the 500 ms debounce, against 2 s). Most of it is waiting for the writer; a commit alone takes 13–16 ms for three keys in ~9,500 documents each and 81–97 ms for a 5,000-row CSV. One item per transaction holds; no batching or extra index needed. R7 retired.
+- Property test: "rebuild from scratch" equals "incremental updates" for random sequences of results and decisions. **Done in M2b:** `crates/mk-core/tests/derived_property.rs` (proptest, 48 sequences of up to 24 steps through the real pipeline: new, changed, missing, found-again and duplicate files, re-scans, Stage A runs, ignore and un-ignore, orphaned decisions). After every step the stored rows equal the `mk-graph` reference model; at the end they equal `rebuild_all`. Checked by mutation: dropping a touched key makes it fail.
+- **Done in M2b** (scope): the per-key rebuild covers `identifier`, `connection` and `decision_status` for email keys, in the same transaction as the Stage A result, the re-scan or the decision. Entities (step 3) have no inputs before M7. The `ConnectionsChanged` event (step 5) is raised when a commit changes a connection row, debounced 500 ms (`mk-core`).

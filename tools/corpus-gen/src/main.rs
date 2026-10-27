@@ -5,6 +5,7 @@
 //! corpus-gen fetch    [--out testdata]   download the public slice and check its hashes
 //! corpus-gen generate [--out testdata]   write the corpus and update corpus.sha256
 //! corpus-gen check    [--out testdata]   regenerate into a temp dir and compare with corpus.sha256
+//! corpus-gen td2 [--copies 99] [--out testdata]   write TD-2 (scale corpus) from TD-1
 //! ```
 
 mod afm;
@@ -18,6 +19,7 @@ mod public;
 mod raster;
 mod rich;
 mod story;
+mod td2;
 mod td3;
 mod truth;
 
@@ -38,6 +40,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut out = PathBuf::from("testdata");
     let mut cmd = None;
+    let mut copies = td2::DEFAULT_COPIES;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -45,7 +48,11 @@ fn main() -> ExitCode {
                 Some(p) => out = PathBuf::from(p),
                 None => return usage(),
             },
-            "fetch" | "generate" | "check" if cmd.is_none() => cmd = Some(a.clone()),
+            "--copies" => match it.next().and_then(|n| n.parse().ok()) {
+                Some(n) => copies = n,
+                None => return usage(),
+            },
+            "fetch" | "generate" | "check" | "td2" if cmd.is_none() => cmd = Some(a.clone()),
             _ => return usage(),
         }
     }
@@ -59,6 +66,21 @@ fn main() -> ExitCode {
             Ok(())
         }),
         Some("check") => check(&out),
+        Some("td2") => td2::build(
+            &out,
+            copies,
+            SEED,
+            &format!("corpus-gen {GENERATOR_VERSION}"),
+        )
+        .map(|m| {
+            println!(
+                "wrote {} files ({} bytes, ~{} segments) under {}",
+                m.files,
+                m.bytes,
+                m.segment_estimate,
+                out.join("td2").display()
+            )
+        }),
         _ => return usage(),
     };
     match result {
@@ -73,7 +95,7 @@ fn main() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: corpus-gen (fetch | generate | check) [--out DIR]");
+    eprintln!("usage: corpus-gen (fetch | generate | check | td2 [--copies N]) [--out DIR]");
     ExitCode::from(2)
 }
 
@@ -161,10 +183,7 @@ fn hash_list(files: &BTreeMap<PathBuf, Vec<u8>>) -> String {
     let mut out = String::new();
     for (p, bytes) in files {
         let p = p.to_string_lossy().replace('\\', "/");
-        out.push_str(&format!(
-            "{}  {p}\n",
-            mk_kernel::ContentHash::of(bytes).to_hex()
-        ));
+        out.push_str(&format!("{}  {p}\n", mk_bench::sha256_hex(bytes)));
     }
     out
 }

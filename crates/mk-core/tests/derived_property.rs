@@ -1,0 +1,189 @@
+//! M2 acceptance criterion 4, ADR-0005 follow-up: for random sequences of file changes,
+//! re-scans, Stage A runs and decisions, the derived rows kept up to date by incremental
+//! commits equal (a) the `mk-graph` reference computed from scratch after every step and
+//! (b) a full `rebuild_all` at the end.
+//!
+//! The sequences go through the real pipeline (files on disk, re-scan, Stage A, one commit per
+//! item), so they cover new, changed (replaced), missing, found-again and duplicate content,
+//! ignore / un-ignore, superseded and orphaned decisions.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use mk_core::Project;
+use proptest::prelude::*;
+
+/// A small key alphabet so keys collide often. Keys 5 and 6 are never written: decisions on
+/// them stay orphaned.
+const KEYS: usize = 7;
+const WRITTEN_KEYS: usize = 5;
+const FILES: u8 = 4;
+
+fn email(k: usize) -> String {
+    format!("k{k}@x.example")
+}
+
+#[derive(Clone, Debug)]
+enum Op {
+    /// Writes `files/f<n>.txt` (or `.csv` when `csv`) with these keys. `salt` varies the bytes
+    /// a little, so equal bytes (one content at two paths) happen too.
+    Write {
+        file: u8,
+        keys: Vec<usize>,
+        salt: u8,
+        csv: bool,
+    },
+    /// Moves the file into a hidden folder (it goes Missing).
+    Delete(u8),
+    /// Moves it back with the same bytes and time (found again).
+    Restore(u8),
+    /// Copies one file to another path.
+    Copy(u8, u8),
+    Rescan,
+    StageA,
+    Ignore(usize),
+    Unignore(usize),
+}
+
+fn op() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        4 => (0..FILES, proptest::collection::vec(0..WRITTEN_KEYS, 0..4), 0u8..3, any::<bool>())
+            .prop_map(|(file, keys, salt, csv)| Op::Write { file, keys, salt, csv }),
+        1 => (0..FILES).prop_map(Op::Delete),
+        1 => (0..FILES).prop_map(Op::Restore),
+        1 => (0..FILES, 0..FILES).prop_map(|(a, b)| Op::Copy(a, b)),
+        3 => Just(Op::Rescan),
+        3 => Just(Op::StageA),
+        1 => (0..KEYS).prop_map(Op::Ignore),
+        1 => (0..KEYS).prop_map(Op::Unignore),
+    ]
+}
+
+struct World {
+    src: PathBuf,
+    trash: PathBuf,
+    clock: u64,
+}
+
+impl World {
+    fn tick(&mut self, path: &Path) {
+        self.clock += 1;
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000 + self.clock))
+            .unwrap();
+    }
+
+    /// The file's current path, whichever extension it has.
+    fn find(&self, dir: &Path, file: u8) -> Option<PathBuf> {
+        ["txt", "csv"]
+            .iter()
+            .map(|e| dir.join(format!("f{file}.{e}")))
+            .find(|p| p.exists())
+    }
+
+    fn apply(&mut self, project: &Project, op: &Op) {
+        match op {
+            Op::Write {
+                file,
+                keys,
+                salt,
+                csv,
+            } => {
+                if let Some(old) = self.find(&self.src, *file) {
+                    std::fs::remove_file(old).unwrap();
+                }
+                let (ext, body) = if *csv {
+                    let rows: String = keys.iter().map(|k| format!("x,{}\n", email(*k))).collect();
+                    ("csv", format!("name,email\nsalt,{salt}\n{rows}"))
+                } else {
+                    let lines: String = keys
+                        .iter()
+                        .map(|k| format!("see {}\n", email(*k)))
+                        .collect();
+                    ("txt", format!("salt {salt}\n{lines}"))
+                };
+                let path = self.src.join(format!("f{file}.{ext}"));
+                std::fs::write(&path, body).unwrap();
+                self.tick(&path);
+            }
+            Op::Delete(file) => {
+                if let Some(p) = self.find(&self.src, *file) {
+                    if let Some(old) = self.find(&self.trash, *file) {
+                        std::fs::remove_file(old).unwrap();
+                    }
+                    std::fs::rename(&p, self.trash.join(p.file_name().unwrap())).unwrap();
+                }
+            }
+            Op::Restore(file) => {
+                if self.find(&self.src, *file).is_none()
+                    && let Some(p) = self.find(&self.trash, *file)
+                {
+                    std::fs::rename(&p, self.src.join(p.file_name().unwrap())).unwrap();
+                }
+            }
+            Op::Copy(from, to) => {
+                if from != to
+                    && let Some(p) = self.find(&self.src, *from)
+                {
+                    if let Some(old) = self.find(&self.src, *to) {
+                        std::fs::remove_file(old).unwrap();
+                    }
+                    let ext = p.extension().unwrap().to_str().unwrap().to_string();
+                    let dst = self.src.join(format!("f{to}.{ext}"));
+                    std::fs::copy(&p, &dst).unwrap();
+                    self.tick(&dst);
+                }
+            }
+            Op::Rescan => {
+                project.rescan(false).unwrap();
+            }
+            Op::StageA => {
+                project.run_stage_a().unwrap();
+            }
+            Op::Ignore(k) => {
+                project
+                    .set_ignored(&format!("email:{}", email(*k)), true)
+                    .unwrap();
+            }
+            Op::Unignore(k) => {
+                project
+                    .set_ignored(&format!("email:{}", email(*k)), false)
+                    .unwrap();
+            }
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(48))]
+
+    /// M2 criterion 4: incremental == reference after every step, and == full rebuild at the
+    /// end (ADR-0005, INV-CU-03/04/05, INV-LK-01, INV-CO-06/07).
+    #[test]
+    fn m2_ac4_incremental_equals_rebuild(ops in proptest::collection::vec(op(), 1..25)) {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        let trash = src.join(".trash");
+        std::fs::create_dir_all(&trash).unwrap();
+        let (project, _) = Project::open(&tmp.path().join("project")).unwrap();
+        project.add_source_root(&src).unwrap();
+        let mut world = World { src, trash, clock: 0 };
+        for (i, op) in ops.iter().enumerate() {
+            world.apply(&project, op);
+            let incremental = project.store().derived_state().unwrap();
+            let reference = mk_graph::model::reference(&project.store().facts().unwrap());
+            prop_assert_eq!(&incremental, &reference, "after step {} ({:?})", i, op);
+        }
+        // Finish the work, then compare with a rebuild from scratch.
+        project.rescan(false).unwrap();
+        project.run_stage_a().unwrap();
+        let incremental = project.store().derived_state().unwrap();
+        project.store().rebuild_all().unwrap();
+        let rebuilt = project.store().derived_state().unwrap();
+        prop_assert_eq!(&incremental, &rebuilt);
+        prop_assert_eq!(&rebuilt, &mk_graph::model::reference(&project.store().facts().unwrap()));
+    }
+}

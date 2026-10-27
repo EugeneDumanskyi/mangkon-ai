@@ -1,23 +1,23 @@
 use std::fmt;
 use std::str::FromStr;
 
-use sha2::{Digest, Sha256};
-
-/// Fingerprint of a file's bytes: SHA-256. Same bytes → same hash (domain §3.3).
+/// Fingerprint of a file's bytes: BLAKE3. Same bytes → same hash (domain §3.3).
 ///
-/// Displays as 64 lowercase hex characters.
+/// BLAKE3 because re-scan hashes every new or changed file and it is several times faster than
+/// SHA-256 (architecture §5.4). Ground-truth files keep SHA-256 (`mk-bench`). Displays as 64
+/// lowercase hex characters.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContentHash([u8; 32]);
 
 impl ContentHash {
     /// Hashes a complete byte slice.
     pub fn of(bytes: &[u8]) -> Self {
-        Self(Sha256::digest(bytes).into())
+        Self(*blake3::hash(bytes).as_bytes())
     }
 
     /// Starts an incremental hash, for content that arrives in chunks.
     pub fn hasher() -> ContentHasher {
-        ContentHasher(Sha256::new())
+        ContentHasher(Box::new(blake3::Hasher::new()))
     }
 
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -34,7 +34,7 @@ impl ContentHash {
 }
 
 /// Incremental form of [`ContentHash::of`]. Feeding the same bytes in any chunking gives the same hash.
-pub struct ContentHasher(Sha256);
+pub struct ContentHasher(Box<blake3::Hasher>);
 
 impl ContentHasher {
     pub fn update(&mut self, bytes: &[u8]) {
@@ -42,7 +42,7 @@ impl ContentHasher {
     }
 
     pub fn finish(self) -> ContentHash {
-        ContentHash(self.0.finalize().into())
+        ContentHash(*self.0.finalize().as_bytes())
     }
 }
 
@@ -103,7 +103,7 @@ mod tests {
     fn known_vector_empty_input() {
         assert_eq!(
             ContentHash::of(b"").to_string(),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
         );
     }
 
@@ -111,13 +111,13 @@ mod tests {
     fn known_vector_abc() {
         assert_eq!(
             ContentHash::of(b"abc").to_string(),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
         );
     }
 
     #[test]
     fn rejects_non_canonical_hex() {
-        let upper = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+        let upper = "AF1349B9F5F9A1A6A0404DEA36DCC9499BCB25C9ADC112B7CC9A93CAE41F3262";
         assert!(upper.parse::<ContentHash>().is_err());
         assert!("abc".parse::<ContentHash>().is_err());
     }

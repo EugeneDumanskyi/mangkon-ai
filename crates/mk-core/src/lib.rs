@@ -1,11 +1,22 @@
 //! Application services (ADR-0002): the one place that wires the context crates together. The
 //! desktop shell and the CLI call only this crate. No Tauri, no UI types.
 //!
-//! In M2a: [`app_info`] and, behind feature `spike-s2d`, the synthetic rows of spike S2d. Real
-//! services (projects, ingestion, connections) come in M2b–M2d.
+//! - [`app_info`] (M2a).
+//! - [`Project`] (M2b): open with migrations and restart recovery, source roots, re-scan, the
+//!   in-process Stage A lane, ignore decisions, and [`ConnectionsChanged`] events.
+//! - Behind feature `spike-s2d`, the synthetic rows of spike S2d (M2a).
+//!
+//! The UI and CLI wiring of projects comes in M2d.
+
+mod events;
+mod project;
+pub mod stage_a;
 
 #[cfg(feature = "spike-s2d")]
 pub mod spike_s2d;
+
+pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use project::{OpenSummary, Project, ProjectError, RescanSummary, StageASummary, file_types};
 
 /// What the About line and the CLI `--version` show.
 #[derive(Debug, Clone, PartialEq, Eq)]

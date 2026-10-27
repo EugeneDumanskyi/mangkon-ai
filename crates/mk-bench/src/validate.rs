@@ -3,8 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
-use mk_kernel::ContentHash;
-
 use crate::checks;
 use crate::model::*;
 
@@ -532,7 +530,7 @@ impl<'a> Validator<'a> {
                             f.bytes
                         );
                     }
-                    let h = ContentHash::of(&bytes).to_hex();
+                    let h = crate::sha256_hex(&bytes);
                     if h != f.sha256 {
                         fail!(
                             self,

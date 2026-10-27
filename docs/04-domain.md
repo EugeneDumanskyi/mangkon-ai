@@ -680,6 +680,9 @@ stateDiagram-v2
     Missing --> Done : a path found again, same hash, was Done before
     Missing --> Queued : a path found again, was not Done before
     Done --> Replaced : the only path now has a new hash
+    Queued --> Replaced : the only path now has a new hash
+    Failed --> Replaced : the only path now has a new hash
+    Missing --> Replaced : the path is found again with a new hash
     Replaced --> [*] : old documents, segments, mentions deleted
     Done --> Removed : user removed the last path
     Failed --> Removed : user removed the last path
@@ -690,6 +693,7 @@ stateDiagram-v2
 Rules:
 - "Done" here means **Stage A** is done (Layer 1 results are ready). AI stage progress is shown per job (7.2). ASSUMPTION. See D9.
 - When a path gets a new hash, the path now points to a **new** content, which starts at Queued. The old content is "Replaced" only if no other path still points to it (INV-CO-08).
+- Replaced is reached from Queued, Failed and Missing too, not only from Done: a file edited before it was processed, after it failed, or while it was gone. Its data (if any) is deleted in the re-scan transaction, with the derived rebuild of its keys, so old and new evidence are never both visible (INV-CO-06). ASSUMPTION (M2b).
 - "NotProcessed" is a new status, shown as "Not processed" in the documents list. ASSUMPTION. See D10.
 - A document's status in the documents list (US-02.8) is its content's status.
 

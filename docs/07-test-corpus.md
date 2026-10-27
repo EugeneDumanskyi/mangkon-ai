@@ -1,7 +1,7 @@
 # 07 — Test corpus: Mangkon AI v0.1
 
-> Input: `01-brief.md` §11, `02-requirements.md` US-14.3, `03-nfr.md` §2 (TD-1, TD-3) and NFR-LEG-04, `04-domain.md` (INV-CO-03, INV-CO-05, INV-ID-06, INV-LK-01..03, INV-AI-06/07). **If this file disagrees with them, they win.**
-> Status: TD-1 v1 and TD-3 v1 built in M0a. The corpus files are not committed; they are generated and downloaded locally (§9).
+> Input: `01-brief.md` §11, `02-requirements.md` US-14.3, `03-nfr.md` §2 (TD-1, TD-2, TD-3) and NFR-LEG-04, `04-domain.md` (INV-CO-03, INV-CO-05, INV-ID-06, INV-LK-01..03, INV-AI-06/07). **If this file disagrees with them, they win.**
+> Status: TD-1 v1 and TD-3 v1 built in M0a; TD-2 generator added in M2b (§11). The corpus files are not committed; they are generated and downloaded locally (§9).
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -18,7 +18,7 @@ The test corpus is the data every benchmark and acceptance check runs against: t
 | TD-3 v1 | `testdata/td3/` | 21 broken and edge-case PDF/image files plus `expected.json` (§6). |
 | Schemas | `crates/mk-bench/schema/*.schema.json` | JSON Schemas for the three stored formats, made from the Rust types. |
 
-**Nothing under `testdata/` is committed** (`.gitignore`). Test data is not a deliverable of this project; anyone who clones the repo builds it in a few seconds (§9) or points the tools at their own files. What is committed is what makes the corpus reproducible: the generator, the public-slice manifest (source URLs, SHA-256, identifiers per page), the schemas, and `tools/corpus-gen/corpus.sha256`, the hash of every generated file. Only the generator writes the synthetic files, the ground truth and TD-3, so the ground truth cannot drift from the files, and the hash list shows any change. TD-2 (scale corpus) comes in M2b and is local too.
+**Nothing under `testdata/` is committed** (`.gitignore`). Test data is not a deliverable of this project; anyone who clones the repo builds it in a few seconds (§9) or points the tools at their own files. What is committed is what makes the corpus reproducible: the generator, the public-slice manifest (source URLs, SHA-256, identifiers per page), the schemas, and `tools/corpus-gen/corpus.sha256`, the hash of every generated file. Only the generator writes the synthetic files, the ground truth and TD-3, so the ground truth cannot drift from the files, and the hash list shows any change. TD-2 (scale corpus, §11) is generated from TD-1 and is local too.
 
 Brief §11 asks for the corpus to be published openly so anyone can run the demo and check the numbers. Publishing the generator and the manifest meets that: everyone gets the same bytes. **ASSUMPTION.**
 
@@ -230,6 +230,7 @@ After a fresh clone:
 cargo run -p corpus-gen --release -- fetch                     # download the public slice (13.2 MB) into testdata/td1/public/
 cargo run -p corpus-gen --release -- generate                  # write td1/synthetic, ground truth, td3; update corpus.sha256
 cargo run -p corpus-gen --release -- check                     # regenerate into a temp dir and compare with corpus.sha256
+cargo run -p corpus-gen --release -- td2                       # TD-2 from TD-1 (§11): 99 copies, 3.4 GB, about 1 min
 MK_REQUIRE_TESTDATA=1 cargo test -p mk-bench                   # US-14.3 AC1 and TD-3 manifest checks
 ```
 
@@ -245,8 +246,38 @@ Byte identity has been checked on Linux only (two runs, same bytes). **Cross-OS 
 
 - **ASSUMPTION:** made-up IBAN bank codes match no real account (§7).
 - **ASSUMPTION:** TD-3 expected outcomes for rebuilt xrefs, partial images and wrong extensions (§6) are product policy, not yet confirmed.
-- Local disk: `testdata/` takes about 37 MB (synthetic 20 MB, mostly the noisy lossless `poor` scans; public 13.2 MB; TD-3 1.3 MB). None of it is in git.
+- Local disk: `testdata/` takes about 37 MB (synthetic 20 MB, mostly the noisy lossless `poor` scans; public 13.2 MB; TD-3 1.3 MB), plus 3.4 GB with TD-2. None of it is in git.
 - The public slice depends on government URLs staying up. `corpus-gen fetch` fails loudly when a file is gone or changed.
 - Real-world email is synthetic only (§8); revisit in M3.
 - Public files are partly annotated; full name annotation of real documents is out of scope for v0.1.
 - **Gold gap found in M1:** "Port Authority", printed as a short form of Velmora Port Authority, is not annotated as a mention, so extractors get false positives for it (`09-model-check.md` §5.3). Add it to the entity's aliases at the next regeneration.
+
+---
+
+## 11. TD-2 (scale corpus)
+
+`corpus-gen td2 [--copies 99] [--out testdata]` (`tools/corpus-gen/src/td2.rs`) reads TD-1 (synthetic and public files, through its ground truth) and writes `testdata/td2/c000/` … `c098/`, each a copy of TD-1 with the same paths. TD-1 must be present (§9).
+
+**Every file is made byte-unique per copy**, in a way its format allows, so each copy is a new content to the app (one content per hash, INV-CO-02):
+
+| Kind | Change in copy `k` |
+|---|---|
+| TXT, MD | A leading line `corpus copy k`, in the file's own encoding (UTF-8, UTF-8 with BOM, Windows-1252, UTF-16 LE with BOM) and line ending |
+| CSV | A `counterparty_email` column, and 2,500 generated rows (below) |
+| EML | An `X-Corpus-Copy: k` header as the first line |
+| MBOX | The same header right after the first `From ` line |
+| JSON | A top-level `"corpus_copy": k` field |
+| HTML | A trailing `<!-- corpus copy k -->` comment |
+| PDF | `%copy k` after `%%EOF` (readers ignore it) |
+| PNG | A `tEXt` chunk before `IEND` |
+| JPEG | A `COM` segment after SOI |
+| TIFF | Trailing bytes after the last IFD |
+| DOCX | The ZIP comment |
+
+**CSV scale-up.** Each CSV gets 2,500 generated rows per copy (ASSUMPTION), filled by column name: dates, valid IBANs from a pool of 3,000, amounts (with a comma decimal where the file uses `;`), and in 30 % of rows a counterparty email from a pool of 5,000. Pool entries are drawn with a Zipf weight (s = 1.1), so a few keys repeat in every copy and most are rare. Emails and IBANs follow §7 (reserved domains, made-up bank codes).
+
+**Manifest.** `td2/td2-manifest.json` records the generator version, seed, copies, files, bytes, files per kind, rows added and a segment estimate (TXT/MD non-blank lines, CSV rows, PDF and image pages; EML, MBOX, JSON, HTML and DOCX are not counted until M3 sets their segment rules).
+
+With the default 99 copies (M2b, 2026-10-27): **9,999 files, 3.36 GB, ~1,089,000 segments** (estimate), 990,000 generated CSV rows, 296,991 of them with an email. The NFR target says ~5 GB (ASSUMPTION); the real size is recorded rather than padded. In M2b the app stores TD-2's 1,089 TXT/MD/CSV files: 792 parse (749,529 segments, 223,223 email mentions), and 297 fail alone with "Unknown text encoding" until M3.
+
+The generator is deterministic (ChaCha20, fixed seed; copy `k` is the same whatever `--copies` is), but TD-2 has no hash list: it is a scale input, and nothing is checked against its bytes. `--copies 1` gives a small TD-2 for CI (NFR-MNT-07). Every varied format was checked to still open: `pdfinfo` on every PDF of a copy, ZIP test on DOCX, PNG chunk CRCs, `file` on JPEG and TIFF, JSON parse, and the CSV column count.

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use mk_bench::keys::name_key;
 use mk_bench::*;
-use mk_kernel::ContentHash;
 
 use crate::rich::{MarkSpec, Target};
 use crate::story::{NegDef, Story, domain_of};
@@ -117,7 +116,7 @@ impl<'s> Collector<'s> {
         std::fs::write(&full, bytes).unwrap_or_else(|e| panic!("write {}: {e}", full.display()));
         self.files.push(FileEntry {
             path: path.to_string(),
-            sha256: ContentHash::of(bytes).to_hex(),
+            sha256: mk_bench::sha256_hex(bytes),
             bytes: bytes.len() as u64,
             origin: Origin::Synthetic,
             kind: meta.kind,

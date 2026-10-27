@@ -1,3 +1,301 @@
-//! BC-03 Jobs: persistent jobs, work items and the scheduler (domain §3, ADR-0006).
+//! BC-03 Jobs: persistent jobs, work items and the scheduler rules (domain §3, §7.2, ADR-0006).
+//! No I/O: `mk-store` persists the states, `mk-core` runs the lanes.
 //!
-//! Empty in M2a. M2b adds the Stage A lane and restart recovery.
+//! M2b: every state of domain §7.2 (so schema v1 needs no migration later), the Stage A lane
+//! and the restart rule. Pause and cancel commands come in M3; AI lanes in M5.
+
+use std::fmt;
+
+/// Job state (domain §7.2).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum JobState {
+    Queued,
+    Running,
+    Paused,
+    Blocked,
+    Completed,
+    Cancelled,
+}
+
+/// Work item state (domain §7.2).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ItemState {
+    Pending,
+    InProgress,
+    Done,
+    Failed,
+    Skipped,
+    Cancelled,
+}
+
+/// What made a job (domain §5.1 `JOB.trigger`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Trigger {
+    Add,
+    Rescan,
+    Retry,
+    Settings,
+    ModelRerun,
+}
+
+/// Which stage a job runs (domain §5.1 `JOB.stage`). M2b runs Stage A only.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Stage {
+    A,
+    B,
+    C,
+    Embeddings,
+    CustomPatterns,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IllegalMove {
+    pub from: &'static str,
+    pub to: &'static str,
+}
+
+impl fmt::Display for IllegalMove {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cannot move from {} to {}", self.from, self.to)
+    }
+}
+
+impl std::error::Error for IllegalMove {}
+
+/// Stored names and the allowed moves of a state enum.
+macro_rules! states {
+    ($ty:ident { $($v:ident => $s:literal),* $(,)? } moves [$(($a:ident, $b:ident)),* $(,)?]) => {
+        impl $ty {
+            pub const ALL: &'static [$ty] = &[$($ty::$v),*];
+
+            pub fn as_str(&self) -> &'static str {
+                match self { $($ty::$v => $s),* }
+            }
+
+            pub fn from_name(name: &str) -> Option<Self> {
+                Self::ALL.iter().copied().find(|s| s.as_str() == name)
+            }
+
+            pub fn can_move_to(self, to: $ty) -> bool {
+                matches!((self, to), $(($ty::$a, $ty::$b))|*)
+            }
+
+            /// `to`, if domain §7.2 allows the move.
+            pub fn move_to(self, to: $ty) -> Result<$ty, IllegalMove> {
+                if self.can_move_to(to) {
+                    Ok(to)
+                } else {
+                    Err(IllegalMove { from: self.as_str(), to: to.as_str() })
+                }
+            }
+        }
+    };
+}
+
+states!(JobState {
+    Queued => "queued",
+    Running => "running",
+    Paused => "paused",
+    Blocked => "blocked",
+    Completed => "completed",
+    Cancelled => "cancelled",
+} moves [
+    (Queued, Running),
+    (Running, Paused),
+    (Paused, Running),
+    (Running, Blocked),
+    (Blocked, Running),
+    (Running, Completed),
+    (Queued, Cancelled),
+    (Running, Cancelled),
+    (Paused, Cancelled),
+    (Blocked, Cancelled),
+]);
+
+states!(ItemState {
+    Pending => "pending",
+    InProgress => "in_progress",
+    Done => "done",
+    Failed => "failed",
+    Skipped => "skipped",
+    Cancelled => "cancelled",
+} moves [
+    (Pending, InProgress),
+    (InProgress, Done),
+    (InProgress, Failed),
+    (InProgress, Pending),
+    (Pending, Skipped),
+    (Pending, Cancelled),
+    (InProgress, Cancelled),
+    (Failed, Pending),
+]);
+
+impl Trigger {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Trigger::Add => "add",
+            Trigger::Rescan => "rescan",
+            Trigger::Retry => "retry",
+            Trigger::Settings => "settings",
+            Trigger::ModelRerun => "model_rerun",
+        }
+    }
+}
+
+impl Stage {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Stage::A => "a",
+            Stage::B => "b",
+            Stage::C => "c",
+            Stage::Embeddings => "embeddings",
+            Stage::CustomPatterns => "custom_patterns",
+        }
+    }
+}
+
+impl JobState {
+    /// The state after a restart: every job state is kept (INV-PR-07). A job that was running
+    /// comes back running; a paused one stays paused.
+    pub fn after_restart(self) -> JobState {
+        self
+    }
+
+    /// True once no more work happens in this job.
+    pub fn is_final(self) -> bool {
+        matches!(self, JobState::Completed | JobState::Cancelled)
+    }
+}
+
+impl ItemState {
+    /// The state after a restart: only items in progress at the crash go back to Pending and
+    /// are redone; finished items are never redone (INV-PR-05, ADR-0006).
+    pub fn after_restart(self) -> ItemState {
+        if self == ItemState::InProgress {
+            ItemState::Pending
+        } else {
+            self
+        }
+    }
+
+    /// Done, Failed, Skipped or Cancelled: the item needs nothing more (a job with only such
+    /// items is Completed, domain §7.2).
+    pub fn is_finished(self) -> bool {
+        matches!(
+            self,
+            ItemState::Done | ItemState::Failed | ItemState::Skipped | ItemState::Cancelled
+        )
+    }
+}
+
+/// Stage A lane limit: cores − 1, at least 1 (NFR-PERF-25). The memory budget (ADR-0007) joins
+/// this in M2c.
+pub fn stage_a_limit(cores: usize) -> usize {
+    cores.saturating_sub(1).max(1)
+}
+
+/// A pending Stage A item as the scheduler sees it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PendingItem {
+    pub id: i64,
+    pub priority: i64,
+    /// Text-native content (no OCR needed). In M2b every content is text-native.
+    pub text_native: bool,
+}
+
+/// Priority of a Stage A item: text-native first (INV-PR-03), then smaller files first, so
+/// results show up early. Lower runs first.
+pub fn stage_a_priority(text_native: bool, size: u64) -> i64 {
+    let band = if text_native { 0 } else { 1i64 << 48 };
+    band + size.min((1u64 << 48) - 1) as i64
+}
+
+/// The next items to start: up to `limit − in_flight`, by priority, then by id (oldest first).
+/// Ordering is a preference, not a block (INV-PR-03).
+pub fn next_batch(pending: &[PendingItem], in_flight: usize, limit: usize) -> Vec<i64> {
+    let room = limit.saturating_sub(in_flight);
+    let mut items: Vec<&PendingItem> = pending.iter().collect();
+    items.sort_by_key(|i| (!i.text_native, i.priority, i.id));
+    items.into_iter().take(room).map(|i| i.id).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_round_trip() {
+        for s in JobState::ALL {
+            assert_eq!(JobState::from_name(s.as_str()), Some(*s));
+        }
+        for s in ItemState::ALL {
+            assert_eq!(ItemState::from_name(s.as_str()), Some(*s));
+        }
+    }
+
+    /// INV-PR-04: an item reaches Done only from InProgress, i.e. in the commit of its results;
+    /// a rolled-back item goes back to Pending.
+    #[test]
+    fn inv_pr_04_done_only_from_in_progress() {
+        use ItemState::*;
+        for s in ItemState::ALL {
+            assert_eq!(s.can_move_to(Done), *s == InProgress, "{s:?}");
+        }
+        assert_eq!(InProgress.move_to(Pending), Ok(Pending));
+        assert!(Done.move_to(Pending).is_err());
+        assert!(Skipped.move_to(InProgress).is_err());
+    }
+
+    /// INV-PR-05: restart redoes only items in progress; finished items stay finished.
+    #[test]
+    fn inv_pr_05_restart_never_redoes_finished_items() {
+        use ItemState::*;
+        assert_eq!(InProgress.after_restart(), Pending);
+        for s in [Pending, Done, Failed, Skipped, Cancelled] {
+            assert_eq!(s.after_restart(), s);
+        }
+        for s in ItemState::ALL {
+            assert_eq!(s.is_finished(), !matches!(s, Pending | InProgress));
+        }
+    }
+
+    /// INV-PR-07: job states survive a restart: running stays running, paused stays paused.
+    #[test]
+    fn inv_pr_07_job_states_survive_restart() {
+        for s in JobState::ALL {
+            assert_eq!(s.after_restart(), *s);
+        }
+        assert!(JobState::Completed.move_to(JobState::Running).is_err());
+        assert!(JobState::Paused.move_to(JobState::Completed).is_err());
+        assert!(JobState::Completed.is_final() && !JobState::Paused.is_final());
+    }
+
+    /// NFR-PERF-25: Stage A uses cores − 1 workers, at least one.
+    #[test]
+    fn nfr_perf_25_stage_a_limit() {
+        assert_eq!(stage_a_limit(24), 23);
+        assert_eq!(stage_a_limit(2), 1);
+        assert_eq!(stage_a_limit(1), 1);
+        assert_eq!(stage_a_limit(0), 1);
+    }
+
+    /// INV-PR-03: text-native first, then by priority and age; never more than the lane limit.
+    #[test]
+    fn inv_pr_03_text_native_first() {
+        let item = |id, priority, text_native| PendingItem {
+            id,
+            priority,
+            text_native,
+        };
+        let pending = [
+            item(1, stage_a_priority(false, 10), false),
+            item(2, stage_a_priority(true, 500), true),
+            item(3, stage_a_priority(true, 20), true),
+            item(4, stage_a_priority(true, 20), true),
+        ];
+        assert_eq!(next_batch(&pending, 0, 3), vec![3, 4, 2]);
+        assert_eq!(next_batch(&pending, 2, 3), vec![3]);
+        assert_eq!(next_batch(&pending, 3, 3), Vec::<i64>::new());
+        assert_eq!(next_batch(&pending, 0, 10), vec![3, 4, 2, 1]);
+    }
+}

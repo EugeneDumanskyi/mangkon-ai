@@ -7,7 +7,6 @@ use std::path::PathBuf;
 
 use mk_bench::td3::{Outcome, Td3Category};
 use mk_bench::{Annotation, FileKind, Origin};
-use mk_kernel::ContentHash;
 
 fn testdata() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata")
@@ -126,12 +125,7 @@ fn td3_expected_manifest_complete() {
     for f in &m.files {
         let bytes = std::fs::read(td3.join(&f.path)).expect("read td3 file");
         assert_eq!(bytes.len() as u64, f.bytes, "{}: size", f.path);
-        assert_eq!(
-            ContentHash::of(&bytes).to_hex(),
-            f.sha256,
-            "{}: sha256",
-            f.path
-        );
+        assert_eq!(mk_bench::sha256_hex(&bytes), f.sha256, "{}: sha256", f.path);
         assert!(!f.reason.trim().is_empty(), "{}: no reason", f.path);
     }
     for c in Td3Category::ALL {

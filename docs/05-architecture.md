@@ -329,11 +329,11 @@ Details: [ADR-0005](adr/0005-derived-data-and-decisions.md).
 ### 5.4 Re-scan
 
 1. Walk each source root. For each path, compare size and modified time with the stored file reference.
-2. Hash only paths that are new or changed. Hash = BLAKE3 (fast; ASSUMPTION — the domain only says "content hash").
-3. Same hash → no work (INV-PR-08). New hash → new content, queued. Gone → presence "missing" (INV-CO-07).
+2. Hash only paths that are new or changed. Hash = BLAKE3 (decided 2026-10-27: fast, and the `blake3` crate builds as pure Rust; the domain only says "content hash"). Test-corpus files keep SHA-256 in their ground truth.
+3. Same hash → no work (INV-PR-08). New hash → new content, queued. Gone → presence "missing" (INV-CO-07). A changed path whose old content has no other present path makes that content **replaced**: its documents, segments and mentions are deleted in the re-scan transaction, with the derived rebuild of its keys, so old and new evidence are never both visible (INV-CO-06). The new content's evidence appears when its Stage A item commits. ASSUMPTION (M2b).
 4. A "full re-scan" option hashes every file, for the rare case where the modified time lies.
 
-This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB every time would be too slow on some disks.
+This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB every time would be too slow on some disks. M2b on RM-1: a no-change re-scan of TD-2 takes under 0.03 s with a warm page cache (`10-walking-skeleton.md` §3).
 
 ---
 
@@ -375,8 +375,8 @@ Rules:
 | AI requests in flight | 1 per loaded model | NFR-PERF-25 |
 | Loaded local models | Up to 2 (extraction + embeddings) | Both roles are needed for Stage B and meaning search. |
 | Model idle stop | 10 min | NFR-RES-06 |
-| DB connections | 1 writer thread + 4 read connections | WAL allows readers while one writer writes. |
-| UI events | "Something changed" only; debounced 500 ms; UI re-queries | Keeps IPC small. Meets NFR-PERF-34 (≤ 2 s). |
+| DB connections | 1 writer thread + 4 read connections | WAL allows readers while one writer writes. M2b: plain threads and channels (`mk-store`); the async runtime comes with IPC in M2d if needed. |
+| UI events | "Something changed" only; debounced 500 ms; UI re-queries | Keeps IPC small. Meets NFR-PERF-34 (≤ 2 s). The window opens at the first unreported change and is not extended by later ones, so a long ingestion still sends an event every 500 ms. |
 
 ---
 

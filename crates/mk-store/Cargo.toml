@@ -1,6 +1,6 @@
 [package]
 name = "mk-store"
-description = "SQLite adapters, schema and migrations (filled in M2b)."
+description = "SQLite adapters, schema and migrations (ADR-0004)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,4 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+mk-corpus.workspace = true
+mk-graph.workspace = true
+mk-jobs.workspace = true
 mk-kernel.workspace = true
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

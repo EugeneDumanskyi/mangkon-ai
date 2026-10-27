@@ -7,7 +7,6 @@ use std::path::Path;
 use std::process::Command;
 
 use mk_bench::{Annotation, FileEntry, FileKind, IdType, IdentifierKey, Origin};
-use mk_kernel::ContentHash;
 use serde::Deserialize;
 
 use crate::truth::Collector;
@@ -65,7 +64,7 @@ pub fn fetch(td1: &Path) -> Result<usize, Vec<String>> {
     for f in manifest()?.files {
         let dest = dir.join(&f.path);
         let hash_ok =
-            |p: &Path| std::fs::read(p).is_ok_and(|b| ContentHash::of(&b).to_hex() == f.sha256);
+            |p: &Path| std::fs::read(p).is_ok_and(|b| mk_bench::sha256_hex(&b) == f.sha256);
         if hash_ok(&dest) {
             continue;
         }
@@ -103,7 +102,7 @@ pub fn build(c: &mut Collector, td1: &Path) -> Result<(), Vec<String>> {
         let rel = format!("public/{}", f.path);
         match std::fs::read(td1.join(&rel)) {
             Err(e) => errors.push(format!("{rel}: {e} (run `corpus-gen fetch` first)")),
-            Ok(b) if ContentHash::of(&b).to_hex() != f.sha256 => {
+            Ok(b) if mk_bench::sha256_hex(&b) != f.sha256 => {
                 errors.push(format!("{rel}: sha256 differs from the manifest"))
             }
             Ok(_) => {}

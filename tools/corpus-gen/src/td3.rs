@@ -9,7 +9,6 @@ use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use mk_bench::Generator;
 use mk_bench::td3::{Outcome, Td3Category as Cat, Td3File, Td3Manifest};
-use mk_kernel::ContentHash;
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::{Rng, SeedableRng};
 
@@ -38,7 +37,7 @@ impl Out {
         std::fs::write(&full, bytes).map_err(|e| vec![format!("{}: {e}", full.display())])?;
         self.files.push(Td3File {
             path: path.to_string(),
-            sha256: ContentHash::of(bytes).to_hex(),
+            sha256: mk_bench::sha256_hex(bytes),
             bytes: bytes.len() as u64,
             category,
             expected,

@@ -3,7 +3,6 @@
 //! attachments (child documents, INV-CO-05).
 
 use mk_bench::{DocPart, FileKind, RelationType};
-use mk_kernel::ContentHash;
 
 use super::{invoice_bwl, stem};
 use crate::fonts::Afm;
@@ -91,7 +90,7 @@ fn children(c: &mut Collector, file: &str, parent: &str, outs: &[AttachmentOut],
             part,
             FileKind::PdfText,
             Some(parent),
-            Some(ContentHash::of(&a.bytes).to_hex()),
+            Some(mk_bench::sha256_hex(&a.bytes)),
         );
         c.ingest(&id, pdf::truth(&att.laid, &[]));
     }

@@ -29,6 +29,16 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
+/// SHA-256 of `bytes` as 64 lowercase hex characters: the file hash the ground truth and the TD-3
+/// manifest store. Not the app's content hash, which is BLAKE3 (`mk_kernel::ContentHash`).
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Loads `ground-truth.json` and its page-text JSON Lines file.
 pub fn load(path: &Path) -> Result<GroundTruth, LoadError> {
     let text = std::fs::read_to_string(path).map_err(|e| LoadError::Io(path.into(), e))?;

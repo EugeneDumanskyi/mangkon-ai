@@ -10,8 +10,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+csv = "1.4.0"
 mk-kernel.workspace = true
 mk-tesseract-sys.workspace = true
 
 [dev-dependencies]
 ab_glyph = "0.2.32"
+mk-bench.workspace = true
+proptest = "1.12.0"

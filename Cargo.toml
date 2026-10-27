@@ -36,7 +36,6 @@ all = { level = "warn", priority = -1 }
 [workspace.dependencies]
 mk-kernel = { path = "crates/mk-kernel" }
 mk-bench = { path = "crates/mk-bench" }
-mk-models = { path = "crates/mk-models" }
 mk-workspace = { path = "crates/mk-workspace" }
 mk-corpus = { path = "crates/mk-corpus" }
 mk-tesseract-sys = { path = "crates/mk-tesseract-sys" }
