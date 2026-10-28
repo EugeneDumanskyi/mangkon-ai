@@ -374,3 +374,247 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
     }
     Ok(out)
 }
+
+/// Number of connection rows, for the list length (US-07.1). Ignored rows only when
+/// `include_ignored` (US-07.4).
+pub(crate) fn connection_count(
+    conn: &Connection,
+    include_ignored: bool,
+) -> Result<u64, StoreError> {
+    let n: i64 = conn
+        .prepare_cached("SELECT COUNT(*) FROM connection WHERE (?1 OR ignored = 0)")?
+        .query_row([include_ignored], |r| r.get(0))?;
+    Ok(n as u64)
+}
+
+/// One mention of an identifier, with what the occurrence list and the source view need
+/// (US-07.3 AC2): where it is (INV-CO-03) and the file it came from.
+#[derive(Clone, PartialEq, Debug)]
+pub struct OccurrenceRow {
+    pub mention_id: i64,
+    pub content_id: i64,
+    pub document_id: i64,
+    pub segment_id: i64,
+    pub file_type: String,
+    /// The first present path of the content (source root joined with its relative path);
+    /// `None` when no path is present.
+    pub path: Option<String>,
+    pub locator: Locator,
+    pub raw: String,
+    pub confidence: f32,
+}
+
+const OCCURRENCE_SELECT: &str = "
+    SELECT m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
+           s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
+           m.column_name, m.raw, m.confidence, r.path, f.rel_path
+    FROM identifier_mention m
+    JOIN segment s ON s.id = m.segment_id
+    JOIN content c ON c.id = m.content_id
+    LEFT JOIN file_ref f ON f.id = (
+        SELECT id FROM file_ref WHERE content_id = m.content_id AND present = 1
+        ORDER BY id LIMIT 1)
+    LEFT JOIN source_root r ON r.id = f.root_id";
+
+/// A display path from a source root and a relative path, when the content has a present path.
+fn display_path(root: Option<String>, rel: Option<String>) -> Option<String> {
+    let (root, rel) = (root?, rel?);
+    Some(
+        mk_corpus::fs::resolve(root.as_ref(), &rel)
+            .to_string_lossy()
+            .into_owned(),
+    )
+}
+
+/// An occurrence row and whether its content counts for connections (INV-CO-07).
+fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), StoreError> {
+    let state: String = r.get(5)?;
+    let counted = IngestionState::from_name(&state)
+        .ok_or_else(|| StoreError::Invalid(format!("unknown content state {state}")))?
+        .counts_for_connections();
+    let text: String = r.get(8)?;
+    let path = display_path(r.get(15)?, r.get(16)?);
+    Ok((
+        OccurrenceRow {
+            mention_id: r.get(0)?,
+            content_id: r.get(1)?,
+            document_id: r.get(2)?,
+            segment_id: r.get(3)?,
+            file_type: r.get(4)?,
+            path,
+            locator: codec::mention_from(
+                &r.get::<_, String>(6)?,
+                r.get(7)?,
+                text.chars().count(),
+                r.get(9)?,
+                r.get(10)?,
+                r.get(11)?,
+                r.get(12)?,
+            )?,
+            raw: r.get(13)?,
+            confidence: r.get::<_, f64>(14)? as f32,
+        },
+        counted,
+    ))
+}
+
+/// The counted mentions of `key` (INV-CO-07), by content, then document, then position in it.
+/// At most `limit`. Reads the `identifier_mention_key` index.
+pub(crate) fn mentions_of(
+    conn: &Connection,
+    key: &str,
+    limit: usize,
+) -> Result<Vec<OccurrenceRow>, StoreError> {
+    let sql = format!(
+        "{OCCURRENCE_SELECT}
+         WHERE m.identifier_key = ?1
+         ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let mut rows = stmt.query([key])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        if out.len() >= limit {
+            break;
+        }
+        let (row, counted) = occurrence_from(r)?;
+        if counted {
+            out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// One mention by id, counted or not.
+pub(crate) fn mention(conn: &Connection, id: i64) -> Result<Option<OccurrenceRow>, StoreError> {
+    let sql = format!("{OCCURRENCE_SELECT} WHERE m.id = ?1");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let mut rows = stmt.query([id])?;
+    rows.next()?
+        .map(|r| occurrence_from(r).map(|(row, _)| row))
+        .transpose()
+}
+
+/// A stored segment with its id and position in its document.
+#[derive(Clone, PartialEq, Debug)]
+pub struct WindowSegment {
+    pub id: i64,
+    pub ordinal: i64,
+    pub locator: Locator,
+    pub text: String,
+    pub malformed: bool,
+    pub cell_starts: Vec<u32>,
+}
+
+/// A segment with up to `before` and `after` neighbours by ordinal in its document, and the
+/// document's first segment (a CSV header row, if the file has one).
+#[derive(Clone, PartialEq, Debug)]
+pub struct SegmentWindow {
+    pub document_id: i64,
+    /// In ordinal order; holds the asked-for segment.
+    pub segments: Vec<WindowSegment>,
+    pub first: WindowSegment,
+}
+
+const SEGMENT_SELECT: &str =
+    "SELECT id, ordinal, loc_kind, loc_pos, text, malformed, cell_starts FROM segment";
+
+fn window_segment(r: &rusqlite::Row<'_>) -> Result<WindowSegment, StoreError> {
+    let kind: String = r.get(2)?;
+    let text: String = r.get(4)?;
+    Ok(WindowSegment {
+        id: r.get(0)?,
+        ordinal: r.get(1)?,
+        locator: codec::segment_from(&kind, r.get(3)?, &text)?,
+        malformed: r.get(5)?,
+        cell_starts: codec::cells_from_blob(r.get(6)?),
+        text,
+    })
+}
+
+fn segments_where(
+    conn: &Connection,
+    clause: &str,
+    args: impl rusqlite::Params,
+) -> Result<Vec<WindowSegment>, StoreError> {
+    let mut stmt = conn.prepare_cached(&format!("{SEGMENT_SELECT} {clause}"))?;
+    let mut rows = stmt.query(args)?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        out.push(window_segment(r)?);
+    }
+    Ok(out)
+}
+
+/// See [`SegmentWindow`]. Keyset reads on `segment_document`, so a 1M-row file costs the same as
+/// a small one. `None` if the segment is gone.
+pub(crate) fn segment_window(
+    conn: &Connection,
+    segment: i64,
+    before: usize,
+    after: usize,
+) -> Result<Option<SegmentWindow>, StoreError> {
+    let at: Option<(i64, i64)> = conn
+        .prepare_cached("SELECT document_id, ordinal FROM segment WHERE id = ?1")?
+        .query_row([segment], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    let Some((doc, ordinal)) = at else {
+        return Ok(None);
+    };
+    let mut segments = segments_where(
+        conn,
+        "WHERE document_id = ?1 AND ordinal < ?2 ORDER BY ordinal DESC LIMIT ?3",
+        params![doc, ordinal, before as i64],
+    )?;
+    segments.reverse();
+    segments.extend(segments_where(
+        conn,
+        "WHERE document_id = ?1 AND ordinal >= ?2 ORDER BY ordinal LIMIT ?3",
+        params![doc, ordinal, after as i64 + 1],
+    )?);
+    let first = segments_where(
+        conn,
+        "WHERE document_id = ?1 ORDER BY ordinal LIMIT 1",
+        params![doc],
+    )?
+    .pop()
+    .ok_or_else(|| StoreError::Invalid(format!("document {doc} has no segments")))?;
+    Ok(Some(SegmentWindow {
+        document_id: doc,
+        segments,
+        first,
+    }))
+}
+
+/// A content whose ingestion failed, with its first path and the plain reason (NFR-USE-05).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FailedFile {
+    pub path: Option<String>,
+    pub file_type: String,
+    pub code: Option<String>,
+    pub reason: Option<String>,
+}
+
+/// Failed contents in id order, at most `limit`.
+pub(crate) fn failed_files(conn: &Connection, limit: usize) -> Result<Vec<FailedFile>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT c.file_type, c.failure_code, c.failure_reason, r.path, f.rel_path
+         FROM content c
+         LEFT JOIN file_ref f ON f.id = (
+             SELECT id FROM file_ref WHERE content_id = c.id AND present = 1 ORDER BY id LIMIT 1)
+         LEFT JOIN source_root r ON r.id = f.root_id
+         WHERE c.state = ?1 ORDER BY c.id LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(
+        params![IngestionState::Failed.as_str(), limit as i64],
+        |r| {
+            Ok(FailedFile {
+                path: display_path(r.get(3)?, r.get(4)?),
+                file_type: r.get(0)?,
+                code: r.get(1)?,
+                reason: r.get(2)?,
+            })
+        },
+    )?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}

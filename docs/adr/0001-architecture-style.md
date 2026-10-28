@@ -1,6 +1,6 @@
 # ADR-0001: Architecture style — modular monolith with isolated parser workers
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-REL-01/02/03/06/07, NFR-PERF-03/30/31, NFR-RES-01/02/07, NFR-SEC-06/10, NFR-USE-03, `05-architecture.md` §2
 

@@ -24,7 +24,10 @@ spike-s2d = ["mk-core/spike-s2d"]
 
 [dependencies]
 mk-core.workspace = true
+# The native folder dialog, called from Rust (ADR-0003: no dialog plugin, no JS file access).
+rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 # Default features minus `dynamic-acl`: capabilities are fixed at build time.
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "compression", "common-controls-v6", "x11", "dbus"] }
 ts-rs = "12.0.1"

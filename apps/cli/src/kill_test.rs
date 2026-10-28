@@ -145,10 +145,8 @@ fn ingest(dir: &Path, source: &Path, report: bool) -> Result<Project, ProjectErr
     };
     say("phase open");
     let (project, _) = Project::open(dir)?;
-    say("phase rescan");
     project.add_source_root(source)?;
-    project.rescan(false)?;
-    say("phase stage-a");
+    say("phase ingest");
     let stop = AtomicBool::new(false);
     let run = std::thread::scope(|s| {
         if report {
@@ -167,7 +165,8 @@ fn ingest(dir: &Path, source: &Path, report: bool) -> Result<Project, ProjectErr
                 }
             });
         }
-        let run = project.run_stage_a();
+        // The same path as `mangkon-cli ingest` and the desktop: re-scan, then Stage A.
+        let run = project.ingest();
         stop.store(true, Ordering::Relaxed);
         run
     });

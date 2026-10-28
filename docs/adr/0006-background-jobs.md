@@ -1,6 +1,6 @@
 # ADR-0006: Background jobs — persistent queue in the project store
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** INV-PR-01..10, NFR-REL-03/04/05, NFR-PERF-25/33, NFR-RES-02, domain §7.1, §7.2, ADR-0004, ADR-0007
 
@@ -71,4 +71,4 @@ Use **option 2**.
 **Follow-ups**
 - Restart test suite: kill during each job state, check NFR-REL-04. **Partly done in M2b:** `crates/mk-core/tests/restart.rs` drops the project with one item In progress, one Done and a Paused job; on open the item is Pending and its content Queued, the Done item is not redone, the running job stays running and the paused job stays paused (INV-PR-05/07). Real process kills come with the M2c kill test.
 - **Done in M2b** (`crates/mk-jobs`, `crates/mk-store`, `crates/mk-core`): `job` and `work_item` tables with every §7.2 state and checked transitions; an item's results and its `Done` state commit in one transaction (INV-PR-04); the Stage A lane runs `cores − 1` threads in process (workers come in M2c), text-native first (INV-PR-03); a file that changed since the scan fails alone with "File changed during processing". Plain threads, not an async runtime, until IPC (M2d). Pause, cancel and ETA come in M3.
-- Decide with the maintainer whether only one project can be open at a time (gap A7). This ADR assumes yes.
+- Decide with the maintainer whether only one project can be open at a time (gap A7). This ADR assumes yes. **Decided (2026-10-28):** yes, one at a time. M2d: the desktop runs `Project::ingest` on one background thread per open project; a folder added during a run makes the run go again; opening or closing a project is refused while it is being ingested (pause and cancel come in M3); items a killed run left Pending are run when the project is opened again.

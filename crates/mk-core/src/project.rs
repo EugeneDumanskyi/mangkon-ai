@@ -99,6 +99,25 @@ pub struct StageASummary {
     pub stops: Vec<WorkerStop>,
 }
 
+/// What [`Project::ingest`] did: the re-scan, then the Stage A run.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct IngestSummary {
+    pub rescan: RescanSummary,
+    pub stage_a: StageASummary,
+}
+
+/// What [`Project::rebuild`] did (ADR-0005 "full rebuild").
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RebuildSummary {
+    pub identifiers: usize,
+    /// Connection rows, ignored ones included.
+    pub connections: usize,
+    /// The rebuilt rows equal the rows the incremental commits had left.
+    pub same_as_incremental: bool,
+    /// The rebuilt rows equal the reference model over the facts.
+    pub consistent: bool,
+}
+
 /// A project's health after a crash or a kill (NFR-REL-02 kill test, ADR-0006).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct HealthReport {
@@ -117,6 +136,12 @@ impl HealthReport {
     }
 }
 
+// The desktop reads from one thread while Stage A runs on another (US-03.1 AC3).
+const _: () = {
+    const fn send_sync<T: Send + Sync>() {}
+    send_sync::<Project>();
+};
+
 /// An open project (ADR-0002: the shell and the CLI reach the core only through services like
 /// this one).
 pub struct Project {
@@ -125,6 +150,11 @@ pub struct Project {
     events: Events,
     workers: usize,
     worker_config: WorkerConfig,
+}
+
+/// Whether `dir` holds a project database.
+pub fn project_exists(dir: &Path) -> bool {
+    ProjectLayout::new(dir).database().is_file()
 }
 
 /// The file types with a parser (US-01.3 AC3).
@@ -254,6 +284,32 @@ impl Project {
             self.events.changed();
         }
         Ok(summary)
+    }
+
+    /// Re-scan, then Stage A until nothing is pending: what both apps run after a folder is
+    /// added (US-01.3) and on reopen (a killed run is finished, ADR-0006).
+    pub fn ingest(&self) -> Result<IngestSummary, ProjectError> {
+        let rescan = self.rescan(false)?;
+        let stage_a = self.run_stage_a()?;
+        Ok(IngestSummary { rescan, stage_a })
+    }
+
+    /// Drops and rebuilds every derived row from machine output and decisions (ADR-0005), then
+    /// checks the result against the rows before and against the reference model.
+    pub fn rebuild(&self) -> Result<RebuildSummary, ProjectError> {
+        let before = self.store.derived_state()?;
+        self.store.rebuild_all()?;
+        let after = self.store.derived_state()?;
+        let reference = mk_graph::model::reference(&self.store.facts()?);
+        if after != before {
+            self.events.changed();
+        }
+        Ok(RebuildSummary {
+            identifiers: after.identifiers.len(),
+            connections: after.connections.len(),
+            same_as_incremental: after == before,
+            consistent: after == reference,
+        })
     }
 
     /// Hashes the plan's new and changed paths on all cores. A file that cannot be read is left

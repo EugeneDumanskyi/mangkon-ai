@@ -10,7 +10,7 @@ leptonica 1.87.0 | BSD-2-Clause | https://github.com/DanBloomberg/leptonica
 tessdata_fast-eng 4.1.0 | Apache-2.0 | https://github.com/tesseract-ocr/tessdata_fast
 tesseract 5.5.2 | Apache-2.0 | https://github.com/tesseract-ocr/tesseract
 
-## Rust crates (339)
+## Rust crates (340)
 
 adler2 2.0.1 | 0BSD OR MIT OR Apache-2.0 | https://github.com/oyvindln/adler2
 aho-corasick 1.1.5 | Unlicense OR MIT | https://github.com/BurntSushi/aho-corasick
@@ -227,6 +227,7 @@ ref-cast-impl 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast
 regex 1.13.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex
 regex-automata 0.4.18 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex
 regex-syntax 0.8.11 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex
+rfd 0.17.2 | MIT | https://github.com/PolyMeilex/rfd
 rusqlite 0.41.0 | MIT | https://github.com/rusqlite/rusqlite
 rustc-hash 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash
 rustix 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix

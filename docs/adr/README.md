@@ -23,13 +23,13 @@ Header fields: **Status** (Proposed · Accepted · Superseded by ADR-xxxx · Ope
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](0001-architecture-style.md) | Architecture style: modular monolith with isolated parser workers | Proposed |
-| [0002](0002-headless-core-workspace.md) | Headless Rust core in a Cargo workspace | Proposed |
-| [0003](0003-desktop-shell-and-ui.md) | Desktop shell and UI: Tauri 2 + React + TypeScript | Proposed |
-| [0004](0004-project-storage.md) | Storage: one SQLite file per project, WAL, single writer | Proposed |
-| [0005](0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Proposed |
-| [0006](0006-background-jobs.md) | Background jobs: persistent queue in the project store | Proposed |
-| [0007](0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Proposed |
+| [0001](0001-architecture-style.md) | Architecture style: modular monolith with isolated parser workers | Accepted |
+| [0002](0002-headless-core-workspace.md) | Headless Rust core in a Cargo workspace | Accepted |
+| [0003](0003-desktop-shell-and-ui.md) | Desktop shell and UI: Tauri 2 + React + TypeScript | Accepted |
+| [0004](0004-project-storage.md) | Storage: one SQLite file per project, WAL, single writer | Accepted |
+| [0005](0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Accepted |
+| [0006](0006-background-jobs.md) | Background jobs: persistent queue in the project store | Accepted |
+| [0007](0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Accepted |
 | [0008](0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Superseded by ADR-0015 |
 | [0009](0009-egress-gate.md) | One egress gate for all model traffic | Proposed |
 | [0010](0010-search.md) | Search: FTS5 + binary vector index with rescoring | Proposed |

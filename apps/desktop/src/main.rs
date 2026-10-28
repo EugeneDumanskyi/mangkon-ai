@@ -9,21 +9,50 @@
 mod commands;
 mod ipc;
 mod nav;
+mod state;
 
 use tauri::webview::NewWindowResponse;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{DragDropEvent, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+
+use crate::state::AppState;
 
 fn main() -> std::process::ExitCode {
     // `mangkon --worker`: a parser worker (ADR-0001, ADR-0007). Before Tauri starts anything.
     if let Some(code) = mk_core::worker_main_if_requested() {
         return code;
     }
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().manage(AppState::default());
     #[cfg(not(feature = "spike-s2d"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![commands::app_info]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        commands::app_info,
+        commands::pick_folder,
+        commands::open_project,
+        commands::close_project,
+        commands::current_project,
+        commands::add_source,
+        commands::progress,
+        commands::connection_count,
+        commands::connections_page,
+        commands::occurrences,
+        commands::source_context,
+        commands::subscribe,
+        commands::record_ui_timing
+    ]);
     #[cfg(feature = "spike-s2d")]
     let builder = builder.invoke_handler(tauri::generate_handler![
         commands::app_info,
+        commands::pick_folder,
+        commands::open_project,
+        commands::close_project,
+        commands::current_project,
+        commands::add_source,
+        commands::progress,
+        commands::connection_count,
+        commands::connections_page,
+        commands::occurrences,
+        commands::source_context,
+        commands::subscribe,
+        commands::record_ui_timing,
         commands::synthetic_rows,
         commands::record_frame_stats
     ]);
@@ -38,6 +67,19 @@ fn main() -> std::process::ExitCode {
                 .on_new_window(|_, _| NewWindowResponse::Deny)
                 .build()?;
             Ok(())
+        })
+        // Files and folders dropped on the window are added to the open project (US-01.3), in
+        // Rust: the UI gets no drop paths and needs no event permission.
+        .on_window_event(|window, event| {
+            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
+                let state = window.state::<AppState>();
+                for path in paths {
+                    if let Err(e) = state.add_source(path) {
+                        state.emit(ipc::UiEvent::Error { message: e.message });
+                        break;
+                    }
+                }
+            }
         })
         .run(tauri::generate_context!())
         .expect("failed to start Mangkon AI");

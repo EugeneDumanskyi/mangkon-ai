@@ -59,6 +59,16 @@ cargo xtask build --release
 target/release/mangkon            # target\release\mangkon.exe on Windows
 ```
 
+In this early build the app reads TXT, MD and CSV files and finds email addresses. Click **New project…** and pick an empty folder, then add a folder (button or drag and drop). Connections are addresses found in two or more files; click one, then a mention, to see it in its file.
+
+The same from the command line:
+
+```sh
+cargo build --release -p mangkon-cli
+target/release/mangkon-cli ingest --project ~/mangkon/p1 ~/Documents/case
+target/release/mangkon-cli rebuild --project ~/mangkon/p1
+```
+
 - Offline build: put the files listed in `crates/mk-tesseract-sys/native/sources.toml` in a folder and set `MK_NATIVE_SRC_DIR` to it. Nothing is downloaded then.
 - All checks, in the same order as CI: `cargo xtask ci` (needs `cargo install --locked cargo-deny` once).
 - UI work with hot reload: `npm run dev` in `ui/`, and in another terminal `cargo run -p mangkon-desktop --no-default-features`.

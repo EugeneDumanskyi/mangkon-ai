@@ -1,6 +1,7 @@
-//! `mangkon-cli` (ADR-0002). Since M2c: the kill-test driver (NFR-REL-02/03/04) and the
-//! `--worker` entry; `ingest` and `rebuild` come in M2d, `bench` in M4.
+//! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), the kill-test driver
+//! (NFR-REL-02/03/04, M2c) and the `--worker` entry; `bench` comes in M4.
 
+mod ingest;
 mod kill_test;
 
 use std::path::PathBuf;
@@ -10,9 +11,17 @@ const HELP: &str = "\
 Mangkon AI command line
 
 Usage: mangkon-cli [--help | --version]
+       mangkon-cli ingest --project DIR [--json] SOURCE...
+       mangkon-cli rebuild --project DIR [--json]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
 
 Commands:
+  ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
+              (a source already in the project is kept), find new and changed files, and
+              read them. Prints the counts and every failed file with its reason. Exits 0
+              unless the project itself fails; failed files do not change the exit code.
+  rebuild     Rebuild the connections of the project in DIR from what was read and the
+              decisions made, and check that they equal the ones it had. Exits 1 if not.
   kill-test   Ingest DIR (TXT and CSV files) again and again, kill the process at a random
               moment each time, then reopen, check and finish the project. Every run must
               leave a healthy project that ends up equal to a run without a kill.
@@ -22,7 +31,7 @@ Commands:
                        every run passes)
               --json   print one JSON summary instead of a table
 
-ingest, rebuild and bench come in later milestones.";
+bench comes in a later milestone.";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -40,11 +49,19 @@ fn main() -> ExitCode {
             println!("mangkon-cli {} ({})", info.version, info.ocr_engine);
             ExitCode::SUCCESS
         }
+        Some("ingest") => match ingest_options(&args[1..]) {
+            Ok(opts) => ingest::ingest(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("rebuild") => match rebuild_options(&args[1..]) {
+            Ok(opts) => ingest::rebuild(&opts),
+            Err(e) => usage_error(&e),
+        },
         Some("kill-test") => match kill_test_options(&args[1..]) {
             Ok(opts) => kill_test::run(&opts),
             Err(e) => usage_error(&e),
         },
-        // The process the kill test kills. Not in the help; M2d brings the public `ingest`.
+        // The process the kill test kills. Not in the help.
         Some("kill-test-target") => match &args[1..] {
             [project, source] => kill_test::target(&PathBuf::from(project), &PathBuf::from(source)),
             _ => usage_error("kill-test-target takes PROJECT SOURCE"),
@@ -81,4 +98,47 @@ fn kill_test_options(args: &[String]) -> Result<kill_test::Options, String> {
     }
     opts.source = source.ok_or("kill-test needs --source DIR")?;
     Ok(opts)
+}
+
+fn ingest_options(args: &[String]) -> Result<ingest::IngestOptions, String> {
+    let mut project = None;
+    let mut opts = ingest::IngestOptions {
+        project: PathBuf::new(),
+        sources: Vec::new(),
+        json: false,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--project" => {
+                project = Some(PathBuf::from(it.next().ok_or("--project needs a value")?))
+            }
+            "--json" => opts.json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown ingest argument {other:?}"));
+            }
+            source => opts.sources.push(PathBuf::from(source)),
+        }
+    }
+    opts.project = project.ok_or("ingest needs --project DIR")?;
+    Ok(opts)
+}
+
+fn rebuild_options(args: &[String]) -> Result<ingest::RebuildOptions, String> {
+    let mut project = None;
+    let mut json = false;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--project" => {
+                project = Some(PathBuf::from(it.next().ok_or("--project needs a value")?))
+            }
+            "--json" => json = true,
+            other => return Err(format!("unknown rebuild argument {other:?}")),
+        }
+    }
+    Ok(ingest::RebuildOptions {
+        project: project.ok_or("rebuild needs --project DIR")?,
+        json,
+    })
 }

@@ -1,6 +1,6 @@
 # ADR-0005: Derived data and decisions — rebuild in the same commit
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** INV-CU-03/04/05, INV-LK-05, INV-AI-04, INV-CO-06, INV-ER-01..08, NFR-PERF-34, NFR-REL-09, NFR-QA-10, domain §2.4, §9.3, §9.6, ADR-0004
 

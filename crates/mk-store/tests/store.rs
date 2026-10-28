@@ -340,3 +340,82 @@ fn commit_rebuilds_touched_keys() {
     assert_eq!(store.derived_state().unwrap(), d);
     assert_eq!(mk_graph::model::reference(&store.facts().unwrap()), d);
 }
+
+/// US-07.3 AC2, INV-CO-03/04: every mention of a key comes with its locator, and its span points
+/// at the raw text in its segment; ordered by content; one mention by id gives the same row.
+#[test]
+fn us_07_3_ac2_mentions_of_key_have_locators() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    ingest(&store, 1, &["a@x.example", "b@x.example"]);
+    ingest(&store, 2, &["c@x.example", "a@x.example"]);
+    assert_eq!(store.connection_count(false).unwrap(), 1);
+
+    let key = key("a@x.example").to_string();
+    let rows = store.mentions_of(&key, 100).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows[0].content_id < rows[1].content_id);
+    let lines: Vec<_> = rows
+        .iter()
+        .map(|r| match &r.locator {
+            Locator::TextLine { line, span } => (line.get(), span.start(), span.end()),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(lines, [(1, 0, 11), (2, 0, 11)]);
+    for r in &rows {
+        assert_eq!(
+            (r.raw.as_str(), r.file_type.as_str()),
+            ("a@x.example", "txt")
+        );
+        assert_eq!(r.path, None, "contents added without a file have no path");
+        assert_eq!(store.mention(r.mention_id).unwrap().as_ref(), Some(r));
+        let window = store.segment_window(r.segment_id, 0, 0).unwrap().unwrap();
+        assert_eq!(window.segments.len(), 1);
+        assert_eq!(window.segments[0].text, "a@x.example");
+    }
+    assert_eq!(store.mentions_of(&key, 1).unwrap().len(), 1);
+    assert!(
+        store
+            .mentions_of("email:none@x.example", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.mention(i64::MAX).unwrap(), None);
+}
+
+/// US-08.1: the window around a segment stops at the start and end of its document and always
+/// carries the document's first segment.
+#[test]
+fn segment_window_bounds_at_file_start_and_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let emails: Vec<String> = (0..10).map(|i| format!("p{i}@x.example")).collect();
+    let refs: Vec<&str> = emails.iter().map(String::as_str).collect();
+    ingest(&store, 1, &refs);
+    let seg = |e: &str| store.mentions_of(&key(e).to_string(), 1).unwrap()[0].segment_id;
+    let lines = |w: &mk_store::SegmentWindow| -> Vec<i64> {
+        w.segments.iter().map(|s| s.ordinal).collect()
+    };
+
+    let start = store
+        .segment_window(seg("p0@x.example"), 3, 2)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lines(&start), [0, 1, 2]);
+    let end = store
+        .segment_window(seg("p9@x.example"), 3, 2)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lines(&end), [6, 7, 8, 9]);
+    let mid = store
+        .segment_window(seg("p5@x.example"), 2, 2)
+        .unwrap()
+        .unwrap();
+    assert_eq!(lines(&mid), [3, 4, 5, 6, 7]);
+    for w in [&start, &end, &mid] {
+        assert_eq!(w.first.ordinal, 0);
+        assert_eq!(w.first.text, "p0@x.example");
+    }
+    assert_eq!(store.segment_window(i64::MAX, 1, 1).unwrap(), None);
+}

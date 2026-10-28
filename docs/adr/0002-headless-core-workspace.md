@@ -1,6 +1,6 @@
 # ADR-0002: Headless Rust core in a Cargo workspace
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-MNT-02/04/05/08, NFR-USE-03, US-14.3, domain §3 (bounded contexts), ADR-0001
 
@@ -85,3 +85,4 @@ Rules:
 - Add a CI check that `mk-core` and context crates do not depend on `tauri`. **Done in M2a:** `[bans]` in `deny.toml` (`cargo deny check`) and `cargo xtask check-layers`, which walks the whole resolved graph, so a transitive dependency is caught too. Both run in CI; a test PR adding `tauri` to `mk-core` fails both (M2 acceptance criterion 6, checked locally).
 - Keep `mk-egress` and `mk-models` the only crates that may use an HTTP client (ADR-0009). **Done in M2a**, by the same two checks (`ureq` added to `mk-kernel` fails both). Both checks cover the desktop targets only; Tauri pulls an HTTP client on iOS and Android, which are not built.
 - `mk-worker` added in M2c (ADR-0007). It depends on `mk-kernel` (with its `serde` feature, for the protocol), `mk-parsers` and `mk-identifiers`; `mk-core` depends on it for the supervisor and the `--worker` entry. `cargo xtask check-layers` and `cargo deny check` pass with it.
+- `apps/cli` in M2d: `mangkon-cli ingest` and `rebuild` call the same `mk-core` services as the desktop (`Project::ingest`, `Project::rebuild`, the slice reads); the kill-test target uses `Project::ingest` too. `bench` comes in M4.

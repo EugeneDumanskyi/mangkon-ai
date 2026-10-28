@@ -31,7 +31,10 @@ pub use ops::{
     CommitOutcome, DocumentOut, MentionOut, NewContent, Recovery, RescanChange, RescanOutcome,
     SegmentOut, StageAOutput, StartedItem,
 };
-pub use read::{ContentRow, MentionRow, PendingWork, Progress, RootRow, SegmentRow};
+pub use read::{
+    ContentRow, FailedFile, MentionRow, OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow,
+    SegmentWindow, WindowSegment,
+};
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 
 /// Read connections (architecture §7).
@@ -247,6 +250,38 @@ impl Store {
     ) -> Result<Vec<ConnectionRow>, StoreError> {
         self.readers
             .with(|c| read::connections_page(c, after, limit, include_ignored))
+    }
+
+    /// Number of connection rows (the list length).
+    pub fn connection_count(&self, include_ignored: bool) -> Result<u64, StoreError> {
+        self.readers
+            .with(|c| read::connection_count(c, include_ignored))
+    }
+
+    /// The counted mentions of an identifier key, at most `limit` (US-07.3 AC2).
+    pub fn mentions_of(&self, key: &str, limit: usize) -> Result<Vec<OccurrenceRow>, StoreError> {
+        self.readers.with(|c| read::mentions_of(c, key, limit))
+    }
+
+    /// Failed contents with their reasons, at most `limit` (NFR-USE-05).
+    pub fn failed_files(&self, limit: usize) -> Result<Vec<FailedFile>, StoreError> {
+        self.readers.with(|c| read::failed_files(c, limit))
+    }
+
+    /// One mention by id.
+    pub fn mention(&self, id: i64) -> Result<Option<OccurrenceRow>, StoreError> {
+        self.readers.with(|c| read::mention(c, id))
+    }
+
+    /// A segment and its neighbours in its document (US-08.1).
+    pub fn segment_window(
+        &self,
+        segment: i64,
+        before: usize,
+        after: usize,
+    ) -> Result<Option<SegmentWindow>, StoreError> {
+        self.readers
+            .with(|c| read::segment_window(c, segment, before, after))
     }
 
     pub fn progress(&self) -> Result<Progress, StoreError> {

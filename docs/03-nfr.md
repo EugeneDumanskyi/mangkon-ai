@@ -43,7 +43,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-01 | Cold start to project list | ≤ 3 s | Timer, RM-1, 10 runs, p95 | ASSUMPTION |
 | NFR-PERF-02 | Open a project of TD-2 size | ≤ 2 s to a usable connections screen | Timer, p95 | ASSUMPTION |
 | NFR-PERF-03 | UI stays responsive during background jobs | UI thread never blocked > 100 ms; input response ≤ 100 ms | Frame/long-task tracing during TD-2 ingestion | ASSUMPTION |
-| NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing | ASSUMPTION · M2a (S2d, WebKitGTK, RM-1): mean frame 16.7 ms (= idle), p95 18 ms, 0.03–0.24 % of frames > 25 ms. WebKitGTK times frames in whole ms, so "p95 ≤ 16.7 ms" fails even when idle; proposed measure: mean within 1 % of idle, p95 ≤ 18.7 ms, ≤ 1 % > 25 ms (`10-walking-skeleton.md` §S2d) |
+| NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing: mean frame within 1 % of an idle control, p95 ≤ 18.7 ms (one vsync + 2 ms, for webviews that time frames in whole ms), ≤ 1 % of frames over 25 ms (decided 2026-10-28) | M2a (S2d, WebKitGTK, RM-1): mean frame 16.7 ms (= idle), p95 18 ms, 0.03–0.24 % of frames > 25 ms: met (`10-walking-skeleton.md` §S2d) |
 
 ### 3.2 Core workflow timing (brief §4)
 
@@ -74,7 +74,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-31 | Semantic search on TD-2 (incl. query embedding) | ≤ 1 s p95 for top 20 | 100 queries | ASSUMPTION |
 | NFR-PERF-32 | Re-scan of TD-2 with 0 changes | ≤ 60 s | Timer | ASSUMPTION · M2b (RM-1, warm page cache): app path 0.013–0.025 s (1,089 TXT/MD/CSV stored, other files skipped); walk + diff of all 10,000 files as stored references 0.019 s (`10-walking-skeleton.md` §3). Cold cache and the app path with every format stored: M3 |
 | NFR-PERF-33 | Re-scan skips unchanged files | 0 unchanged files re-processed | Count in job log | Brief (content hash) · M2b: met; unchanged size + modified time means no read and no work item (`nfr_perf_33_rescan_unchanged_creates_no_work`, and on TD-2 in `rescan_td2`). The hash is BLAKE3 (architecture §5.4) |
-| NFR-PERF-34 | Connections screen update after a file finishes | ≤ 2 s | Timer | ASSUMPTION · M2b (S2c, RM-1, 10,000 documents, ~297,000 mentions): commit incl. derived rebuild and writer wait, p95 601 ms (0 decisions) / 736 ms (10,000 decisions); + 500 ms debounce = 1.10 / 1.24 s (`10-walking-skeleton.md` §S2c). The screen side is measured in M2d |
+| NFR-PERF-34 | Connections screen update after a file finishes | ≤ 2 s | Timer | ASSUMPTION · M2b (S2c, RM-1, 10,000 documents, ~297,000 mentions): commit incl. derived rebuild and writer wait, p95 601 ms (0 decisions) / 736 ms (10,000 decisions); + 500 ms debounce = 1.10 / 1.24 s (`10-walking-skeleton.md` §S2c). M2d: screen side (event received → list re-rendered) p95 17 ms over a TD-2 ingest, so 1.12 / 1.25 s end to end (`10-walking-skeleton.md` §6) |
 
 ---
 
@@ -97,7 +97,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-RES-01 | App memory when idle (project open, model not loaded) | ≤ 500 MB | OS process monitor | ASSUMPTION · M2c (RM-1): 439 MB RSS for the app and its WebKit processes, no project screens yet; re-measured in M2d (`10-walking-skeleton.md` §5) |
+| NFR-RES-01 | App memory when idle (project open, model not loaded) | ≤ 500 MB | OS process monitor | ASSUMPTION · M2c (RM-1): 439 MB RSS for the app and its WebKit processes, no project open. M2d: 475 MB with the TD-2 project open; 530 MB right after ingesting it in the same session (PSS 242 / 300 MB). Over the limit after a large ingest; follow-up in M3 (`10-walking-skeleton.md` §5, §6) |
 | NFR-RES-02 | App memory during Stage A on TD-2 (model not counted) | ≤ 2 GB | OS process monitor | ASSUMPTION · M2c (RM-1, the CSV part of TD-2, 23 workers): peak 233 MB, 908 MB with the desktop binary as worker (`10-walking-skeleton.md` §5). All formats: M3 |
 | NFR-RES-03 | CPU when idle | < 2% average over 1 min | OS process monitor | ASSUMPTION |
 | NFR-RES-04 | Free disk for models + project data | ~30 GB | README + hardware check | Brief |

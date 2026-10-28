@@ -1,6 +1,6 @@
 # ADR-0004: Storage — one SQLite file per project, WAL, single writer
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-REL-02/03/09/11, NFR-CAP-01/03/08, NFR-COMP-07, NFR-MNT-07, NFR-PERF-30, INV-CO-06, INV-CU-01/06, INV-PR-04, INV-WS-03/04, domain §2.6 and §2.8, ADR-0005, ADR-0010
 

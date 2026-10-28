@@ -5,4 +5,9 @@ export type AppInfo = { name: string, version: string, ocrEngine: string,
 /**
  * Present only in builds with feature `spike-s2d`.
  */
-spikeS2d: SpikeS2dInfo | null, };
+spikeS2d: SpikeS2dInfo | null, 
+/**
+ * Time "event received → list re-rendered" and save it with `record_ui_timing`
+ * (`MK_UI_TIMING=1`, NFR-PERF-34).
+ */
+uiTiming: boolean, };

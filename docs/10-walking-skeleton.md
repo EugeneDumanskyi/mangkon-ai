@@ -148,14 +148,14 @@ Page fetches: 499 per run (every page once), p50 4 ms, p95 7–8 ms over IPC.
 
 ### Verdict
 
-**Met, with the pass mark read for a 1 ms clock** (ASSUMPTION, needs your OK): mean frame time within 1 % of the idle control, p95 within one vsync + 2 ms (≤ 18.7 ms), and ≤ 1 % of frames over 25 ms. Under the strict reading (p95 ≤ 16.7 ms) it fails by one timer tick, and so does the idle page. K7 is retired for list scrolling.
+**Met, with the pass mark read for a 1 ms clock** (approved 2026-10-28): mean frame time within 1 % of the idle control, p95 within one vsync + 2 ms (≤ 18.7 ms), and ≤ 1 % of frames over 25 ms. Under the strict reading (p95 ≤ 16.7 ms) it fails by one timer tick, and so does the idle page. K7 is retired for list scrolling.
 
 The baseline row (grid, six cells) stays. The single-text-node row is the recorded lever if real rows get heavier.
 
 ### Follow-ups
 
-- NFR-PERF-04: the measure is reworded once the reading above is approved.
-- M2d: the real connections list needs a position → key lookup for long jumps and scrollbar drags (keyset pages cannot seek by position).
+- NFR-PERF-04: the measure is reworded once the reading above is approved. **Done (2026-10-28).**
+- M2d: the real connections list needs a position → key lookup for long jumps and scrollbar drags (keyset pages cannot seek by position). **Not done in M2d:** the list's length comes from a count, and cursor pages load in order as the view reaches them, so a long jump loads the pages before it first (200 rows a page). The lookup comes with ranking and filters in M4.
 - macOS (WKWebView) and Windows (WebView2): run the same script when those platforms are tested (platform scope: Linux first). Repeat on a 60 Hz display and in a native Wayland webview.
 
 ---
@@ -305,4 +305,32 @@ MK_WORKER_PROGRAM=target/release/mangkon \
 - **7b:** resident memory counts each worker's shared library pages again, so 23 desktop workers count ~800 MB before they read a file; PSS would be ~40 % lower. The budget counts RSS, the cautious measure (gap A2). Of the 396 files, 99 (the Windows-1252 TD-1 CSV × 99) fail alone with "Unknown text encoding" until M3.
 - No worker stays after a Stage A run: the lanes shut their workers down at the end (NFR-RES-01).
 - **Memory budget (gap A2):** 1.5 GB for the items in flight; an item's need is 40 MB + 8 × its size for TXT/MD and 40 MB + 10 × for CSV (§S2a). Small files keep going past a large one that waits; a file larger than the budget runs alone. Workers are replaced after 200 files, or when idle above 300 MB.
+
+## 6. End-to-end slice (M2d)
+
+The desktop runs one project end to end: create or open → add a folder (dialog or drop) → progress counts → raw connections list → click a connection → click a mention → the line or CSV cell, the hit highlighted. The CLI runs the same services (`mangkon-cli ingest`, `rebuild`).
+
+| Check | How | Result |
+|---|---|---|
+| Services | `crates/mk-core/tests/slice_services.rs` (TXT + CSV, a multi-byte character before the hit), `crates/mk-store/tests/store.rs` (mentions with locators, window bounds) | Pass |
+| CLI | `apps/cli/tests/ingest.rs` (ingest twice, failed file listed with its reason, rebuild equals the incremental rows) | Pass |
+| TD-1 text subset | `mangkon-cli ingest --project P testdata/td1` | 11 files, 8 done, 3 failed ("Unknown text encoding", M3), 0 connections: the UTF-8 TD-1 text files share no email address, and other identifier types come in M4. The screens are checked on TD-2 instead. |
+| TD-2 TXT/MD/CSV | `mangkon-cli ingest --project P testdata/td2`, then `rebuild` | 1,089 files, 792 done, 297 failed (encodings), 4,761 connections; rebuild equals the incremental rows |
+| Event → list re-rendered (NFR-PERF-34 screen side) | See below | 16 events over a 9.5 s TD-2 ingest: p50 11 ms, **p95 17 ms**, max 17 ms |
+| Idle memory, project open (7a, NFR-RES-01) | See below | **475 MB** RSS after reopening the TD-2 project ✅; **530 MB** right after ingesting it in the same session ❌ |
+
+Measured on RM-1, 2026-10-28, `cargo xtask build --release`, Wayland session, the same display as §S2d.
+
+- **Timing run.** `MK_UI_TIMING=1 MK_UI_TIMING_PROJECT=<empty dir> MK_UI_TIMING_SOURCE=testdata/td2 target/release/mangkon`. With `MK_UI_TIMING=1` only, the app opens that project and adds that folder once the page has subscribed, so the run needs no clicks. For each `connectionsChanged` event the UI notes when it arrived and stops the clock at the frame after the list re-rendered with the refetched count and pages; the samples are written to `MK_UI_TIMING_OUT` (default `mangkon-ui-timing.json` in the temp folder) when the ingest ends.
+- **NFR-PERF-34 end to end:** commit p95 601 / 736 ms (S2c: 0 / 10,000 decisions) + 500 ms debounce + 17 ms screen = **1.12 / 1.25 s** against 2 s ✅.
+- **Memory.** Process tree as in §5 (the app, `WebKitWebProcess`, `WebKitNetworkProcess`), sampled every 10 s for 60 s, flat throughout:
+
+| State | App | WebKitWebProcess | WebKitNetworkProcess | RSS total | PSS total |
+|---|---|---|---|---|---|
+| No project (M2c, §5) | 190 MB | 201 MB | 47 MB | 439 MB | 207 MB |
+| TD-2 project reopened, list showing | 204 MB | 222 MB | 48 MB | **475 MB** | 242 MB |
+| Right after ingesting TD-2 (1,089 files) in the same session | 254 MB | 228 MB | 47 MB | **530 MB** | 300 MB |
+
+- After an ingest the app process keeps ~50 MB it used during the run (no worker is left; they all shut down). It does not go down while idle. The likely cause is freed heap the allocator keeps; not confirmed. With PSS, the measure of what the app adds to the machine, every state is below 500 MB.
+- So 7a is met for an open project and **not met** right after a large ingest, by 30 MB. Follow-up for M3, where ingestion gets bigger anyway: find what the app process keeps after a run and give it back, or keep fewer readers' caches warm; and decide with the maintainer whether NFR-RES-01 counts RSS or PSS (§5 already notes WebKitGTK is two thirds of the margin).
 

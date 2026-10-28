@@ -3,5 +3,19 @@
   "identifier": "main",
   "description": "The main window: Mangkon's own commands only. No core or plugin permissions (ADR-0003, NFR-SEC-10).",
   "windows": ["main"],
-  "permissions": ["allow-app-info"]
+  "permissions": [
+    "allow-app-info",
+    "allow-pick-folder",
+    "allow-open-project",
+    "allow-close-project",
+    "allow-current-project",
+    "allow-add-source",
+    "allow-progress",
+    "allow-connection-count",
+    "allow-connections-page",
+    "allow-occurrences",
+    "allow-source-context",
+    "allow-subscribe",
+    "allow-record-ui-timing"
+  ]
 }

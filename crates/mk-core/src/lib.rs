@@ -9,11 +9,13 @@
 //!   `--worker` entry of both apps; [`Project::check_health`] backs the kill test.
 //! - Behind feature `spike-s2d`, the synthetic rows of spike S2d (M2a).
 //!
-//! The UI and CLI wiring of projects comes in M2d.
+//! - M2d: [`Project::ingest`] and [`Project::rebuild`] for both apps, and the slice reads
+//!   (connections, occurrences, source context with the hit split out, `view`).
 
 mod events;
 mod project;
 pub mod stage_a;
+mod view;
 mod workers;
 
 #[cfg(feature = "spike-s2d")]
@@ -22,9 +24,17 @@ pub mod spike_s2d;
 use std::process::ExitCode;
 
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
 pub use mk_jobs::ItemState;
+pub use mk_kernel::{Column, Locator};
+pub use mk_store::{FailedFile, OccurrenceRow};
 pub use project::{
-    HealthReport, OpenSummary, Project, ProjectError, RescanSummary, StageASummary, file_types,
+    HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
+    StageASummary, file_types, project_exists,
+};
+pub use view::{
+    CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, IngestCounts, MAX_OCCURRENCES,
+    Marked, SourceBody, SourceContext,
 };
 pub use workers::{Stopped, WorkerConfig, WorkerError, WorkerStop, worker_processes};
 

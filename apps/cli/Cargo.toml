@@ -1,6 +1,6 @@
 [package]
 name = "mangkon-cli"
-description = "Mangkon AI command line: kill-test driver (M2c); ingest, rebuild and bench later."
+description = "Mangkon AI command line: ingest, rebuild (M2d) and the kill-test driver (M2c); bench later."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

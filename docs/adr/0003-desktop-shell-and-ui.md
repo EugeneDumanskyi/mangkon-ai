@@ -1,6 +1,6 @@
 # ADR-0003: Desktop shell and UI — Tauri 2 + React + TypeScript
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-SEC-09/10, NFR-PERF-03/04, NFR-RES-07, NFR-USE-04/06/07/08/09, NFR-MNT-08, ADR-0002, ADR-0011
 
@@ -58,5 +58,10 @@
 - WebKitGTK on Linux is the slowest. Test NFR-PERF-04 there first.
 
 **Follow-ups**
-- M2 (spike S2d): scroll test with 100,000 rows on WebKitGTK. **Done in M2a** (`10-walking-skeleton.md` §S2d): 60 fps on average (mean frame 16.7 ms, equal to the idle control), p95 18 ms, 0.03–0.24 % of frames over 25 ms. WebKitGTK reports frame times in whole milliseconds, so p95 ≤ 16.7 ms is not reachable even when idle; the pass mark is read for a 1 ms clock, pending approval. macOS and Windows not run yet.
+- M2 (spike S2d): scroll test with 100,000 rows on WebKitGTK. **Done in M2a** (`10-walking-skeleton.md` §S2d): 60 fps on average (mean frame 16.7 ms, equal to the idle control), p95 18 ms, 0.03–0.24 % of frames over 25 ms. WebKitGTK reports frame times in whole milliseconds, so p95 ≤ 16.7 ms is not reachable even when idle; the pass mark is read for a 1 ms clock (approved 2026-10-28). macOS and Windows not run yet.
 - Pick the TypeScript type-export tool in M2. **Done in M2a:** `ts-rs` (Decision above).
+- M2d, first project screens, with no new core or plugin permission:
+  - The folder dialog is called from Rust (`rfd`, MIT, GTK 3 backend on Linux), run on the main thread with the main window as parent; the UI only gets the chosen path. Files and folders dropped on the window are handled in Rust (`WindowEvent::DragDrop`) and never reach the UI.
+  - Core events (`ConnectionsChanged`, ingest started/finished, project changed) go over a `tauri::ipc::Channel` the UI passes to the `subscribe` command, not `emit`/`listen`, so no `core:event` permission is granted.
+  - Project commands are `async`, so Tauri runs them off the main thread; ingestion runs on a plain background thread.
+  - Spans are applied on the Rust side: the source view gets each line or cell already split into before / hit / after, so the UI never maps character offsets onto UTF-16 strings. All file text is rendered as React text nodes (NFR-SEC-09).

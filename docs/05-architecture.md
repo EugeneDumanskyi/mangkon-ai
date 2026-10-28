@@ -370,7 +370,7 @@ Rules:
 
 | Item | Default | Why |
 |---|---|---|
-| Open projects | One at a time. ASSUMPTION. | Keeps memory and the scheduler simple. Matches the screens in the requirements. |
+| Open projects | One at a time. **Decided (2026-10-28, gap A7).** Opening another project while one is being ingested is refused with a plain message until pause and cancel exist (M3). | Keeps memory and the scheduler simple. Matches the screens in the requirements. |
 | Stage A workers | `min(CPU cores − 1, memory budget)`; one worker per lane, started when the lane takes its first item, shut down when the run ends | NFR-PERF-25, NFR-RES-01/02. See gap A2. |
 | Worker memory budget | 1.5 GB for the items in flight; an item needs 40 MB + 8 × size (TXT/MD) or 10 × size (CSV), measured in S2a (`10-walking-skeleton.md` §S2a). One file may use up to 1 GB. ASSUMPTION for 1.5 GB. | NFR-REL-07 vs NFR-RES-02. M2c: TD-2's CSVs peak at 233 MB (908 MB counted with the desktop binary's shared libraries per worker). |
 | Worker limits | 120 s per file; 1 GB per file, sampled every 100 ms; Linux `RLIMIT_AS` = start size + 1 GB + 512 MB; heartbeat every 500 ms, silent 15 s = stuck | NFR-REL-06/07. S2b: bombs stopped ≤ 160 ms over 1 GB. |
@@ -379,7 +379,7 @@ Rules:
 | AI requests in flight | 1 per loaded model | NFR-PERF-25 |
 | Loaded local models | Up to 2 (extraction + embeddings) | Both roles are needed for Stage B and meaning search. |
 | Model idle stop | 10 min | NFR-RES-06 |
-| DB connections | 1 writer thread + 4 read connections | WAL allows readers while one writer writes. M2b: plain threads and channels (`mk-store`); the async runtime comes with IPC in M2d if needed. |
+| DB connections | 1 writer thread + 4 read connections | WAL allows readers while one writer writes. Plain threads and channels (`mk-store`). M2d: no async runtime of our own is needed; the desktop runs ingestion on a background thread, its commands are Tauri `async` commands (off the main thread) that read through the pool, and events go over a Tauri `Channel`. |
 | UI events | "Something changed" only; debounced 500 ms; UI re-queries | Keeps IPC small. Meets NFR-PERF-34 (≤ 2 s). The window opens at the first unreported change and is not extended by later ones, so a long ingestion still sends an event every 500 ms. |
 
 ---
@@ -425,7 +425,7 @@ Milestones as in `06-roadmap.md`.
 | A4 | Re-run with a new model: show old results until the new run is done, or replace segment by segment? | Show old results until done, then switch in one step (5.3). Never mix two models' output. |
 | A5 | NFR-REL-07 on macOS can only be a watchdog, not a hard OS limit (R5). | Reword: "killed within 200 ms after passing 1 GB". **Decided (2026-10-27).** On Linux every bomb was stopped ≤ 160 ms after passing 1 GB (S2b). Windows has the watchdog only, like macOS (no hard cap without `unsafe`, ADR-0007 follow-up). NFR-REL-07 now reads: "A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with 'Needed too much memory'." |
 | A6 | The embedding model must work well with binary vectors (R2). | **Decided in M1 (2026-10-24):** a listed embedding model needs binary top 200 → float rescore recall@20 ≥ 0.9; `Catalog::validate` in `mk-models` checks it. All three M1 candidates pass (0.954–0.984). |
-| A7 | Only one open project at a time (section 7). | Please confirm. |
+| A7 | Only one open project at a time (section 7). | **Decided (2026-10-28).** One at a time. In M2d a project is a folder: opening an empty folder creates one. The project registry, recent list and names come in M3 (US-01.1 AC2, US-01.2). |
 | A8 | Emails and HTML are shown as safe text, not as styled HTML, in v0.1 (ADR-0011). | Please confirm. Styled HTML can come later inside a locked-down frame. |
 
 ---
@@ -434,13 +434,13 @@ Milestones as in `06-roadmap.md`.
 
 | ADR | Title | Status |
 |---|---|---|
-| [0001](adr/0001-architecture-style.md) | Architecture style: modular monolith with isolated parser workers | Proposed |
-| [0002](adr/0002-headless-core-workspace.md) | Headless Rust core in a Cargo workspace | Proposed |
-| [0003](adr/0003-desktop-shell-and-ui.md) | Desktop shell and UI: Tauri 2 + React + TypeScript | Proposed |
-| [0004](adr/0004-project-storage.md) | Storage: one SQLite file per project, WAL, single writer | Proposed |
-| [0005](adr/0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Proposed |
-| [0006](adr/0006-background-jobs.md) | Background jobs: persistent queue in the project store | Proposed |
-| [0007](adr/0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Proposed |
+| [0001](adr/0001-architecture-style.md) | Architecture style: modular monolith with isolated parser workers | Accepted |
+| [0002](adr/0002-headless-core-workspace.md) | Headless Rust core in a Cargo workspace | Accepted |
+| [0003](adr/0003-desktop-shell-and-ui.md) | Desktop shell and UI: Tauri 2 + React + TypeScript | Accepted |
+| [0004](adr/0004-project-storage.md) | Storage: one SQLite file per project, WAL, single writer | Accepted |
+| [0005](adr/0005-derived-data-and-decisions.md) | Derived data and decisions: rebuild in the same commit | Accepted |
+| [0006](adr/0006-background-jobs.md) | Background jobs: persistent queue in the project store | Accepted |
+| [0007](adr/0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Accepted |
 | [0008](adr/0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Superseded by ADR-0015 |
 | [0009](adr/0009-egress-gate.md) | One egress gate for all model traffic | Proposed |
 | [0010](adr/0010-search.md) | Search: FTS5 + binary vector index with rescoring | Proposed |
