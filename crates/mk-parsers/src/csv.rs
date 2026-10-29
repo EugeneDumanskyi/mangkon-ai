@@ -1,33 +1,42 @@
-//! CSV (US-02.4): one segment per row, malformed rows kept and marked (INV-CO-10).
+//! CSV (US-02.4): one segment per row, malformed rows kept and marked (INV-CO-10), read as a
+//! stream (§4 #16, NFR-CAP-05).
 
 use std::collections::HashMap;
+use std::io::{BufReader, Read};
 
 use mk_kernel::Locator;
 
-use crate::content::{Format, ParseError, ParsedContent, ParsedDocument, ParsedSegment, RowState};
+use crate::content::{Format, ParseError, ParsedSegment, Place, RowState, Sink, Source};
+use crate::encoding::{Decoded, TextEncoding, detect};
 
 /// Delimiters tried, in tie-break order.
 const DELIMITERS: [u8; 4] = *b",;\t|";
-/// Rows read to pick the delimiter.
+/// Rows read to pick the delimiter, the header and, without a header, the expected cell count.
 const SAMPLE_ROWS: usize = 50;
 
-/// UTF-8, with or without a byte-order mark. The delimiter is detected (US-02.4 AC1), and so is
-/// a header row (US-02.4 AC2). A row whose cell count differs from the header's (or, without a
-/// header, from the most common count) is kept as a malformed segment, and the file gets one
-/// warning with the count (US-02.4 AC3, INV-CO-10). Row numbers are 0-based over the file's
-/// records; a header is row 0. Blank lines are not records.
-pub fn parse(bytes: &[u8]) -> Result<ParsedContent, ParseError> {
-    let text = crate::content::decode(bytes)?;
-    let delimiter = detect_delimiter(text);
-    let rows = read(text, delimiter, usize::MAX)?;
+/// Text in the encodings of NFR-COMP-06. The delimiter (US-02.4 AC1) and a header row (US-02.4
+/// AC2) are found from the first [`SAMPLE_ROWS`] rows; then the file is read again from the
+/// start, one row at a time, so it is never held whole. A row whose cell count differs from the
+/// header's (or, without a header, from the most common count in the sample, ASSUMPTION) is
+/// kept as a malformed segment, and the file gets one warning with the count (US-02.4 AC3,
+/// INV-CO-10). Row numbers are 0-based over the file's records; a header is row 0. Blank lines
+/// are not records.
+pub(crate) fn parse(
+    input: &mut dyn Source,
+    sink: &mut dyn Sink,
+    place: &Place,
+) -> Result<(), ParseError> {
+    let encoding = detect(input)?;
+    let delimiter = detect_delimiter(input, encoding)?;
+    let sample = read(Decoded::new(input, encoding)?, delimiter, SAMPLE_ROWS)?;
 
-    let header = rows.first().is_some_and(|r| looks_like_header(r));
-    let expected = match (header, rows.first()) {
+    let header = sample.first().is_some_and(|r| looks_like_header(r));
+    let expected = match (header, sample.first()) {
         (true, Some(first)) => first.len(),
-        _ => mode(rows.iter().map(Vec::len)).unwrap_or(0),
+        _ => mode(sample.iter().map(Vec::len)).unwrap_or(0),
     };
     let columns = if header {
-        let first = &rows[0];
+        let first = &sample[0];
         let mut seen: HashMap<&str, usize> = HashMap::new();
         for name in first {
             *seen.entry(name.trim()).or_default() += 1;
@@ -42,20 +51,24 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedContent, ParseError> {
     } else {
         vec![None; expected]
     };
+    drop(sample);
+    sink.document(place.start(Format::Csv, columns))?;
 
+    let mut reader = reader(Decoded::new(input, encoding)?, delimiter);
+    let mut record = ::csv::StringRecord::new();
     let mut malformed = 0usize;
-    let mut segments = Vec::with_capacity(rows.len());
-    for (row, cells) in rows.into_iter().enumerate() {
-        let row_state = if cells.len() == expected {
+    let mut row = 0u64;
+    while reader.read_record(&mut record).map_err(unreadable)? {
+        let row_state = if record.len() == expected {
             RowState::Normal
         } else {
             malformed += 1;
             RowState::Malformed
         };
-        let mut text = String::new();
-        let mut cell_starts = Vec::with_capacity(cells.len());
+        let mut text = String::with_capacity(record.as_slice().len() + record.len());
+        let mut cell_starts = Vec::with_capacity(record.len());
         let mut at = 0u32;
-        for (i, cell) in cells.iter().enumerate() {
+        for (i, cell) in record.iter().enumerate() {
             if i > 0 {
                 text.push('\t');
                 at += 1;
@@ -64,56 +77,56 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedContent, ParseError> {
             text.push_str(cell);
             at += cell.chars().count() as u32;
         }
-        segments.push(ParsedSegment {
-            locator: Locator::CsvRow { row: row as u64 },
+        sink.segment(ParsedSegment {
+            locator: Locator::CsvRow { row },
             text,
             row_state,
             cell_starts,
-        });
+            ocr: None,
+        })?;
+        row += 1;
     }
-    let warnings = match malformed {
-        0 => Vec::new(),
-        1 => vec!["1 row has the wrong number of columns".to_string()],
-        n => vec![format!("{n} rows have the wrong number of columns")],
-    };
-    Ok(ParsedContent {
-        documents: vec![ParsedDocument {
-            kind: Format::Csv,
-            position: "whole".into(),
-            columns,
-            segments,
-        }],
-        warnings,
-    })
+    match malformed {
+        0 => {}
+        1 => sink.warning("1 row has the wrong number of columns".to_string()),
+        n => sink.warning(format!("{n} rows have the wrong number of columns")),
+    }
+    Ok(())
 }
 
-fn read(text: &str, delimiter: u8, limit: usize) -> Result<Vec<Vec<String>>, ParseError> {
-    let mut reader = ::csv::ReaderBuilder::new()
+fn reader<R: Read>(input: R, delimiter: u8) -> ::csv::Reader<BufReader<R>> {
+    ::csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(false)
         .flexible(true)
-        .from_reader(text.as_bytes());
-    reader
+        .from_reader(BufReader::with_capacity(1 << 16, input))
+}
+
+fn unreadable(e: ::csv::Error) -> ParseError {
+    ParseError::new(
+        "csv_unreadable",
+        format!("The table could not be read: {e}"),
+    )
+}
+
+/// The first `limit` records.
+fn read<R: Read>(input: R, delimiter: u8, limit: usize) -> Result<Vec<Vec<String>>, ParseError> {
+    reader(input, delimiter)
         .records()
         .take(limit)
         .map(|r| {
             r.map(|r| r.iter().map(str::to_string).collect())
-                .map_err(|e| {
-                    ParseError::new(
-                        "csv_unreadable",
-                        format!("The table could not be read: {e}"),
-                    )
-                })
+                .map_err(unreadable)
         })
         .collect()
 }
 
 /// The delimiter whose sample rows most often share one cell count; then the one giving more
 /// cells. A file where every candidate gives one cell per row is read with `,`.
-fn detect_delimiter(text: &str) -> u8 {
+fn detect_delimiter(input: &mut dyn Source, encoding: TextEncoding) -> Result<u8, ParseError> {
     let mut best = (DELIMITERS[0], 0usize, 0usize);
     for d in DELIMITERS {
-        let Ok(rows) = read(text, d, SAMPLE_ROWS) else {
+        let Ok(rows) = read(Decoded::new(&mut *input, encoding)?, d, SAMPLE_ROWS) else {
             continue;
         };
         let Some(common) = mode(rows.iter().map(Vec::len)) else {
@@ -127,7 +140,7 @@ fn detect_delimiter(text: &str) -> u8 {
             best = (d, consistent, common);
         }
     }
-    best.0
+    Ok(best.0)
 }
 
 /// The most common value; the smallest on a tie.
@@ -158,7 +171,12 @@ fn looks_like_header(row: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::content::ParsedContent;
     use mk_kernel::{Column, Span};
+
+    fn parse(bytes: &[u8]) -> Result<ParsedContent, ParseError> {
+        crate::content::parse(Format::Csv, bytes)
+    }
 
     fn rows(parsed: &ParsedContent) -> Vec<(String, RowState)> {
         parsed.documents[0]
@@ -266,8 +284,29 @@ mod tests {
         assert_eq!(parsed.segment_count(), 0);
         assert!(parsed.warnings.is_empty());
         assert_eq!(
-            parse(b"a,b\n\x80,1\n").unwrap_err().code,
+            parse(b"a,b\n\x01\xff,1\n").unwrap_err().code,
             "unknown_text_encoding"
+        );
+        // US-02.3 AC3: Windows-1252 cells are decoded.
+        let parsed = parse(b"name;city\nM\xfcller;K\xf6ln\n").unwrap();
+        assert_eq!(rows(&parsed)[1].0, "Müller\tKöln");
+    }
+
+    /// Without a header the expected cell count is the sample's most common one, so a ragged
+    /// row past the sample is still marked.
+    #[test]
+    fn expected_count_from_the_sample() {
+        let mut csv = String::new();
+        for i in 0..80 {
+            csv.push_str(&format!("{i},x{i}@y.example\n"));
+        }
+        csv.push_str("80,x,extra\n");
+        let parsed = parse(csv.as_bytes()).unwrap();
+        assert_eq!(parsed.segment_count(), 81);
+        assert_eq!(rows(&parsed)[80].1, RowState::Malformed);
+        assert_eq!(
+            parsed.warnings,
+            vec!["1 row has the wrong number of columns"]
         );
     }
 }

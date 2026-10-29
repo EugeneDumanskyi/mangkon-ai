@@ -144,7 +144,8 @@ fn ingest(dir: &Path, source: &Path, report: bool) -> Result<Project, ProjectErr
         }
     };
     say("phase open");
-    let (project, _) = Project::open(dir)?;
+    let (mut project, _) = Project::open(dir)?;
+    project.set_tessdata_dir(mk_core::tessdata_dir());
     project.add_source_root(source)?;
     say("phase ingest");
     let stop = AtomicBool::new(false);

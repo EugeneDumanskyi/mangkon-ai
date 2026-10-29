@@ -9,5 +9,5 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 5173, strictPort: true },
   build: { target: "es2022", sourcemap: false },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  test: { environment: "node", include: ["src/**/*.test.ts", "src/**/*.test.tsx"] },
 });

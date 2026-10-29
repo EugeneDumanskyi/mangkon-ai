@@ -102,8 +102,8 @@ hayro passes every PDF criterion and is pure Rust, so ADR-0013's order picks it 
 - Tesseract is the weakest candidate on poor scans (67.1% vs 82.6% for PP-OCRv5). Poor scans are not under a pass mark, but users have them.
 
 **Follow-ups**
-- M2a: build the hayro adapter, the shared OCR path and the Tesseract build from pinned sources in `mk-parsers`. Add `cargo-deny` and generate `THIRD_PARTY_NOTICES`. Remove `spikes/`.
+- M2a: build the hayro adapter, the shared OCR path and the Tesseract build from pinned sources in `mk-parsers`. Add `cargo-deny` and generate `THIRD_PARTY_NOTICES`. Remove `spikes/` (`pdf-bakeoff` was removed in M3b, once its code moved into `mk-parsers`).
 - M2c: worker memory and time limits; `bomb-double-flate.pdf` must fail with a plain reason.
-- M3: OCR language settings (INV-WS-06) and where language files come from. Image clean-up before OCR (deskew, binarise) and the `tessdata_best` model, measured on the poor tier. Check NFR-PERF-11 with OCR in Stage A.
+- M3: OCR language settings (INV-WS-06) and where language files come from (decided in M3b: [ADR-0018](0018-ocr-language-files.md)). Image clean-up before OCR (deskew, binarise) and the `tessdata_best` model, measured on the poor tier. Check NFR-PERF-11 with OCR in Stage A.
 - macOS and Windows: build Tesseract and run the S0 numbers when those platforms are tested (platform scope: Linux first).
 - Fallbacks: pdfium for PDF. `ocrs` for OCR once it gives word confidence. PP-OCRv5 if poor-scan quality becomes the bottleneck, after its boxes are fixed.

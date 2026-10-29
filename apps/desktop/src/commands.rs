@@ -133,7 +133,7 @@ pub async fn occurrences(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
-/// The source around one mention, the hit split out (US-08.1 AC3).
+/// The source around one mention, the hit split out (US-08.1 AC3–AC6).
 #[tauri::command]
 pub async fn source_context(
     state: State<'_, AppState>,
@@ -150,6 +150,57 @@ pub async fn source_context(
                 "This place is no longer in the project. The file may have changed.",
             )
         })
+}
+
+/// A document from its start: an attachment, or the email it came in (US-08.1 AC4).
+#[tauri::command]
+pub async fn source_document(
+    state: State<'_, AppState>,
+    document_id: i64,
+) -> Result<ipc::SourceView, IpcError> {
+    state
+        .current()?
+        .project
+        .document_view(document_id)?
+        .map(Into::into)
+        .ok_or_else(|| {
+            IpcError::new(
+                "gone",
+                "This document is no longer in the project. The file may have changed.",
+            )
+        })
+}
+
+/// One page of a PDF or image document, with the boxes of `mention_id` when it is on that
+/// page (US-08.1 AC1–AC2). Renders the page on first view (render worker, page cache).
+#[tauri::command]
+pub async fn page_view(
+    state: State<'_, AppState>,
+    document_id: i64,
+    page: u32,
+    mention_id: Option<i64>,
+) -> Result<ipc::PageView, IpcError> {
+    state
+        .current()?
+        .project
+        .page_view(document_id, page, mention_id)?
+        .map(Into::into)
+        .ok_or_else(|| IpcError::new("gone", "This page is no longer in the project."))
+}
+
+/// The PNG of a page `page_view` has shown, as raw bytes (an `ArrayBuffer` in the UI, no JSON).
+#[tauri::command]
+pub async fn page_image(
+    state: State<'_, AppState>,
+    document_id: i64,
+    page: u32,
+) -> Result<tauri::ipc::Response, IpcError> {
+    state
+        .current()?
+        .project
+        .page_image(document_id, page)?
+        .map(tauri::ipc::Response::new)
+        .ok_or_else(|| IpcError::new("gone", "This page cannot be shown."))
 }
 
 /// Sets the channel core events go to (`UiEvent`). Replaces the previous one.
@@ -179,6 +230,27 @@ pub async fn record_ui_timing(timing: ipc::UiTiming) -> Result<String, IpcError>
         .map_err(|e| IpcError::new("internal", e.to_string()))?;
     std::fs::write(&path, json)
         .map_err(|e| IpcError::new("io", format!("{}: {e}", path.display())))?;
+    Ok(path.display().to_string())
+}
+
+/// Writes one view sweep to `MK_VIEW_SWEEP_OUT` (default: `mangkon-view-sweep.json` in the
+/// temp folder), then exits the app. Refused unless the sweep is on.
+#[tauri::command]
+pub fn record_view_sweep<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    sweep: ipc::ViewSweep,
+) -> Result<String, IpcError> {
+    if !ipc::view_sweep_enabled() {
+        return Err(IpcError::new("disabled", "The view sweep is off."));
+    }
+    let path = std::env::var_os("MK_VIEW_SWEEP_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("mangkon-view-sweep.json"));
+    let json = serde_json::to_string_pretty(&sweep)
+        .map_err(|e| IpcError::new("internal", e.to_string()))?;
+    std::fs::write(&path, json)
+        .map_err(|e| IpcError::new("io", format!("{}: {e}", path.display())))?;
+    app.exit(0);
     Ok(path.display().to_string())
 }
 

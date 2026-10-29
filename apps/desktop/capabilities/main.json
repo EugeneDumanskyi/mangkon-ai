@@ -15,7 +15,11 @@
     "allow-connections-page",
     "allow-occurrences",
     "allow-source-context",
+    "allow-source-document",
+    "allow-page-view",
+    "allow-page-image",
     "allow-subscribe",
-    "allow-record-ui-timing"
+    "allow-record-ui-timing",
+    "allow-record-view-sweep"
   ]
 }

@@ -103,7 +103,9 @@ impl AppState {
         }
         // Close the old project first: its writer and readers go before the new one opens.
         *open = None;
-        let (project, _) = Project::open(dir)?;
+        let (mut project, _) = Project::open(dir)?;
+        // OCR language files: English is written there on first use (ADR-0018).
+        project.set_tessdata_dir(mk_core::tessdata_dir());
         let changes = project.subscribe();
         let pending = project.counts()?.queued > 0;
         let o = Arc::new(Open {

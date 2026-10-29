@@ -1,7 +1,7 @@
 # 07 — Test corpus: Mangkon AI v0.1
 
 > Input: `01-brief.md` §11, `02-requirements.md` US-14.3, `03-nfr.md` §2 (TD-1, TD-2, TD-3) and NFR-LEG-04, `04-domain.md` (INV-CO-03, INV-CO-05, INV-ID-06, INV-LK-01..03, INV-AI-06/07). **If this file disagrees with them, they win.**
-> Status: TD-1 v1 and TD-3 v1 built in M0a; TD-2 generator added in M2b (§11). The corpus files are not committed; they are generated and downloaded locally (§9).
+> Status: TD-1 v1 and TD-3 v1 built in M0a; TD-2 generator added in M2b (§11); TD-3 v4 in M3b. The corpus files are not committed; they are generated and downloaded locally (§9).
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -15,7 +15,7 @@ The test corpus is the data every benchmark and acceptance check runs against: t
 | TD-1 synthetic | `testdata/td1/synthetic/` | 81 files written by `tools/corpus-gen` from one story. Fully annotated. |
 | TD-1 public | `testdata/td1/public/` | 20 US federal public-domain PDFs, downloaded by `corpus-gen fetch` from the URLs in `tools/corpus-gen/public-manifest.json`. Partly annotated (identifiers per page). |
 | Ground truth | `testdata/td1/ground-truth.json`, `testdata/td1/page-text.jsonl` | What every file contains and where. Format in §5. |
-| TD-3 v1 | `testdata/td3/` | 21 broken and edge-case PDF/image files plus `expected.json` (§6). |
+| TD-3 v4 | `testdata/td3/` | 59 broken and edge-case files (PDF, images, text formats, email, test faults) plus `expected.json` (§6). |
 | Schemas | `crates/mk-bench/schema/*.schema.json` | JSON Schemas for the three stored formats, made from the Rust types. |
 
 **Nothing under `testdata/` is committed** (`.gitignore`). Test data is not a deliverable of this project; anyone who clones the repo builds it in a few seconds (§9) or points the tools at their own files. What is committed is what makes the corpus reproducible: the generator, the public-slice manifest (source URLs, SHA-256, identifiers per page), the schemas, and `tools/corpus-gen/corpus.sha256`, the hash of every generated file. Only the generator writes the synthetic files, the ground truth and TD-3, so the ground truth cannot drift from the files, and the hash list shows any change. TD-2 (scale corpus, §11) is generated from TD-1 and is local too.
@@ -132,7 +132,7 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `json_value` | JSON | RFC 6901 `pointer` to a string and offsets in the decoded string. |
 | `email_header` | EML, MBOX | `header` name and offsets in the decoded header value (RFC 2047 undone). |
 | `mime_part` | EML, MBOX | IMAP-style `part` number (`1`, `1.2`) and offsets in the decoded body text with line ends turned into `\n`. |
-| `html_source` | HTML | Offsets in the decoded source text. |
+| `html_source` | HTML | Offsets in the decoded source text. The app stores offsets in the extracted text instead (INV-CO-03, M3a), so tests match HTML mentions, and `mime_part` mentions in HTML-only email parts, by text in the document, not by offset. |
 
 **Identifier keys.** Emails lower-case; phones E.164; IBANs compact upper-case; BTC/SOL/TRON as printed (case matters); EVM lower-case `0x…`; URLs as printed; domains lower-case; custom patterns (`tender_ref`) as printed. Every email and URL mention has a second mention for its **domain**, with the same location and `derived_from` set, because the product derives domains (US-04.3). The domain is the registrable domain (`edis.usitc.gov` → `usitc.gov`), following the US-04.3 ASSUMPTION; the generator uses a short list of two-label suffixes in place of the full Public Suffix List.
 
@@ -144,11 +144,13 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 
 ## 6. TD-3 (broken-file set)
 
-`testdata/td3/expected.json` (schema: `crates/mk-bench/schema/td3-expected.schema.json`) lists each file with `category`, `expected` outcome and the reason. `fail` means the file fails alone with a plain reason (NFR-USE-05); `success` means it is processed, possibly with zero text. Whatever the outcome, each file finishes within the per-file limits (NFR-REL-06/07) and never stops the batch (NFR-REL-01). v1 (M0) covers PDF and images; v2 (M2c, `GENERATOR_VERSION` 2) adds TXT and CSV files and three test-fault files, 36 files in all. M3 adds broken email and DOCX files.
+`testdata/td3/expected.json` (schema: `crates/mk-bench/schema/td3-expected.schema.json`) lists each file with `category`, `expected` outcome and the reason. `fail` means the file fails alone with a plain reason (NFR-USE-05); `success` means it is processed, possibly with zero text. Whatever the outcome, each file finishes within the per-file limits (NFR-REL-06/07) and never stops the batch (NFR-REL-01). v1 (M0) covers PDF and images; v2 (M2c, `GENERATOR_VERSION` 2) adds TXT and CSV files and three test-fault files, 36 files in all; v3 (M3a, `GENERATOR_VERSION` 3) adds 19 EML, MBOX, DOCX, JSON and HTML files, 55 in all; v4 (M3b, `GENERATOR_VERSION` 4) adds 4 PDF, image and email files and the category `format` (valid files of a less common kind), 59 in all. The generator refuses two non-empty files with the same bytes: the store keeps one content per hash, so they could not have different outcomes. Every empty file succeeds with one empty document (none for MBOX), whatever its type. `expected.json` is itself read as a JSON file when `td3/` is added to a project, so its reasons never quote an address that a test expects to stay unfound.
+
+**v1: PDF and images (M0).** Test `nfr_rel_01_td3_pdf_images_fail_alone` (`mk-core`, M3b) runs these and the v4 files with TD-1 through worker processes, with OCR in English, and checks every outcome and that each failure reason is the one `expected.json` quotes (since v4 it quotes one for every failing PDF and image).
 
 | File | Category | Expected | What it does |
 |---|---|---|---|
-| `empty.pdf`, `empty.png` | empty | fail | Zero bytes. |
+| `empty.pdf`, `empty.png` | empty | success | Zero bytes; one empty document, like every empty file. Failed until v3; one content per hash means every empty file has the same outcome. |
 | `blank-pages.pdf` | blank | success | Three pages, no content. |
 | `encrypted-user-password.pdf` | encrypted | fail | RC4-128 (R3) with a user password (`velmora`, for manual checks). |
 | `encrypted-owner-only.pdf` | encrypted | success | Owner password only; opens with the empty user password. |
@@ -158,24 +160,24 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `truncated.png`, `truncated.jpg` | truncated | fail | Cut in half. **ASSUMPTION:** no partial decode. |
 | `pages-2000.pdf` | huge | success | 2,000 text pages (NFR-CAP-04). |
 | `pdf-named.png`, `jpeg-named.pdf` | wrong extension | success | Valid files with the wrong extension. **ASSUMPTION:** magic bytes win over the extension. |
-| `text-named.pdf` | wrong extension | fail | Plain text named `.pdf`; no magic bytes, so the PDF parser rejects it. **ASSUMPTION.** |
-| `bomb-double-flate.pdf` | memory bomb | fail | 3.7 KB; the content stream (two Flate filters) expands to 2 GiB. |
+| `text-named.pdf` | wrong extension | fail | Plain text named `.pdf`; no magic bytes, so the PDF parser rejects it: "Not a PDF". **ASSUMPTION.** |
+| `bomb-double-flate.pdf` | memory bomb | fail | 3.7 KB; the content stream (two Flate filters) expands to 2 GiB: "Needed too much memory". |
 | `bomb-image-dimensions.pdf` | memory bomb | fail | An image-only page that claims 100,000 × 100,000 pixels. The app's guard refuses it before decoding. |
 | `png-lying-ihdr.png` | memory bomb | fail | IHDR claims 100,000 × 100,000; 1,000 bytes of data. |
 | `png-decompression-bomb.png` | memory bomb | fail | A real 1-bit 60,000 × 60,000 PNG: 0.4 MB on disk, 3.6 GB as 8-bit pixels. |
-| `loop-page-tree.pdf` | endless loop | fail | Two `/Pages` nodes that list each other; no leaf pages. |
+| `loop-page-tree.pdf` | endless loop | fail | Two `/Pages` nodes that list each other; no leaf pages: "Not a readable PDF". |
 | `loop-xref-prev.pdf` | endless loop | success | An update xref whose `/Prev` points to itself; objects intact. |
 | `loop-form-xobject.pdf` | endless loop | success | A Form XObject that draws itself; the page text sits outside it. |
 
-**v2: TXT and CSV (M2c).** Test `nfr_rel_01_td3_txt_csv_fail_alone` (`mk-core`) runs these with the TD-1 TXT/CSV subset through worker processes and checks every outcome.
+**v2: TXT and CSV (M2c).** Test `nfr_rel_01_td3_text_formats_fail_alone` (`mk-core`, M3a) runs these and the v3 files with the TD-1 text-format subset through worker processes, and checks every outcome and that each failure reason is the one `expected.json` quotes.
 
 | File | Category | Expected | What it does |
 |---|---|---|---|
 | `empty.txt`, `empty.csv` | empty | success | Zero bytes; no segments. |
 | `header-only.csv` | blank | success | A header row, no data rows. |
 | `binary-named.txt` | wrong extension | fail | A PNG named `.txt`: "Unknown text encoding". **ASSUMPTION:** no content sniffing for text names. |
-| `pdf-named.csv` | wrong extension | fail | A PDF named `.csv`: "Unknown text encoding". **ASSUMPTION** as above. |
-| `invalid-utf8.txt` | corrupt | fail | Latin-1 bytes that are not UTF-8; fails until M3 reads other encodings. |
+| `pdf-named.csv` | wrong extension | fail | A PDF named `.csv`: "Unknown text encoding". **ASSUMPTION** as above. Its own PDF since v3 (it was the bytes of `pdf-named.png`). |
+| `invalid-utf8.txt` | corrupt | success | Latin-1 bytes that are not UTF-8; read as Windows-1252 since v3 (NFR-COMP-06). Failed in v2. |
 | `truncated-utf8.txt` | truncated | fail | UTF-8 cut in the middle of the last character. **ASSUMPTION:** no repair of a cut tail. |
 | `nul-bytes.txt` | corrupt | success | NUL characters inside lines, kept as text. |
 | `one-line-16mb.txt` | huge | success | One 16 MB line with an email every 50,000 cells. |
@@ -185,6 +187,37 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `fault-memory-bomb.txt` | memory bomb | fail | Test fault: the worker allocates without end. "Needed too much memory". |
 | `fault-endless-loop.txt` | endless loop | fail | Test fault: the worker spins. "Took too long to read". |
 | `fault-crash.txt` | crash | fail | Test fault: the worker aborts. "The file could not be read: the reader stopped unexpectedly". |
+
+**v3: EML, MBOX, DOCX, JSON and HTML (M3a).** Over-limit CSV and MBOX files (NFR-CAP-07) are not in TD-3: test `nfr_cap_07_over_limit_csv_mbox` makes sparse ones.
+
+| File | Category | Expected | What it does |
+|---|---|---|---|
+| `empty.eml`, `empty.json`, `empty.mbox` | empty | success | Zero bytes; one empty document (none for MBOX), like every empty file. |
+| `png-named.eml` | wrong extension | fail | A PNG named `.eml`: "Not an email". |
+| `truncated-base64.eml` | truncated | success | A base64 text attachment cut short, no closing boundary; the attachment is a child document with the text that decodes. **ASSUMPTION:** no error for a cut body. |
+| `unknown-charset.eml` | corrupt | success | A body in charset `x-mangkon-unknown`; the ASCII text is read. **ASSUMPTION:** read as UTF-8 with replacement characters. |
+| `nested-20-deep.eml` | huge | success | An attached email 20 levels deep: 9 documents (8 levels), one warning for the rest. **ASSUMPTION:** 8 levels. |
+| `no-from-line.mbox` | wrong extension | fail | One email without a `From ` line: "Not a mailbox file: it does not start with a "From " line". |
+| `truncated-last.mbox` | truncated | success | Three messages, the last cut inside its body: three documents. |
+| `not-a-zip.docx` | wrong extension | fail | Plain text named `.docx`: "Word file is damaged". |
+| `encrypted.docx` | encrypted | fail | An OLE compound-file header, as Word saves a password-protected file: "Word file is password-protected". |
+| `no-document-xml.docx` | corrupt | fail | A ZIP without `word/document.xml`: "Word file is damaged". |
+| `truncated.docx` | truncated | fail | A DOCX cut in half (no central directory): "Word file is damaged". |
+| `zip-bomb.docx` | memory bomb | fail | 0.3 MB that inflates to 300 MB of blank paragraphs; read to 256 MB: "Word file's text is too large to read (over 256 MB)". |
+| `invalid.json` | corrupt | fail | A double comma: "Invalid JSON at line 4, column 16" (US-02.5 AC2). |
+| `nested-too-deep.json` | memory bomb | fail | Arrays nested 10,000 deep: "JSON is nested too deeply". |
+| `scripts-and-remote-images.html` | corrupt | success | Remote scripts, style sheet, pixel and iframe; only the visible text is read, the address inside a script is not, nothing is fetched (US-02.3 AC2, NFR-SEC-09). |
+| `binary-named.html` | wrong extension | fail | A PNG named `.html`: "Unknown text encoding". |
+| `unclosed-tags.html` | corrupt | success | Tags left open to the end; the text is read by blocks. |
+
+**v4: pages and scans (M3b).** The addresses hold no digits, which OCR can misread (`1` as `l`).
+
+| File | Category | Expected | What it does |
+|---|---|---|---|
+| `scan-2-pages.tiff` | format | success | A two-page TIFF, one address per page (`first@tiff.example`, `second@tiff.example`); one OCR segment per page (US-02.2 AC2). |
+| `scan.webp` | format | success | A lossless WEBP scan with `webp@scan.example` (US-02.2 AC2). |
+| `pages-2001.pdf` | huge | fail | 2,001 text pages: "File too large (limit: 2,000 pages)", checked right after open (NFR-CAP-04). |
+| `email-with-scan.eml` | format | success | An email with a scanned PNG attached; the scan is a child document, OCR'd, with `signed@attach.example` (US-02.6 AC4). |
 
 The fault files start with `mk-test-fault: <kind>`. A worker acts on that line only when the core turns test faults on through its API (tests only); in the app they are ordinary text files.
 

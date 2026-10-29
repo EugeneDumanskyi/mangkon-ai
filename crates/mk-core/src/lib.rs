@@ -13,6 +13,7 @@
 //!   (connections, occurrences, source context with the hit split out, `view`).
 
 mod events;
+mod page;
 mod project;
 pub mod stage_a;
 mod view;
@@ -21,20 +22,23 @@ mod workers;
 #[cfg(feature = "spike-s2d")]
 pub mod spike_s2d;
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
 pub use mk_jobs::ItemState;
-pub use mk_kernel::{Column, Locator};
-pub use mk_store::{FailedFile, OccurrenceRow};
+pub use mk_kernel::{Column, Locator, json_path};
+pub use mk_store::{DocumentInfo, FailedFile, OccurrenceRow};
+pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
 pub use project::{
     HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
     StageASummary, file_types, project_exists,
 };
 pub use view::{
-    CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, IngestCounts, MAX_OCCURRENCES,
-    Marked, SourceBody, SourceContext,
+    CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, DocumentLink, EmailField,
+    EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, PageKind, SourceBody, SourceContext,
+    WHOLE_EMAIL_SEGMENTS,
 };
 pub use workers::{Stopped, WorkerConfig, WorkerError, WorkerStop, worker_processes};
 
@@ -44,6 +48,30 @@ pub use workers::{Stopped, WorkerConfig, WorkerError, WorkerStop, worker_process
 pub fn worker_main_if_requested() -> Option<ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     (args.first().map(String::as_str) == Some("--worker")).then(|| mk_worker::run_stdio(&args[1..]))
+}
+
+/// The app's own data folder, `mangkon-ai` under the OS app-data folder (architecture §6):
+/// `$XDG_DATA_HOME` or `~/.local/share` on Linux, `~/Library/Application Support` on macOS,
+/// `%APPDATA%` on Windows. `None` if the OS gives no home.
+pub fn app_data_dir() -> Option<PathBuf> {
+    let env = |k: &str| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    let base = if cfg!(target_os = "windows") {
+        env("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        env("HOME").map(|h| h.join("Library/Application Support"))
+    } else {
+        env("XDG_DATA_HOME").or_else(|| env("HOME").map(|h| h.join(".local/share")))
+    };
+    Some(base?.join("mangkon-ai"))
+}
+
+/// The app's OCR language folder, `<app data>/tessdata/` (ADR-0018).
+pub fn tessdata_dir() -> Option<PathBuf> {
+    app_data_dir().map(|d| d.join("tessdata"))
 }
 
 /// What the About line and the CLI `--version` show.

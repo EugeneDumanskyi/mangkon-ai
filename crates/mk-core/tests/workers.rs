@@ -103,6 +103,36 @@ fn nfr_rel_01_faults_fail_alone() {
 /// Spike S2b (short form, runs on every OS in CI): a memory bomb is stopped soon after it
 /// passes the limit and fails with "Needed too much memory". The 20-run form is
 /// `s2b_memory_bomb` (ignored).
+/// ADR-0016, NFR-REL-06: an MBOX's deadline restarts at each finished message, so a mailbox that
+/// keeps finishing messages runs past the deadline; the same work in a TXT file is stopped.
+#[test]
+fn adr_0016_mbox_deadline_per_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    // Different second lines: the store keeps one content per hash.
+    for name in ["slow.mbox", "slow.txt"] {
+        std::fs::write(
+            src.join(name),
+            format!("mk-test-fault: slow-messages\n{name}\n"),
+        )
+        .unwrap();
+    }
+    let mut project = project(&tmp.path().join("project"), &src);
+    // 3.2 s of work, a finished message every 400 ms (heartbeats every 500 ms).
+    project.worker_config_mut().deadline = Duration::from_millis(1500);
+    project.set_stage_a_workers(2);
+    project.rescan(false).unwrap();
+    let run = project.run_stage_a().unwrap();
+
+    assert_eq!((run.done, run.failed), (1, 1));
+    assert_eq!(outcome(&project, "slow.mbox").0, IngestionState::Done);
+    assert_eq!(
+        outcome(&project, "slow.txt"),
+        (IngestionState::Failed, Some("Took too long to read".into()))
+    );
+}
+
 #[test]
 fn s2b_memory_bomb_short() {
     let tmp = tempfile::tempdir().unwrap();

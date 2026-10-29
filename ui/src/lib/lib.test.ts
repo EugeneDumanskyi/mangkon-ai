@@ -30,6 +30,13 @@ describe("locator labels", () => {
     expect(locationLabel({ kind: "cell", row: 3, columnName: null, columnIndex: 0 })).toBe(
       "row 3, column 1",
     );
+    expect(locationLabel({ kind: "paragraph", paragraph: 4 })).toBe("paragraph 4");
+    expect(locationLabel({ kind: "jsonPath", path: "$.customers[12].phone" })).toBe(
+      "$.customers[12].phone",
+    );
+    expect(locationLabel({ kind: "header", name: "From" })).toBe("header From");
+    expect(locationLabel({ kind: "part", part: "1.2" })).toBe("body part 1.2");
+    expect(locationLabel({ kind: "htmlText", offset: 30 })).toBe("text offset 30");
   });
 
   it("shows file names for both separators", () => {

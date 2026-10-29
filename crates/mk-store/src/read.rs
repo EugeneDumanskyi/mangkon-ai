@@ -8,9 +8,10 @@ use mk_graph::model::{
 };
 use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey};
 use mk_jobs::{ItemState, PendingItem};
-use mk_kernel::{ContentHash, IdentifierKey, Locator};
+use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
+use crate::codec::MentionCols;
 use crate::derive::row_to_connection;
 use crate::{StoreError, codec};
 
@@ -55,6 +56,7 @@ pub struct ContentRow {
 /// A stored segment with its locator rebuilt (INV-CO-03).
 #[derive(Clone, PartialEq, Debug)]
 pub struct SegmentRow {
+    pub document_id: i64,
     pub locator: Locator,
     pub text: String,
     pub malformed: bool,
@@ -64,6 +66,7 @@ pub struct SegmentRow {
 /// A stored identifier mention with its locator rebuilt.
 #[derive(Clone, PartialEq, Debug)]
 pub struct MentionRow {
+    pub document_id: i64,
     pub key: IdentifierKey,
     pub raw: String,
     pub locator: Locator,
@@ -83,6 +86,21 @@ pub(crate) fn source_roots(conn: &Connection) -> Result<Vec<RootRow>, StoreError
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
+
+/// The project's OCR languages, `+`-joined (US-02.2 AC4); `eng` until set (INV-WS-06).
+pub(crate) fn ocr_languages(conn: &Connection) -> Result<String, StoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT value FROM project_meta WHERE key = 'ocr_languages'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| DEFAULT_OCR_LANGUAGES.to_string()))
+}
+
+/// The OCR languages of a project that never set them.
+pub const DEFAULT_OCR_LANGUAGES: &str = "eng";
 
 pub(crate) fn stored_refs(conn: &Connection) -> Result<Vec<StoredRef>, StoreError> {
     let mut stmt = conn.prepare(
@@ -229,7 +247,8 @@ pub(crate) fn content(
 
 pub(crate) fn segments(conn: &Connection, content: i64) -> Result<Vec<SegmentRow>, StoreError> {
     let mut stmt = conn.prepare(
-        "SELECT s.loc_kind, s.loc_pos, s.text, s.malformed, s.cell_starts
+        "SELECT s.loc_kind, s.loc_pos, s.text, s.malformed, s.cell_starts, s.loc_ref,
+                s.document_id, s.ocr
          FROM segment s JOIN document d ON d.id = s.document_id
          WHERE d.content_id = ?1 ORDER BY d.id, s.ordinal",
     )?;
@@ -238,8 +257,10 @@ pub(crate) fn segments(conn: &Connection, content: i64) -> Result<Vec<SegmentRow
     while let Some(r) = rows.next()? {
         let kind: String = r.get(0)?;
         let text: String = r.get(2)?;
+        let ocr: Option<Vec<u8>> = r.get(7)?;
         out.push(SegmentRow {
-            locator: codec::segment_from(&kind, r.get(1)?, &text)?,
+            document_id: r.get(6)?,
+            locator: codec::segment_from(&kind, r.get(1)?, r.get(5)?, &text, ocr.as_deref())?,
             malformed: r.get(3)?,
             cell_starts: codec::cells_from_blob(r.get(4)?),
             text,
@@ -251,7 +272,7 @@ pub(crate) fn segments(conn: &Connection, content: i64) -> Result<Vec<SegmentRow
 pub(crate) fn mentions(conn: &Connection, content: i64) -> Result<Vec<MentionRow>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT m.identifier_key, m.raw, s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end,
-                m.column_index, m.column_name, m.confidence
+                m.column_index, m.column_name, m.confidence, s.loc_ref, m.document_id, s.ocr
          FROM identifier_mention m JOIN segment s ON s.id = m.segment_id
          WHERE m.content_id = ?1 ORDER BY m.id",
     )?;
@@ -260,7 +281,9 @@ pub(crate) fn mentions(conn: &Connection, content: i64) -> Result<Vec<MentionRow
     while let Some(r) = rows.next()? {
         let key: String = r.get(0)?;
         let text: String = r.get(4)?;
+        let ocr: Option<Vec<u8>> = r.get(12)?;
         out.push(MentionRow {
+            document_id: r.get(11)?,
             key: key
                 .parse()
                 .map_err(|e: mk_kernel::ParseKeyError| StoreError::Invalid(e.to_string()))?,
@@ -268,11 +291,15 @@ pub(crate) fn mentions(conn: &Connection, content: i64) -> Result<Vec<MentionRow
             locator: codec::mention_from(
                 &r.get::<_, String>(2)?,
                 r.get(3)?,
-                text.chars().count(),
-                r.get(5)?,
-                r.get(6)?,
-                r.get(7)?,
-                r.get(8)?,
+                r.get(10)?,
+                &text,
+                ocr.as_deref(),
+                MentionCols {
+                    start: r.get(5)?,
+                    end: r.get(6)?,
+                    column_index: r.get(7)?,
+                    column_name: r.get(8)?,
+                },
             )?,
             confidence: r.get::<_, f64>(9)? as f32,
             segment_text: text,
@@ -407,7 +434,7 @@ pub struct OccurrenceRow {
 const OCCURRENCE_SELECT: &str = "
     SELECT m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
            s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
-           m.column_name, m.raw, m.confidence, r.path, f.rel_path
+           m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr
     FROM identifier_mention m
     JOIN segment s ON s.id = m.segment_id
     JOIN content c ON c.id = m.content_id
@@ -433,6 +460,7 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
         .ok_or_else(|| StoreError::Invalid(format!("unknown content state {state}")))?
         .counts_for_connections();
     let text: String = r.get(8)?;
+    let ocr: Option<Vec<u8>> = r.get(18)?;
     let path = display_path(r.get(15)?, r.get(16)?);
     Ok((
         OccurrenceRow {
@@ -445,11 +473,15 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
             locator: codec::mention_from(
                 &r.get::<_, String>(6)?,
                 r.get(7)?,
-                text.chars().count(),
-                r.get(9)?,
-                r.get(10)?,
-                r.get(11)?,
-                r.get(12)?,
+                r.get(17)?,
+                &text,
+                ocr.as_deref(),
+                MentionCols {
+                    start: r.get(9)?,
+                    end: r.get(10)?,
+                    column_index: r.get(11)?,
+                    column_name: r.get(12)?,
+                },
             )?,
             raw: r.get(13)?,
             confidence: r.get::<_, f64>(14)? as f32,
@@ -504,6 +536,8 @@ pub struct WindowSegment {
     pub text: String,
     pub malformed: bool,
     pub cell_starts: Vec<u32>,
+    /// OCR'd pages: the word geometry (US-02.2 AC3, US-08.3).
+    pub ocr: Option<OcrGeometry>,
 }
 
 /// A segment with up to `before` and `after` neighbours by ordinal in its document, and the
@@ -516,18 +550,24 @@ pub struct SegmentWindow {
     pub first: WindowSegment,
 }
 
-const SEGMENT_SELECT: &str =
-    "SELECT id, ordinal, loc_kind, loc_pos, text, malformed, cell_starts FROM segment";
+const SEGMENT_SELECT: &str = "SELECT id, ordinal, loc_kind, loc_pos, text, malformed, cell_starts,
+    loc_ref, ocr FROM segment";
 
 fn window_segment(r: &rusqlite::Row<'_>) -> Result<WindowSegment, StoreError> {
     let kind: String = r.get(2)?;
     let text: String = r.get(4)?;
+    let blob: Option<Vec<u8>> = r.get(8)?;
+    let ocr = blob
+        .as_deref()
+        .map(|b| codec::ocr_from_blob(b, &text))
+        .transpose()?;
     Ok(WindowSegment {
         id: r.get(0)?,
         ordinal: r.get(1)?,
-        locator: codec::segment_from(&kind, r.get(3)?, &text)?,
+        locator: codec::segment_from(&kind, r.get(3)?, r.get(7)?, &text, blob.as_deref())?,
         malformed: r.get(5)?,
         cell_starts: codec::cells_from_blob(r.get(6)?),
+        ocr,
         text,
     })
 }
@@ -584,6 +624,105 @@ pub(crate) fn segment_window(
         segments,
         first,
     }))
+}
+
+/// A document: what it is, where it sits in its file, and its parent (an attachment's message,
+/// INV-CO-05).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DocumentInfo {
+    pub id: i64,
+    pub content_id: i64,
+    pub hash: ContentHash,
+    pub file_type: String,
+    pub kind: String,
+    pub position: String,
+    pub parent: Option<i64>,
+    pub segments: u64,
+    /// The first present path of the content, if any.
+    pub path: Option<String>,
+}
+
+pub(crate) fn document_info(
+    conn: &Connection,
+    document: i64,
+) -> Result<Option<DocumentInfo>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT d.id, d.content_id, c.file_type, d.kind, d.position, d.parent_id,
+                (SELECT COUNT(*) FROM segment WHERE document_id = d.id), r.path, f.rel_path,
+                c.hash
+         FROM document d JOIN content c ON c.id = d.content_id
+         LEFT JOIN file_ref f ON f.id = (
+             SELECT id FROM file_ref WHERE content_id = d.content_id AND present = 1
+             ORDER BY id LIMIT 1)
+         LEFT JOIN source_root r ON r.id = f.root_id
+         WHERE d.id = ?1",
+    )?;
+    let mut rows = stmt.query([document])?;
+    let Some(r) = rows.next()? else {
+        return Ok(None);
+    };
+    Ok(Some(DocumentInfo {
+        id: r.get(0)?,
+        content_id: r.get(1)?,
+        hash: codec::hash_from(&r.get::<_, Vec<u8>>(9)?)?,
+        file_type: r.get(2)?,
+        kind: r.get(3)?,
+        position: r.get(4)?,
+        parent: r.get(5)?,
+        segments: r.get::<_, i64>(6)? as u64,
+        path: display_path(r.get(7)?, r.get(8)?),
+    }))
+}
+
+/// The first `limit` segments of a document, in order (a whole email, US-08.1 AC5).
+pub(crate) fn document_segments(
+    conn: &Connection,
+    document: i64,
+    limit: usize,
+) -> Result<Vec<WindowSegment>, StoreError> {
+    segments_where(
+        conn,
+        "WHERE document_id = ?1 ORDER BY ordinal LIMIT ?2",
+        params![document, limit as i64],
+    )
+}
+
+/// The segment of page `page` (1-based) of a PDF or image document: its text layer or its OCR
+/// text. `None` for a page with no text.
+pub(crate) fn page_segment(
+    conn: &Connection,
+    document: i64,
+    page: u32,
+) -> Result<Option<WindowSegment>, StoreError> {
+    let mut segs = segments_where(
+        conn,
+        "WHERE document_id = ?1 AND loc_kind IN ('pdf_text', 'ocr_text') AND loc_pos = ?2
+         ORDER BY ordinal LIMIT 1",
+        params![document, page],
+    )?;
+    Ok(segs.pop())
+}
+
+/// The last page of a PDF or image document that has text, or 0.
+pub(crate) fn last_text_page(conn: &Connection, document: i64) -> Result<u32, StoreError> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT COALESCE(MAX(loc_pos), 0) FROM segment
+             WHERE document_id = ?1 AND loc_kind IN ('pdf_text', 'ocr_text')",
+        )?
+        .query_row([document], |r| r.get(0))?)
+}
+
+/// The child documents of `document` (its attachments), in order.
+pub(crate) fn child_documents(
+    conn: &Connection,
+    document: i64,
+) -> Result<Vec<(i64, String, String)>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, kind, position FROM document WHERE parent_id = ?1 ORDER BY id",
+    )?;
+    let rows = stmt.query_map([document], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// A content whose ingestion failed, with its first path and the plain reason (NFR-USE-05).

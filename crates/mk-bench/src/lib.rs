@@ -1,9 +1,10 @@
 //! BC-13 benchmark context. In M0a: the ground-truth model, loading and validation (US-14.3 AC1).
-//! Scoring (US-14.3 AC2) comes in M4.
+//! Scoring (US-14.3 AC2) comes in M4. M3b: the OCR character accuracy metric ([`ocr`], NFR-QA-07).
 
 pub mod checks;
 pub mod keys;
 mod model;
+pub mod ocr;
 pub mod td3;
 mod validate;
 

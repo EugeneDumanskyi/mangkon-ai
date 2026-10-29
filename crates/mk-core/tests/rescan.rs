@@ -74,7 +74,7 @@ fn seed(f: &Fixture) {
         "name,email\nAnn,ann@x.example\nBob,bob@y.example\n",
         3,
     );
-    write(&f.src.join("scan.pdf"), "%PDF-1.7", 4);
+    write(&f.src.join("sheet.xlsx"), "PK", 4);
     write(&f.src.join(".hidden.txt"), "eve@z.example", 5);
 }
 
@@ -92,7 +92,7 @@ fn nfr_perf_33_rescan_unchanged_creates_no_work() {
     assert_eq!(
         first.skipped.len(),
         1,
-        "scan.pdf is reported, .hidden.txt is not"
+        "sheet.xlsx is reported, .hidden.txt is not"
     );
     f.project.run_stage_a().unwrap();
     let items_before = f.project.store().progress().unwrap().items;

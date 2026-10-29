@@ -18,11 +18,23 @@ pub struct Migration {
 }
 
 /// The app's migrations, in order. The last one's version is the app's schema version.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "init",
-    sql: include_str!("../migrations/0001_init.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "init",
+        sql: include_str!("../migrations/0001_init.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "text_formats",
+        sql: include_str!("../migrations/0002_text_formats.sql"),
+    },
+    Migration {
+        version: 3,
+        name: "pages",
+        sql: include_str!("../migrations/0003_pages.sql"),
+    },
+];
 
 /// What opening did.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -47,6 +59,12 @@ fn user_version(conn: &Connection) -> Result<u32, StoreError> {
     Ok(conn.pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))?)
 }
 
+/// `SQLITE_READONLY_ROLLBACK`: a read-only connection found a hot journal.
+fn is_hot_journal(e: &rusqlite::Error) -> bool {
+    e.sqlite_error()
+        .is_some_and(|e| e.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK)
+}
+
 /// Opens (or creates) the database at `path` for writing, bringing it to the last version in
 /// `migrations`. Takes the list as a parameter so tests can add a v2 or a broken one.
 ///
@@ -63,8 +81,16 @@ pub fn open_write(
     let latest = migrations.last().map_or(0, |m| m.version);
     if path.exists() {
         let ro = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        let found = user_version(&ro)?;
-        drop(ro);
+        let found = match user_version(&ro) {
+            // A kill during a write before WAL is on (while the file is created) leaves a hot
+            // rollback journal, which a read-only connection cannot roll back. A read-write
+            // connection rolls it back on its first read, back to the last commit (NFR-REL-03).
+            Err(StoreError::Sqlite(e)) if is_hot_journal(&e) => {
+                drop(ro);
+                user_version(&Connection::open(path)?)?
+            }
+            r => r?,
+        };
         if found > latest {
             return Err(StoreError::TooNew {
                 found,

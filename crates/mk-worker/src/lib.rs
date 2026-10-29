@@ -6,11 +6,16 @@
 //!
 //! - [`frame`]: `u32` little-endian length + `postcard` payload, with a size guard.
 //! - [`protocol`]: the messages, versioned by [`PROTOCOL`].
-//! - [`extract`]: a parsed content as chunks of segments and mentions (US-04.1).
+//! - [`extract`]: the parser sink that sends a content as chunks of segments and mentions while
+//!   it is parsed (US-04.1).
 //! - [`serve`] / [`run_stdio`]: the worker loop, with heartbeats; the stdio entry also sets the
 //!   Linux address-space cap.
-//! - [`fault`]: test faults (memory bomb, endless loop, crash), honoured only when the core asks
-//!   for them in [`Settings::test_faults`].
+//! - [`fault`]: test faults (memory bomb, endless loop, crash, slow units, a stuck OCR page),
+//!   honoured only when the core asks for them in [`Settings::test_faults`].
+//!
+//! Since M3b a worker also renders pages for the page view ([`ToWorker::RenderPage`],
+//! ADR-0011), with the same engines that read them, and keeps its OCR engine loaded across items
+//! while the languages stay the same (ADR-0014).
 //!
 //! The supervisor (spawn, deadline, memory watchdog, recycling) is in `mk-core`.
 
@@ -21,7 +26,7 @@ pub mod protocol;
 mod serve;
 
 pub use protocol::{
-    Chunk, FromWorker, Limits, Mention, PROTOCOL, ProcessContent, Segment, Settings, ToWorker,
-    WorkStage,
+    Chunk, FromWorker, Limits, Mention, PROTOCOL, PageImage, PagePoints, ProcessContent,
+    RenderPage, Segment, Settings, ToWorker, WorkStage,
 };
 pub use serve::{HEARTBEAT, ServeOptions, run_stdio, serve};

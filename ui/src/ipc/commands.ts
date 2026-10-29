@@ -7,6 +7,7 @@ import type { ConnectionsPage } from "./bindings/ConnectionsPage";
 import type { FrameStats } from "./bindings/FrameStats";
 import type { IpcError } from "./bindings/IpcError";
 import type { Occurrence } from "./bindings/Occurrence";
+import type { PageView } from "./bindings/PageView";
 import type { Progress } from "./bindings/Progress";
 import type { ProjectInfo } from "./bindings/ProjectInfo";
 import type { RowPage } from "./bindings/RowPage";
@@ -14,6 +15,7 @@ import type { RowsRequest } from "./bindings/RowsRequest";
 import type { SourceView } from "./bindings/SourceView";
 import type { UiEvent } from "./bindings/UiEvent";
 import type { UiTiming } from "./bindings/UiTiming";
+import type { ViewSweep } from "./bindings/ViewSweep";
 
 /** The plain message of a failed command (NFR-USE-05). */
 export function errorMessage(e: unknown): string {
@@ -37,6 +39,14 @@ export const commands = {
     invoke<ConnectionsPage>("connections_page", { cursor, limit }),
   occurrences: (key: string) => invoke<Occurrence[]>("occurrences", { key }),
   sourceContext: (mentionId: number) => invoke<SourceView>("source_context", { mentionId }),
+  /** A document from its start: an attachment, or the email it came in. */
+  sourceDocument: (documentId: number) => invoke<SourceView>("source_document", { documentId }),
+  /** One page of a PDF or image, with the boxes of `mentionId` when it is on that page. */
+  pageView: (documentId: number, page: number, mentionId: number | null) =>
+    invoke<PageView>("page_view", { documentId, page, mentionId }),
+  /** The PNG of a page `pageView` has shown, as raw bytes. */
+  pageImage: (documentId: number, page: number) =>
+    invoke<ArrayBuffer>("page_image", { documentId, page }),
   /** Core events go to `onEvent` until the page reloads (no `core:event` permission). */
   subscribe: (onEvent: (event: UiEvent) => void) => {
     const channel = new Channel<UiEvent>();
@@ -45,6 +55,8 @@ export const commands = {
   },
   /** `MK_UI_TIMING=1` only. Returns the path the timings were written to. */
   recordUiTiming: (timing: UiTiming) => invoke<string>("record_ui_timing", { timing }),
+  /** `MK_VIEW_SWEEP=1` only. Saves the sweep and exits the app. */
+  recordViewSweep: (sweep: ViewSweep) => invoke<string>("record_view_sweep", { sweep }),
   /** Spike S2d builds only. */
   syntheticRows: (request: RowsRequest) => invoke<RowPage>("synthetic_rows", { request }),
   /** Spike S2d builds only. Returns the path the stats were written to. */

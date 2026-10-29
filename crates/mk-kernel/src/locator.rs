@@ -77,9 +77,10 @@ pub enum Column {
 ///
 /// - `TextLine` (M2b): one line of a TXT or MD file.
 /// - `CsvRow` / `CsvCell` (M2b): a CSV row as a segment, and a place in one of its cells.
+/// - `DocxParagraph`, `HtmlText`, `JsonValue`, `EmailHeader`, `MimePart` (M3a).
 ///
-/// Still to come, each in the milestone that adds its parser: DOCX paragraph + span, HTML text
-/// offset + span, JSON path, email header name, MIME part + span (M3).
+/// Every kind except `CsvRow` carries a `span` in the segment's stored text (INV-CO-04). On a
+/// segment's own locator the span covers its whole text; on a mention's, the mention.
 #[derive(Clone, PartialEq, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Locator {
@@ -117,13 +118,30 @@ pub enum Locator {
         column: Column,
         span: Span,
     },
+    /// A place in one DOCX paragraph (US-02.3 AC1). `paragraph` is the 0-based index of the
+    /// `w:p` element in body order, table cells included; the stored text is its `w:t` runs
+    /// joined, `w:tab` as `\t` and `w:br` as `\n`.
+    DocxParagraph { paragraph: u32, span: Span },
+    /// A place in the visible text of an HTML file (US-02.3 AC1). One segment per block of
+    /// text; `offset` is the number of characters before the segment in the document's
+    /// extracted text, which is its segments joined by `\n`.
+    HtmlText { offset: u64, span: Span },
+    /// A place in one string or number value of a JSON file (US-02.5 AC1). `pointer` is an
+    /// RFC 6901 JSON Pointer (`/customers/12/phone`); [`json_path`] shows it as people read it.
+    JsonValue { pointer: String, span: Span },
+    /// A place in one header of an email (US-02.6 AC2): `name` as written in the message, the
+    /// stored text being its unfolded value with RFC 2047 words decoded.
+    EmailHeader { name: String, span: Span },
+    /// A place in one text part of an email body (US-02.6 AC3). `part` is the IMAP section
+    /// number (`1`, `1.2`); the stored text is the decoded part with `\n` line ends.
+    MimePart { part: String, span: Span },
 }
 
 impl Locator {
     pub fn page(&self) -> Option<PageNumber> {
         match self {
             Locator::PdfText { page, .. } | Locator::OcrText { page, .. } => Some(*page),
-            Locator::TextLine { .. } | Locator::CsvRow { .. } | Locator::CsvCell { .. } => None,
+            _ => None,
         }
     }
 
@@ -132,10 +150,83 @@ impl Locator {
             Locator::PdfText { span, .. }
             | Locator::OcrText { span, .. }
             | Locator::TextLine { span, .. }
-            | Locator::CsvCell { span, .. } => Some(*span),
+            | Locator::CsvCell { span, .. }
+            | Locator::DocxParagraph { span, .. }
+            | Locator::HtmlText { span, .. }
+            | Locator::JsonValue { span, .. }
+            | Locator::EmailHeader { span, .. }
+            | Locator::MimePart { span, .. } => Some(*span),
             Locator::CsvRow { .. } => None,
         }
     }
+
+    /// The same place with another span: how a segment's locator becomes the locator of a
+    /// mention in it. `None` for kinds whose mentions need more than a span (CSV rows).
+    pub fn with_span(&self, span: Span) -> Option<Locator> {
+        Some(match self {
+            Locator::PdfText { page, .. } => Locator::PdfText { page: *page, span },
+            Locator::TextLine { line, .. } => Locator::TextLine { line: *line, span },
+            Locator::DocxParagraph { paragraph, .. } => Locator::DocxParagraph {
+                paragraph: *paragraph,
+                span,
+            },
+            Locator::HtmlText { offset, .. } => Locator::HtmlText {
+                offset: *offset,
+                span,
+            },
+            Locator::JsonValue { pointer, .. } => Locator::JsonValue {
+                pointer: pointer.clone(),
+                span,
+            },
+            Locator::EmailHeader { name, .. } => Locator::EmailHeader {
+                name: name.clone(),
+                span,
+            },
+            Locator::MimePart { part, .. } => Locator::MimePart {
+                part: part.clone(),
+                span,
+            },
+            Locator::OcrText { .. } | Locator::CsvRow { .. } | Locator::CsvCell { .. } => {
+                return None;
+            }
+        })
+    }
+}
+
+/// An RFC 6901 JSON Pointer as people read a path (US-02.5 AC1): `/customers/12/phone` →
+/// `$.customers[12].phone`. Number tokens show as indexes, simple names after a dot, anything
+/// else quoted in brackets. Display only: the pointer is what is stored.
+pub fn json_path(pointer: &str) -> String {
+    let mut out = String::from("$");
+    if pointer.is_empty() {
+        return out;
+    }
+    for token in pointer.strip_prefix('/').unwrap_or(pointer).split('/') {
+        let token = token.replace("~1", "/").replace("~0", "~");
+        let simple = |t: &str| {
+            let mut c = t.chars();
+            c.next()
+                .is_some_and(|f| f.is_alphabetic() || f == '_' || f == '$')
+                && c.all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
+        };
+        if !token.is_empty() && token.chars().all(|c| c.is_ascii_digit()) {
+            out.push_str(&format!("[{token}]"));
+        } else if simple(&token) {
+            out.push('.');
+            out.push_str(&token);
+        } else {
+            out.push_str("[\"");
+            for ch in token.chars() {
+                match ch {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    c => out.push(c),
+                }
+            }
+            out.push_str("\"]");
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -175,5 +266,50 @@ mod tests {
             span,
         };
         assert_eq!((cell.page(), cell.span()), (None, Some(span)));
+    }
+
+    /// INV-CO-03: the M3a kinds are their place + span, and a segment's locator carries over to
+    /// its mentions with only the span changed.
+    #[test]
+    fn inv_co_03_m3a_locators_carry_their_place() {
+        let whole = Span::new(0, 20, 20).unwrap();
+        let hit = Span::new(3, 9, 20).unwrap();
+        for seg in [
+            Locator::DocxParagraph {
+                paragraph: 4,
+                span: whole,
+            },
+            Locator::HtmlText {
+                offset: 316,
+                span: whole,
+            },
+            Locator::JsonValue {
+                pointer: "/contact/email".into(),
+                span: whole,
+            },
+            Locator::EmailHeader {
+                name: "From".into(),
+                span: whole,
+            },
+            Locator::MimePart {
+                part: "1.2".into(),
+                span: whole,
+            },
+        ] {
+            let m = seg.with_span(hit).unwrap();
+            assert_eq!((m.page(), m.span()), (None, Some(hit)));
+            assert_eq!(m.with_span(whole), Some(seg));
+        }
+        assert_eq!(Locator::CsvRow { row: 1 }.with_span(hit), None);
+    }
+
+    /// US-02.5 AC1: the stored pointer is shown in the `$` form.
+    #[test]
+    fn us_02_5_json_path_display() {
+        assert_eq!(json_path("/customers/12/phone"), "$.customers[12].phone");
+        assert_eq!(json_path(""), "$");
+        assert_eq!(json_path("/0"), "$[0]");
+        assert_eq!(json_path("/a~1b/x y/~0"), "$[\"a/b\"][\"x y\"][\"~\"]");
+        assert_eq!(json_path("/say \"hi\""), "$[\"say \\\"hi\\\"\"]");
     }
 }

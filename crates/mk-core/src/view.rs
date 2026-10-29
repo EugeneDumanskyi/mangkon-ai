@@ -1,6 +1,8 @@
-//! Reads the desktop and the CLI share (M2d): the connections list, the occurrences of one
-//! connection, and the source text around one occurrence with the hit already split out
-//! (US-07.1, US-07.3 AC2, US-08.1).
+//! Reads the desktop and the CLI share (M2d, M3a): the connections list, the occurrences of one
+//! connection, and the source around one occurrence with the hit already split out, or a whole
+//! document without one (US-07.1, US-07.3 AC2, US-08.1 AC3–AC6).
+//!
+//! Every body is plain text in parts; nothing is HTML or markup to render (US-08.4, gap A8).
 //!
 //! Spans count Unicode characters (INV-CO-04). They are applied here, on the Rust side, so the
 //! UI never has to map them onto its own string units.
@@ -8,12 +10,19 @@
 use mk_corpus::IngestionState;
 use mk_graph::{ConnectionRow, RankKey};
 use mk_kernel::{Column, Locator, Span};
-use mk_store::{FailedFile, OccurrenceRow, WindowSegment};
+use mk_parsers::Format;
+use mk_store::{DocumentInfo, FailedFile, OccurrenceRow, WindowSegment};
 
 use crate::project::{Project, ProjectError};
 
 /// Segments shown before and after the hit in the source view.
 pub const CONTEXT_SEGMENTS: usize = 20;
+
+/// An email with at most this many segments is shown whole; a longer one as a window.
+pub const WHOLE_EMAIL_SEGMENTS: usize = 2_000;
+
+/// The segments a view shows, and the document's first segment (a CSV header row, if any).
+type Shown = (Vec<WindowSegment>, Option<WindowSegment>);
 
 /// The most occurrences [`Project::occurrences`] returns for one connection.
 pub const MAX_OCCURRENCES: usize = 1_000;
@@ -90,21 +99,91 @@ pub struct ContextRow {
     pub malformed: bool,
 }
 
-/// The source around one occurrence (US-08.1 AC3: text and CSV; pages come in M3).
+/// One row of the JSON outline: a key or index on the way to a value, or a value.
 #[derive(Clone, PartialEq, Eq, Debug)]
+pub struct JsonRow {
+    /// 0 for the root's members.
+    pub depth: u32,
+    /// The key, or `[n]` for an array index.
+    pub label: String,
+    /// `None` for an object or array on the way.
+    pub value: Option<Marked>,
+}
+
+/// One header of an email.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EmailField {
+    pub name: String,
+    pub value: Marked,
+}
+
+/// One body part of an email, as lines.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EmailPart {
+    /// The IMAP part number (US-02.6 AC3).
+    pub part: String,
+    pub lines: Vec<Marked>,
+}
+
+/// A document to link to: an attachment, or the email an attachment came in.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct DocumentLink {
+    pub document_id: i64,
+    /// What to call it: an email's subject, else its position (`part 2: notes.txt`).
+    pub label: String,
+}
+
+/// How a page's text was read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PageKind {
+    /// From the PDF's text layer.
+    Text,
+    /// By OCR (US-02.2).
+    Ocr,
+}
+
+/// The source around one occurrence, or the start of a document (US-08.1 AC1–AC6).
+#[derive(Clone, PartialEq, Debug)]
 pub enum SourceBody {
-    /// Lines around the hit. Only non-empty lines are stored, so numbers may skip.
+    /// TXT/MD lines around the hit. Only non-empty lines are stored, so numbers may skip.
     Text { lines: Vec<ContextLine> },
-    /// Rows around the hit, with the header row when the file has one.
+    /// CSV rows around the hit, with the header row when the file has one.
     Table {
         header: Option<Vec<String>>,
         rows: Vec<ContextRow>,
+    },
+    /// DOCX or HTML text blocks around the hit (extracted text, gap A8).
+    Paragraphs { paragraphs: Vec<Marked> },
+    /// JSON values around the hit as an outline, the path to each one shown.
+    Json { rows: Vec<JsonRow> },
+    /// An email: its headers, body parts and attachments.
+    Email {
+        headers: Vec<EmailField>,
+        parts: Vec<EmailPart>,
+        attachments: Vec<DocumentLink>,
+    },
+    /// One page of a PDF or image: its stored text as lines with the hit, shown beside the page
+    /// image ([`Project::page_view`]) or instead of it (US-08.3, ADR-0011).
+    Page {
+        /// 1-based.
+        page: u32,
+        /// The last page with stored text; the page view gives the file's page count.
+        pages: u32,
+        /// `None` for a page with no text.
+        kind: Option<PageKind>,
+        lines: Vec<Marked>,
+        /// OCR pages: the mean word confidence, 0 to 1 (US-02.2 AC3).
+        ocr_quality: Option<f32>,
     },
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct SourceContext {
-    pub occurrence: OccurrenceRow,
+    /// The mention shown, if the view was opened at one.
+    pub occurrence: Option<OccurrenceRow>,
+    pub document: DocumentInfo,
+    /// The email this document is an attachment of (US-08.1 AC4).
+    pub parent: Option<DocumentLink>,
     pub body: SourceBody,
 }
 
@@ -189,60 +268,316 @@ impl Project {
         Ok(self.store().mentions_of(key, MAX_OCCURRENCES)?)
     }
 
-    /// The source text around one mention, the hit split out (US-07.3 AC2, US-08.1 AC3).
+    /// The source around one mention, the hit split out (US-07.3 AC2, US-08.1 AC3–AC6).
     /// `None` if the mention is gone (a re-scan replaced its content).
     pub fn source_context(&self, mention: i64) -> Result<Option<SourceContext>, ProjectError> {
         let Some(occurrence) = self.store().mention(mention)? else {
             return Ok(None);
         };
-        let Some(window) = self.store().segment_window(
-            occurrence.segment_id,
-            CONTEXT_SEGMENTS,
-            CONTEXT_SEGMENTS,
-        )?
-        else {
+        let Some(document) = self.store().document_info(occurrence.document_id)? else {
             return Ok(None);
         };
-        let hit_span = occurrence.locator.span();
-        let is_hit = |s: &WindowSegment| s.id == occurrence.segment_id;
-        let body = match &occurrence.locator {
-            Locator::CsvCell { column, .. } => {
-                let header = matches!(column, Column::Name(_))
-                    .then(|| cells(&window.first, None))
-                    .map(|cells| cells.into_iter().map(|c| c.before).collect());
-                let rows = window
-                    .segments
+        let hit = occurrence
+            .locator
+            .span()
+            .map(|span| (occurrence.segment_id, span));
+        let Some(body) = self.body(&document, hit, Some(&occurrence.locator))? else {
+            return Ok(None);
+        };
+        Ok(Some(SourceContext {
+            parent: self.parent_link(&document)?,
+            occurrence: Some(occurrence),
+            document,
+            body,
+        }))
+    }
+
+    /// A document from its start, without a hit: an attachment, or the email it came in
+    /// (US-08.1 AC4). `None` if it is gone.
+    pub fn document_view(&self, document: i64) -> Result<Option<SourceContext>, ProjectError> {
+        self.document_page(document, 1)
+    }
+
+    /// A document at page `page` (1-based) when it has pages, else from its start. `None` if
+    /// it is gone.
+    pub fn document_page(
+        &self,
+        document: i64,
+        page: u32,
+    ) -> Result<Option<SourceContext>, ProjectError> {
+        let Some(document) = self.store().document_info(document)? else {
+            return Ok(None);
+        };
+        let body = if Format::from_name(&document.kind).is_some_and(|f| f.is_paged()) {
+            Some(self.page_body(&document, page.max(1), None)?)
+        } else {
+            self.body(&document, None, None)?
+        };
+        let Some(body) = body else {
+            return Ok(None);
+        };
+        Ok(Some(SourceContext {
+            occurrence: None,
+            parent: self.parent_link(&document)?,
+            document,
+            body,
+        }))
+    }
+
+    fn parent_link(&self, document: &DocumentInfo) -> Result<Option<DocumentLink>, ProjectError> {
+        let Some(parent) = document.parent else {
+            return Ok(None);
+        };
+        self.store()
+            .document_info(parent)?
+            .map(|p| self.link(p.id, &p.position))
+            .transpose()
+    }
+
+    /// A link to a document: an email by its subject, anything else by its position.
+    fn link(&self, document_id: i64, position: &str) -> Result<DocumentLink, ProjectError> {
+        let subject = self
+            .store()
+            .document_segments(document_id, 16)?
+            .into_iter()
+            .find_map(|s| match s.locator {
+                Locator::EmailHeader { name, .. } if name.eq_ignore_ascii_case("Subject") => {
+                    Some(s.text)
+                }
+                _ => None,
+            });
+        Ok(DocumentLink {
+            document_id,
+            label: subject.unwrap_or_else(|| position.to_string()),
+        })
+    }
+
+    /// The segments to show: around the hit, or from the start; a whole email when it is
+    /// small. `None` if the segment is gone.
+    fn shown(
+        &self,
+        document: &DocumentInfo,
+        hit: Option<(i64, Span)>,
+        whole: bool,
+    ) -> Result<Option<Shown>, ProjectError> {
+        let store = self.store();
+        if whole && document.segments <= WHOLE_EMAIL_SEGMENTS as u64 {
+            return Ok(Some((
+                store.document_segments(document.id, WHOLE_EMAIL_SEGMENTS)?,
+                None,
+            )));
+        }
+        match hit {
+            Some((segment, _)) => Ok(store
+                .segment_window(segment, CONTEXT_SEGMENTS, CONTEXT_SEGMENTS)?
+                .map(|w| (w.segments, Some(w.first)))),
+            None => {
+                let segs = store.document_segments(document.id, 2 * CONTEXT_SEGMENTS + 1)?;
+                let first = segs.first().cloned();
+                Ok(Some((segs, first)))
+            }
+        }
+    }
+
+    fn body(
+        &self,
+        document: &DocumentInfo,
+        hit: Option<(i64, Span)>,
+        locator: Option<&Locator>,
+    ) -> Result<Option<SourceBody>, ProjectError> {
+        let format = Format::from_name(&document.kind);
+        if format.is_some_and(|f| f.is_paged()) {
+            let page = locator.and_then(Locator::page).map_or(1, |p| p.get());
+            return Ok(Some(self.page_body(document, page, hit)?));
+        }
+        let email = matches!(format, Some(Format::Eml | Format::Mbox));
+        let Some((segments, first)) = self.shown(document, hit, email)? else {
+            return Ok(None);
+        };
+        let mark = |s: &WindowSegment| match hit {
+            Some((id, span)) if id == s.id => Marked::split(&s.text, span.start(), span.end()),
+            _ => Marked::plain(s.text.clone()),
+        };
+        let hit_in = |s: &WindowSegment| hit.filter(|(id, _)| *id == s.id).map(|(_, h)| h);
+        Ok(Some(match format {
+            Some(Format::Csv) => {
+                let named = match locator {
+                    Some(Locator::CsvCell { column, .. }) => matches!(column, Column::Name(_)),
+                    // Without a hit, a first row that names its columns is shown as the header.
+                    _ => false,
+                };
+                let header = first
+                    .as_ref()
+                    .filter(|_| named)
+                    .map(|f| cells(f, None).into_iter().map(|c| c.before).collect());
+                let first_id = first.as_ref().map(|f| f.id);
+                let rows = segments
                     .iter()
-                    .filter(|s| header.is_none() || s.id != window.first.id)
+                    .filter(|s| header.is_none() || Some(s.id) != first_id)
                     .map(|s| ContextRow {
                         row: match s.locator {
                             Locator::CsvRow { row } => row,
                             _ => s.ordinal as u64,
                         },
-                        cells: cells(s, hit_span.filter(|_| is_hit(s))),
+                        cells: cells(s, hit_in(s)),
                         malformed: s.malformed,
                     })
                     .collect();
                 SourceBody::Table { header, rows }
             }
+            Some(Format::Docx | Format::Html) => SourceBody::Paragraphs {
+                paragraphs: segments.iter().map(mark).collect(),
+            },
+            Some(Format::Json) => SourceBody::Json {
+                rows: json_rows(&segments, &mark),
+            },
+            Some(Format::Eml | Format::Mbox) => {
+                let mut headers = Vec::new();
+                let mut parts = Vec::new();
+                for s in &segments {
+                    match &s.locator {
+                        Locator::EmailHeader { name, .. } => headers.push(EmailField {
+                            name: name.clone(),
+                            value: mark(s),
+                        }),
+                        Locator::MimePart { part, .. } => parts.push(EmailPart {
+                            part: part.clone(),
+                            lines: lines(&s.text, hit_in(s)),
+                        }),
+                        _ => {}
+                    }
+                }
+                let attachments = self
+                    .store()
+                    .child_documents(document.id)?
+                    .into_iter()
+                    .map(|(id, _, position)| self.link(id, &position))
+                    .collect::<Result<_, _>>()?;
+                SourceBody::Email {
+                    headers,
+                    parts,
+                    attachments,
+                }
+            }
             _ => SourceBody::Text {
-                lines: window
-                    .segments
+                lines: segments
                     .iter()
                     .map(|s| ContextLine {
                         number: match s.locator {
                             Locator::TextLine { line, .. } => line.get(),
                             _ => s.ordinal as u32 + 1,
                         },
-                        text: match hit_span.filter(|_| is_hit(s)) {
-                            Some(h) => Marked::split(&s.text, h.start(), h.end()),
-                            None => Marked::plain(s.text.clone()),
-                        },
+                        text: mark(s),
                     })
                     .collect(),
             },
+        }))
+    }
+}
+
+impl Project {
+    /// The stored text of one page, the hit marked.
+    fn page_body(
+        &self,
+        document: &DocumentInfo,
+        page: u32,
+        hit: Option<(i64, Span)>,
+    ) -> Result<SourceBody, ProjectError> {
+        let segment = self.store().page_segment(document.id, page)?;
+        let pages = self.store().last_text_page(document.id)?.max(page);
+        let Some(s) = segment else {
+            return Ok(SourceBody::Page {
+                page,
+                pages,
+                kind: None,
+                lines: Vec::new(),
+                ocr_quality: None,
+            });
         };
-        Ok(Some(SourceContext { occurrence, body }))
+        let span = hit.filter(|(id, _)| *id == s.id).map(|(_, h)| h);
+        Ok(SourceBody::Page {
+            page,
+            pages,
+            kind: Some(match s.locator {
+                Locator::OcrText { .. } => PageKind::Ocr,
+                _ => PageKind::Text,
+            }),
+            lines: lines(&s.text, span),
+            ocr_quality: s.ocr.as_ref().and_then(|o| o.mean_confidence()),
+        })
+    }
+}
+
+/// A text as lines, the part of `hit` in each line marked.
+fn lines(text: &str, hit: Option<Span>) -> Vec<Marked> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    for line in text.split('\n') {
+        let len = line.chars().count();
+        let (s, e) = (at, at + len);
+        out.push(match hit {
+            Some(h) if h.start() < e.max(s + 1) && h.end() > s => {
+                Marked::split(line, h.start().max(s) - s, h.end().min(e) - s)
+            }
+            _ => Marked::plain(line),
+        });
+        at = e + 1;
+    }
+    out
+}
+
+/// The JSON outline of some values: for each value, the keys on its path not already shown
+/// for the value before it, then the value.
+fn json_rows(segments: &[WindowSegment], mark: &dyn Fn(&WindowSegment) -> Marked) -> Vec<JsonRow> {
+    let mut rows = Vec::new();
+    let mut shown: Vec<String> = Vec::new();
+    for s in segments {
+        let Locator::JsonValue { pointer, .. } = &s.locator else {
+            continue;
+        };
+        let tokens = pointer_tokens(pointer);
+        let Some((last, path)) = tokens.split_last() else {
+            rows.push(JsonRow {
+                depth: 0,
+                label: "$".into(),
+                value: Some(mark(s)),
+            });
+            shown.clear();
+            continue;
+        };
+        let same = shown.iter().zip(path).take_while(|(a, b)| a == b).count();
+        for (depth, token) in path.iter().enumerate().skip(same) {
+            rows.push(JsonRow {
+                depth: depth as u32,
+                label: label(token),
+                value: None,
+            });
+        }
+        rows.push(JsonRow {
+            depth: path.len() as u32,
+            label: label(last),
+            value: Some(mark(s)),
+        });
+        shown = path.to_vec();
+    }
+    rows
+}
+
+/// The tokens of an RFC 6901 pointer, unescaped.
+fn pointer_tokens(pointer: &str) -> Vec<String> {
+    pointer
+        .split('/')
+        .skip(1)
+        .map(|t| t.replace("~1", "/").replace("~0", "~"))
+        .collect()
+}
+
+/// An array index as `[n]`, a key as itself.
+fn label(token: &str) -> String {
+    if !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit()) {
+        format!("[{token}]")
+    } else {
+        token.to_string()
     }
 }
 
@@ -263,6 +598,57 @@ mod tests {
         assert_eq!((past.before.as_str(), past.hit.as_str()), ("a", "b"));
     }
 
+    /// US-08.1 AC4: a body hit is marked in its line, across lines too.
+    #[test]
+    fn lines_mark_the_hit_in_its_line() {
+        let got = lines(
+            "Hi,\nmail a@x.example\nbye",
+            Some(Span::new(9, 20, 25).unwrap()),
+        );
+        assert_eq!(got[0], Marked::plain("Hi,"));
+        assert_eq!(got[1].hit, "a@x.example");
+        assert_eq!(got[2], Marked::plain("bye"));
+        let across = lines("ab\ncd", Some(Span::new(1, 4, 5).unwrap()));
+        assert_eq!((across[0].hit.as_str(), across[1].hit.as_str()), ("b", "c"));
+    }
+
+    /// US-08.1 AC5: the path to each value is shown once, arrays as `[n]`.
+    #[test]
+    fn json_outline_shows_the_path() {
+        let seg = |pointer: &str, text: &str| WindowSegment {
+            id: 0,
+            ordinal: 0,
+            locator: Locator::JsonValue {
+                pointer: pointer.into(),
+                span: Span::new(0, text.chars().count(), text.chars().count()).unwrap(),
+            },
+            text: text.into(),
+            malformed: false,
+            cell_starts: Vec::new(),
+            ocr: None,
+        };
+        let segs = [
+            seg("/customers/12/name", "Anna"),
+            seg("/customers/12/phone", "+44"),
+            seg("/a~1b", "x"),
+        ];
+        let rows: Vec<(u32, String, Option<String>)> =
+            json_rows(&segs, &|s| Marked::plain(s.text.clone()))
+                .into_iter()
+                .map(|r| (r.depth, r.label, r.value.map(|v| v.before)))
+                .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (0, "customers".into(), None),
+                (1, "[12]".into(), None),
+                (2, "name".into(), Some("Anna".into())),
+                (2, "phone".into(), Some("+44".into())),
+                (0, "a/b".into(), Some("x".into())),
+            ]
+        );
+    }
+
     #[test]
     fn cells_split_on_starts_and_mark_the_hit_cell() {
         let seg = WindowSegment {
@@ -272,6 +658,7 @@ mod tests {
             text: "Zoë\tz@x.example\t3".into(),
             malformed: false,
             cell_starts: vec![0, 4, 16],
+            ocr: None,
         };
         let hit = Span::new(4, 15, 17).unwrap();
         let got = cells(&seg, Some(hit));

@@ -10,4 +10,10 @@ spikeS2d: SpikeS2dInfo | null,
  * Time "event received → list re-rendered" and save it with `record_ui_timing`
  * (`MK_UI_TIMING=1`, NFR-PERF-34).
  */
-uiTiming: boolean, };
+uiTiming: boolean, 
+/**
+ * Once ingestion ends, open the source view of every mention and every linked document,
+ * then save the counts with `record_view_sweep` (`MK_UI_TIMING=1` and `MK_VIEW_SWEEP=1`;
+ * the NFR-SEC-09 network check).
+ */
+viewSweep: boolean, };

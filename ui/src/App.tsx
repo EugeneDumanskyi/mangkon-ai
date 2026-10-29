@@ -54,7 +54,11 @@ export function App() {
         {info.data?.spikeS2d ? (
           <S2dScreen autorun={info.data.spikeS2d.autorun} />
         ) : project.data ? (
-          <ProjectScreen project={project.data} uiTiming={info.data?.uiTiming ?? false} />
+          <ProjectScreen
+            project={project.data}
+            uiTiming={info.data?.uiTiming ?? false}
+            viewSweep={info.data?.viewSweep ?? false}
+          />
         ) : (
           project.isSuccess && <StartScreen />
         )}

@@ -5,8 +5,8 @@
 # files (by `file` name) to build offline; nothing is downloaded then.
 #
 # GitHub publishes no digest for tag archives or for files in a tag, so the SHA-256 values were
-# pinned on first download (2026-10-24), as in M0c. The tessdata value matches
-# spikes/pdf-bakeoff/ocr-models.json. To bump a version: change `version`, `url` and `file`,
+# pinned on first download (2026-10-24), as in M0c (the tessdata value is the one spike S0
+# pinned). To bump a version: change `version`, `url` and `file`,
 # download once, check the release notes, and pin the new hash.
 
 [[source]]

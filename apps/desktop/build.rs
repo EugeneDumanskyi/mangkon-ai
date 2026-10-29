@@ -14,8 +14,12 @@ const COMMANDS: &[&str] = &[
     "connections_page",
     "occurrences",
     "source_context",
+    "source_document",
+    "page_view",
+    "page_image",
     "subscribe",
     "record_ui_timing",
+    "record_view_sweep",
 ];
 const SPIKE_COMMANDS: &[&str] = &["synthetic_rows", "record_frame_stats"];
 

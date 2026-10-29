@@ -22,11 +22,15 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [Engine bake-off](docs/08-engine-bakeoff.md) | PDF and OCR engine measurements (spike S0), the `Locator` design |
 | [Model check](docs/09-model-check.md) | Local model quality and speed, embeddings with binary vectors, hardware tiers (spike S1) |
 | [Walking skeleton](docs/10-walking-skeleton.md) | Build time, app size, and the 100,000-row scroll test (M2 spikes) |
+| [Ingestion](docs/11-ingestion.md) | Streaming, PDF, OCR and page view measurements (M3) |
 | [Install llama.cpp](docs/install-llama-cpp.md) | The `llama-server` prerequisite: minimum build, install options per OS |
+| [Add OCR languages](docs/install-ocr-languages.md) | English is built in; where other Tesseract language files go |
 
 ## Prerequisites
 
 Local AI needs `llama-server` from llama.cpp, build 10863 or newer, installed by you ([install guide](docs/install-llama-cpp.md)). The app finds it and checks its version; it never downloads it. Without it, everything except AI extraction and meaning search still works.
+
+OCR reads English out of the box. For other languages, copy Tesseract's language files into the app's folder ([how](docs/install-ocr-languages.md)); the app never downloads them.
 
 ## Build from source
 

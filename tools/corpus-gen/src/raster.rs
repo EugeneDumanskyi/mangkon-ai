@@ -386,6 +386,35 @@ pub fn jpeg_gray(w: u32, h: u32, px: &[u8], dpi: u32, quality: u8) -> Vec<u8> {
     out
 }
 
+/// A multi-page TIFF: one LZW grey image per page, each `(width, height, pixels)`.
+pub fn tiff_gray_pages(pages: &[(u32, u32, &[u8])], dpi: u32) -> Vec<u8> {
+    use tiff::encoder::{Compression, Rational, TiffEncoder, colortype};
+    use tiff::tags::ResolutionUnit;
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut enc = TiffEncoder::new(&mut buf)
+            .expect("tiff")
+            .with_compression(Compression::Lzw);
+        for (w, h, px) in pages {
+            let mut img = enc
+                .new_image::<colortype::Gray8>(*w, *h)
+                .expect("tiff image");
+            img.resolution(ResolutionUnit::Inch, Rational { n: dpi, d: 1 });
+            img.write_data(px).expect("tiff data");
+        }
+    }
+    buf.into_inner()
+}
+
+/// A lossless WEBP of grey pixels (WEBP keeps no resolution).
+pub fn webp_gray(w: u32, h: u32, px: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    image_webp::WebPEncoder::new(&mut out)
+        .encode(px, w, h, image_webp::ColorType::L8)
+        .expect("webp");
+    out
+}
+
 pub fn tiff_gray(w: u32, h: u32, px: &[u8], dpi: u32) -> Vec<u8> {
     use tiff::encoder::{Compression, Rational, TiffEncoder, colortype};
     use tiff::tags::ResolutionUnit;

@@ -505,6 +505,84 @@ fn zip_with_comment(bytes: &[u8], text: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// W3a-2 (M3a): an MBOX of at most `target` bytes (just under it) for the NFR-PERF-23 /
+/// NFR-CAP-06 watch.
+/// Messages of ~2-4 KB with addresses from the same pools as `csv_rows`; every 20th has a small
+/// CSV attachment in base64. Returns (bytes, messages).
+pub fn mbox_messages(path: &Path, target: u64, seed: u64) -> Result<(u64, u64), Vec<String>> {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let err = |e: std::io::Error| vec![format!("{}: {e}", path.display())];
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(err)?;
+    }
+    let file = std::fs::File::create(path).map_err(err)?;
+    let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
+    let pools = Pools::new(seed);
+    let mut rng = ChaCha20Rng::seed_from_u64(seed ^ 0x3a2_0001);
+    let mut bytes = 0u64;
+    let mut n = 0u64;
+    let mut msg = String::new();
+    loop {
+        let mut email = || pools.emails[pools.email_zipf.sample(&mut rng)].clone();
+        let (from, to, cc) = (email(), email(), email());
+        let (day, hour) = (1 + rng.next_u32() % 28, rng.next_u32() % 24);
+        msg.clear();
+        msg.push_str(&format!(
+            "From {from} Mon Mar {day:02} {hour:02}:00:00 2025\n\
+             From: {from}\nTo: {to}\nCc: {cc}\nSubject: Transfer batch {n}\n\
+             Date: Mon, {day:02} Mar 2025 {hour:02}:00:00 +0000\n\
+             Message-ID: <batch-{n}@mbox.example>\nMIME-Version: 1.0\n"
+        ));
+        let paragraphs = 3 + rng.next_u32() % 6;
+        let mut body = String::new();
+        for p in 0..paragraphs {
+            body.push_str(&format!(
+                "Paragraph {p} of batch {n}. The transfer to account {} was booked for {}.{:02}; \
+                 questions go to {} before the cutoff. The ledger copy follows in the next \
+                 message of this thread.\n\n",
+                pools.ibans[pools.iban_zipf.sample(&mut rng)],
+                rng.next_u32() % 100_000,
+                rng.next_u32() % 100,
+                pools.emails[pools.email_zipf.sample(&mut rng)],
+            ));
+        }
+        if n.is_multiple_of(20) {
+            let mut csv = String::from("date,amount,email\n");
+            for r in 0..20 {
+                csv.push_str(&format!(
+                    "2025-03-{day:02},{r}.00,{}\n",
+                    pools.emails[pools.email_zipf.sample(&mut rng)]
+                ));
+            }
+            let b64 = base64::engine::general_purpose::STANDARD.encode(csv);
+            msg.push_str(&format!(
+                "Content-Type: multipart/mixed; boundary=\"b{n}\"\n\n--b{n}\n\
+                 Content-Type: text/plain; charset=utf-8\n\n{body}--b{n}\n\
+                 Content-Type: text/csv; name=\"batch-{n}.csv\"\n\
+                 Content-Disposition: attachment; filename=\"batch-{n}.csv\"\n\
+                 Content-Transfer-Encoding: base64\n\n"
+            ));
+            for line in b64.as_bytes().chunks(76) {
+                msg.push_str(std::str::from_utf8(line).expect("ascii"));
+                msg.push('\n');
+            }
+            msg.push_str(&format!("--b{n}--\n\n"));
+        } else {
+            msg.push_str("Content-Type: text/plain; charset=utf-8\n\n");
+            msg.push_str(&body);
+        }
+        if bytes + msg.len() as u64 > target {
+            break;
+        }
+        out.write_all(msg.as_bytes()).map_err(err)?;
+        bytes += msg.len() as u64;
+        n += 1;
+    }
+    out.flush().map_err(err)?;
+    Ok((bytes, n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

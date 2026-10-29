@@ -1,6 +1,6 @@
 # ADR-0007: Parser isolation — worker processes with time and memory limits
 
-- **Status:** Accepted
+- **Status:** Accepted (MBOX time limit and chunk buffering amended by [ADR-0016](0016-streamed-file-limits.md), Proposed)
 - **Date:** 2026-10-12
 - **Related:** NFR-REL-01/06/07, NFR-CAP-04..07, NFR-PERF-20..23/25, NFR-RES-02, NFR-REL-10, INV-CO-01/09, INV-PR-04/10, ADR-0001, ADR-0006
 

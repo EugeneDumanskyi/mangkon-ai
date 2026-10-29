@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import type { Progress } from "../ipc/bindings/Progress";
@@ -8,6 +8,7 @@ import { plural } from "../lib/labels";
 import { ConnectionsList } from "./ConnectionsList";
 import { OccurrencesPanel } from "./OccurrencesPanel";
 import { SourcePane } from "./SourcePane";
+import { runViewSweep } from "./viewSweep";
 
 /** Counts only in M2d (US-03.1 AC1); stage, ETA and current file come in M3. */
 function ProgressLine({ progress }: { progress: Progress }) {
@@ -20,7 +21,15 @@ function ProgressLine({ progress }: { progress: Progress }) {
   );
 }
 
-export function ProjectScreen({ project, uiTiming }: { project: ProjectInfo; uiTiming: boolean }) {
+export function ProjectScreen({
+  project,
+  uiTiming,
+  viewSweep = false,
+}: {
+  project: ProjectInfo;
+  uiTiming: boolean;
+  viewSweep?: boolean;
+}) {
   const client = useQueryClient();
   const [selected, setSelected] = useState<ConnectionItem | null>(null);
   const [mention, setMention] = useState<number | null>(null);
@@ -45,6 +54,19 @@ export function ProjectScreen({ project, uiTiming }: { project: ProjectInfo; uiT
     },
   });
   const error = add.error ?? close.error;
+
+  // Scripted runs only: once every file is read, open every source view (NFR-SEC-09 check).
+  const swept = useRef(false);
+  const p = progress.data;
+  const finished = p !== undefined && !p.ingesting && p.total > 0 && p.queued === 0;
+  useEffect(() => {
+    if (!viewSweep || !finished || swept.current) return;
+    swept.current = true;
+    void runViewSweep((c, m) => {
+      setSelected(c);
+      setMention(m);
+    }).then(commands.recordViewSweep);
+  }, [viewSweep, finished]);
   const empty = project.sources.length === 0 && (progress.data?.total ?? 0) === 0;
 
   return (

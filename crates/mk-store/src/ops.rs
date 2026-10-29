@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use mk_corpus::{IngestionState, PathChange};
 use mk_graph::DecisionKind;
 use mk_jobs::{ItemState, JobState, Stage, Trigger};
-use mk_kernel::{ContentHash, IdentifierKey, Locator};
+use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::StoreError;
@@ -57,6 +57,8 @@ pub struct StageAOutput {
 pub struct DocumentOut {
     pub kind: String,
     pub position: String,
+    /// Index of the document this one is an attachment of; it comes earlier (INV-CO-05).
+    pub parent: Option<u32>,
     pub segments: Vec<SegmentOut>,
 }
 
@@ -66,6 +68,8 @@ pub struct SegmentOut {
     pub text: String,
     pub malformed: bool,
     pub cell_starts: Vec<u32>,
+    /// OCR'd pages: the word geometry, built from exactly `text` (US-02.2 AC3).
+    pub ocr: Option<OcrGeometry>,
 }
 
 /// An identifier mention at `locator` (line + span, or row + column + span) of a segment.
@@ -79,6 +83,56 @@ pub struct MentionOut {
     pub raw: String,
     pub key: IdentifierKey,
     pub confidence: f32,
+}
+
+/// One piece of a staged Stage A result, in the order the worker sent it (protocol v2): a
+/// document, then batches of its segments, each followed by the mentions in that batch.
+#[derive(Clone, PartialEq, Debug)]
+pub enum StagedPart {
+    /// Documents are numbered 0, 1, 2, … in order; `parent` is an earlier one.
+    Document {
+        kind: String,
+        position: String,
+        parent: Option<u32>,
+    },
+    Segments(Vec<SegmentOut>),
+    /// Mentions in the `Segments` batch just before. `document` is the current document's
+    /// number and `segment` the index in it.
+    Mentions(Vec<MentionOut>),
+}
+
+impl StageAOutput {
+    /// The output as staged parts: each document, all its segments, then its mentions.
+    pub fn into_parts(self) -> impl Iterator<Item = StagedPart> {
+        let mut by_doc: Vec<Vec<MentionOut>> = vec![Vec::new(); self.documents.len()];
+        for m in self.mentions {
+            if let Some(v) = by_doc.get_mut(m.document) {
+                v.push(m);
+            } else {
+                // Points at no document: kept so the commit rejects it.
+                if let Some(v) = by_doc.last_mut() {
+                    v.push(m);
+                }
+            }
+        }
+        self.documents
+            .into_iter()
+            .zip(by_doc)
+            .flat_map(|(doc, mentions)| {
+                let mut parts = vec![StagedPart::Document {
+                    kind: doc.kind,
+                    position: doc.position,
+                    parent: doc.parent,
+                }];
+                if !doc.segments.is_empty() {
+                    parts.push(StagedPart::Segments(doc.segments));
+                }
+                if !mentions.is_empty() {
+                    parts.push(StagedPart::Mentions(mentions));
+                }
+                parts
+            })
+    }
 }
 
 /// What a Stage A commit did.
@@ -276,6 +330,15 @@ fn ensure_content(
 }
 
 /// Adds a source root, or returns the id of the one with the same path.
+pub(crate) fn set_ocr_languages(conn: &Connection, languages: &str) -> Result<(), StoreError> {
+    conn.execute(
+        "INSERT INTO project_meta (key, value) VALUES ('ocr_languages', ?1)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        [languages],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn add_source_root(
     conn: &Connection,
     path: &str,
@@ -546,10 +609,14 @@ pub(crate) fn start_item(conn: &Connection, item: i64) -> Result<Option<StartedI
 /// Commits a Stage A result (INV-PR-04, INV-CO-06, ADR-0005): the content's old documents,
 /// segments and mentions are replaced by the new ones, the touched keys are rebuilt, and the
 /// item and content become Done, all in this one transaction.
+///
+/// The parts are read in order and written as they come; only the current segment batch is
+/// held, so a streamed file of any size commits in O(batch) memory (§4 #16, ADR-0016).
 pub(crate) fn commit_stage_a(
     conn: &Connection,
     item: i64,
-    output: &StageAOutput,
+    parts: impl Iterator<Item = Result<StagedPart, StoreError>>,
+    warnings: &[String],
 ) -> Result<CommitOutcome, StoreError> {
     let (job, content) = set_item_state(conn, item, ItemState::Done)?;
     let content = content.ok_or_else(|| invalid(format!("item {item} has no content")))?;
@@ -561,90 +628,139 @@ pub(crate) fn commit_stage_a(
         .execute([content])?;
 
     let mut out = CommitOutcome::default();
-    let mut doc_ids: Vec<i64> = Vec::with_capacity(output.documents.len());
-    let mut segment_ids: Vec<Vec<i64>> = Vec::with_capacity(output.documents.len());
-    {
-        let mut insert_doc = conn.prepare_cached(
-            "INSERT INTO document (content_id, position, kind) VALUES (?1, ?2, ?3)",
-        )?;
-        let mut insert_seg = conn.prepare_cached(
-            "INSERT INTO segment (document_id, ordinal, loc_kind, loc_pos, text, malformed,
-                                  cell_starts)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?;
-        for doc in &output.documents {
-            insert_doc.execute(params![content, doc.position, doc.kind])?;
-            let doc_id = conn.last_insert_rowid();
-            doc_ids.push(doc_id);
-            let mut ids = Vec::with_capacity(doc.segments.len());
-            for (ordinal, seg) in doc.segments.iter().enumerate() {
-                let (kind, pos) = codec::segment_locator(&seg.locator)?;
-                insert_seg.execute(params![
-                    doc_id,
-                    ordinal as i64,
-                    kind,
-                    pos,
-                    seg.text,
-                    seg.malformed,
-                    codec::cells_to_blob(&seg.cell_starts)
-                ])?;
-                ids.push(conn.last_insert_rowid());
+    let mut doc_ids: Vec<i64> = Vec::new();
+    // The current document's segment count, and the last batch: its first index and, per
+    // segment, (id, character count, cell starts).
+    let mut ordinal = 0usize;
+    let mut batch_start = 0usize;
+    let mut batch: Vec<(i64, usize, Vec<u32>)> = Vec::new();
+    let mut insert_doc = conn.prepare_cached(
+        "INSERT INTO document (content_id, parent_id, position, kind) VALUES (?1, ?2, ?3, ?4)",
+    )?;
+    let mut insert_seg = conn.prepare_cached(
+        "INSERT INTO segment (document_id, ordinal, loc_kind, loc_pos, loc_ref, text, malformed,
+                              cell_starts, ocr)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    )?;
+    let mut insert_mention = conn.prepare_cached(
+        "INSERT INTO identifier_mention (segment_id, document_id, content_id, identifier_key,
+             span_start, span_end, column_index, column_name, raw, confidence, found_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'builtin')",
+    )?;
+    for part in parts {
+        match part? {
+            StagedPart::Document {
+                kind,
+                position,
+                parent,
+            } => {
+                let parent_id = match parent {
+                    Some(p) => Some(
+                        *doc_ids
+                            .get(p as usize)
+                            .ok_or_else(|| invalid("document parent is not an earlier one"))?,
+                    ),
+                    None => None,
+                };
+                insert_doc.execute(params![content, parent_id, position, kind])?;
+                doc_ids.push(conn.last_insert_rowid());
+                ordinal = 0;
+                batch_start = 0;
+                batch.clear();
             }
-            out.segments += ids.len();
-            segment_ids.push(ids);
+            StagedPart::Segments(segments) => {
+                let doc_id = *doc_ids
+                    .last()
+                    .ok_or_else(|| invalid("segments before any document"))?;
+                batch_start = ordinal;
+                batch.clear();
+                for seg in segments {
+                    let loc = codec::segment_locator(&seg.locator)?;
+                    // An OCR segment has the geometry of exactly its text (INV-CO-04); others
+                    // have none.
+                    let ocr = match (&seg.locator, &seg.ocr) {
+                        (Locator::OcrText { .. }, Some(g))
+                            if g.text_hash() == ContentHash::of(seg.text.as_bytes()) =>
+                        {
+                            Some(codec::ocr_to_blob(g))
+                        }
+                        (Locator::OcrText { .. }, _) => {
+                            return Err(invalid("OCR segment without the geometry of its text"));
+                        }
+                        (_, None) => None,
+                        (_, Some(_)) => return Err(invalid("OCR geometry on a non-OCR segment")),
+                    };
+                    insert_seg.execute(params![
+                        doc_id,
+                        ordinal as i64,
+                        loc.kind,
+                        loc.pos,
+                        loc.loc_ref,
+                        seg.text,
+                        seg.malformed,
+                        codec::cells_to_blob(&seg.cell_starts),
+                        ocr
+                    ])?;
+                    batch.push((
+                        conn.last_insert_rowid(),
+                        seg.text.chars().count(),
+                        seg.cell_starts,
+                    ));
+                    ordinal += 1;
+                }
+                out.segments += batch.len();
+            }
+            StagedPart::Mentions(mentions) => {
+                for m in mentions {
+                    if m.document + 1 != doc_ids.len() {
+                        return Err(invalid("mention points to no segment"));
+                    }
+                    let (seg_id, len, cells) = m
+                        .segment
+                        .checked_sub(batch_start)
+                        .and_then(|i| batch.get(i))
+                        .ok_or_else(|| invalid("mention points to no segment"))?;
+                    let span = m
+                        .locator
+                        .span()
+                        .ok_or_else(|| invalid("mention locator has no span"))?;
+                    // INV-CO-04: the span lies in the segment's stored text.
+                    if span.end() > *len {
+                        return Err(invalid("mention span is past its segment text"));
+                    }
+                    let cell = (!cells.is_empty()).then(|| {
+                        cells
+                            .partition_point(|s| *s as usize <= span.start())
+                            .saturating_sub(1)
+                    });
+                    let (column_index, column_name) = codec::column(&m.locator, cell);
+                    if !(0.0..=1.0).contains(&m.confidence) {
+                        return Err(invalid("confidence outside 0..1"));
+                    }
+                    let key = m.key.to_string();
+                    insert_mention.execute(params![
+                        seg_id,
+                        doc_ids[m.document],
+                        content,
+                        key,
+                        span.start() as i64,
+                        span.end() as i64,
+                        column_index,
+                        column_name,
+                        m.raw,
+                        f64::from(m.confidence)
+                    ])?;
+                    touched.insert(key);
+                    out.mentions += 1;
+                }
+            }
         }
     }
-    {
-        let mut insert = conn.prepare_cached(
-            "INSERT INTO identifier_mention (segment_id, document_id, content_id, identifier_key,
-                 span_start, span_end, column_index, column_name, raw, confidence, found_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'builtin')",
-        )?;
-        for m in &output.mentions {
-            let seg_id = *segment_ids
-                .get(m.document)
-                .and_then(|s| s.get(m.segment))
-                .ok_or_else(|| invalid("mention points to no segment"))?;
-            let seg = &output.documents[m.document].segments[m.segment];
-            let span = m
-                .locator
-                .span()
-                .ok_or_else(|| invalid("mention locator has no span"))?;
-            // INV-CO-04: the span lies in the segment's stored text.
-            if span.end() > seg.text.chars().count() {
-                return Err(invalid("mention span is past its segment text"));
-            }
-            let cell = (!seg.cell_starts.is_empty()).then(|| {
-                seg.cell_starts
-                    .partition_point(|s| *s as usize <= span.start())
-                    .saturating_sub(1)
-            });
-            let (column_index, column_name) = codec::column(&m.locator, cell);
-            if !(0.0..=1.0).contains(&m.confidence) {
-                return Err(invalid("confidence outside 0..1"));
-            }
-            let key = m.key.to_string();
-            insert.execute(params![
-                seg_id,
-                doc_ids[m.document],
-                content,
-                key,
-                span.start() as i64,
-                span.end() as i64,
-                column_index,
-                column_name,
-                m.raw,
-                f64::from(m.confidence)
-            ])?;
-            touched.insert(key);
-        }
-    }
-    out.mentions = output.mentions.len();
     conn.prepare_cached(
         "UPDATE content SET warnings = ?2, failure_code = NULL, failure_reason = NULL
          WHERE id = ?1",
     )?
-    .execute(params![content, output.warnings.join("\n")])?;
+    .execute(params![content, warnings.join("\n")])?;
     out.touched_keys = touched.len();
     out.connections_changed = rebuild_keys(conn, &touched)?;
     complete_job_if_done(conn, job)?;

@@ -85,6 +85,11 @@
           "description": "The parser process dies (TD-3 v2: a test fault).",
           "type": "string",
           "const": "crash"
+        },
+        {
+          "description": "A valid file of a less common shape: a multi-page TIFF, a WEBP, a scan inside an email\n(TD-3 v4).",
+          "type": "string",
+          "const": "format"
         }
       ]
     },

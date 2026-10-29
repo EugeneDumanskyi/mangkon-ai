@@ -10,11 +10,13 @@ leptonica 1.87.0 | BSD-2-Clause | https://github.com/DanBloomberg/leptonica
 tessdata_fast-eng 4.1.0 | Apache-2.0 | https://github.com/tesseract-ocr/tessdata_fast
 tesseract 5.5.2 | Apache-2.0 | https://github.com/tesseract-ocr/tesseract
 
-## Rust crates (340)
+## Rust crates (397)
 
 adler2 2.0.1 | 0BSD OR MIT OR Apache-2.0 | https://github.com/oyvindln/adler2
 aho-corasick 1.1.5 | Unlicense OR MIT | https://github.com/BurntSushi/aho-corasick
+alloc-no-stdlib 2.0.4 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib
 alloc-no-stdlib 3.0.0 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib
+alloc-stdlib 0.2.4 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib
 alloc-stdlib 0.3.0 | BSD-3-Clause | https://github.com/dropbox/rust-alloc-no-stdlib
 anyhow 1.0.104 | MIT OR Apache-2.0 | https://github.com/dtolnay/anyhow
 arrayvec 0.7.8 | MIT OR Apache-2.0 | https://github.com/bluss/arrayvec
@@ -29,10 +31,16 @@ bitflags 2.13.2 | MIT OR Apache-2.0 | https://github.com/bitflags/bitflags
 blake3 1.8.7 | CC0-1.0 OR Apache-2.0 OR Apache-2.0 WITH LLVM-exception | https://github.com/BLAKE3-team/BLAKE3
 block-buffer 0.10.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils
 block2 0.6.2 | MIT | https://github.com/madsmtm/objc2
+brotli 8.0.4 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli
 brotli 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli
+brotli-decompressor 5.0.3 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor
 brotli-decompressor 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor
 bs58 0.5.1 | MIT/Apache-2.0 | https://github.com/Nullus157/bs58-rs
+bumpalo 3.20.3 | MIT OR Apache-2.0 | https://github.com/fitzgen/bumpalo
+bytemuck 1.25.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/bytemuck
+bytemuck_derive 1.12.1 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/bytemuck
 byteorder 1.5.0 | Unlicense OR MIT | https://github.com/BurntSushi/byteorder
+byteorder-lite 0.1.0 | Unlicense OR MIT | https://github.com/image-rs/byteorder-lite
 bytes 1.12.1 | MIT | https://github.com/tokio-rs/bytes
 cairo-rs 0.18.5 | MIT | https://github.com/gtk-rs/gtk-rs-core
 cairo-sys-rs 0.18.2 | MIT | https://github.com/gtk-rs/gtk-rs-core
@@ -43,12 +51,14 @@ cfb 0.14.0 | MIT | https://github.com/mdsteele/rust-cfb
 cfg-if 1.0.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/cfg-if
 chrono 0.4.45 | MIT OR Apache-2.0 | https://github.com/chronotope/chrono
 cobs 0.3.0 | MIT OR Apache-2.0 | https://github.com/jamesmunns/cobs.rs
+color 0.3.3 | Apache-2.0 OR MIT | https://github.com/linebender/color
 constant_time_eq 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://github.com/cesarb/constant_time_eq
 cookie 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs
 core-foundation 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs
 core-foundation-sys 0.8.7 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs
 core-graphics 0.25.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs
 core-graphics-types 0.2.0 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs
+core_detect 1.0.0 | MIT/Apache-2.0 | https://github.com/thomcc/core_detect
 cpufeatures 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils
 cpufeatures 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils
 crc32fast 1.5.3 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast
@@ -86,17 +96,23 @@ dyn-clone 1.0.20 | MIT OR Apache-2.0 | https://github.com/dtolnay/dyn-clone
 embed_plist 1.2.2 | MIT OR Apache-2.0 | https://github.com/nvzqz/embed-plist-rs
 embedded-io 0.4.0 | MIT OR Apache-2.0 | https://github.com/embassy-rs/embedded-io
 embedded-io 0.6.1 | MIT OR Apache-2.0 | https://github.com/rust-embedded/embedded-hal
+encoding_rs 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause | https://github.com/hsivonen/encoding_rs
 equivalent 1.0.3 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/equivalent
 erased-serde 0.4.10 | MIT OR Apache-2.0 | https://github.com/dtolnay/erased-serde
 errno 0.3.14 | MIT OR Apache-2.0 | https://github.com/lambda-fairy/rust-errno
+euclid 0.22.14 | MIT OR Apache-2.0 | https://github.com/servo/euclid
 fallible-iterator 0.3.0 | MIT/Apache-2.0 | https://github.com/sfackler/rust-fallible-iterator
 fallible-streaming-iterator 0.1.9 | MIT/Apache-2.0 | https://github.com/sfackler/fallible-streaming-iterator
 fastrand 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/fastrand
+fax 0.2.7 | MIT | https://github.com/pdf-rs/fax
 fdeflate 0.3.7 | MIT OR Apache-2.0 | https://github.com/image-rs/fdeflate
+fearless_simd 0.7.0 | Apache-2.0 OR MIT | https://github.com/linebender/fearless_simd
+fearless_simd 1.2.0 | Apache-2.0 OR MIT | https://github.com/linebender/fearless_simd
 field-offset 0.3.6 | MIT OR Apache-2.0 | https://github.com/Diggsey/rust-field-offset
 flate2 1.1.10 | MIT OR Apache-2.0 | https://github.com/rust-lang/flate2-rs
 fnv 1.0.7 | Apache-2.0 / MIT | https://github.com/servo/rust-fnv
 foldhash 0.2.0 | Zlib | https://github.com/orlp/foldhash
+font-types 0.12.7 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations
 foreign-types 0.5.0 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types
 foreign-types-macros 0.2.4 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types
 foreign-types-shared 0.3.1 | MIT/Apache-2.0 | https://github.com/sfackler/foreign-types
@@ -124,14 +140,26 @@ gio-sys 0.18.1 | MIT | https://github.com/gtk-rs/gtk-rs-core
 glib 0.18.5 | MIT | https://github.com/gtk-rs/gtk-rs-core
 glib-macros 0.18.5 | MIT | https://github.com/gtk-rs/gtk-rs-core
 glib-sys 0.18.1 | MIT | https://github.com/gtk-rs/gtk-rs-core
+glifo 0.4.0 | Apache-2.0 OR MIT | https://github.com/linebender/vello
 glob 0.3.4 | MIT OR Apache-2.0 | https://github.com/rust-lang/glob
 gobject-sys 0.18.0 | MIT | https://github.com/gtk-rs/gtk-rs-core
 gtk 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs
 gtk-sys 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs
 gtk3-macros 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs
+guillotiere 0.7.0 | MIT/Apache-2.0 | https://github.com/nical/guillotiere
+half 2.7.1 | MIT OR Apache-2.0 | https://github.com/VoidStarKat/half-rs
 hashbrown 0.12.3 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown
 hashbrown 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown
+hashify 0.2.9 | Apache-2.0 OR MIT | https://github.com/stalwartlabs/hashify
 hashlink 0.12.2 | MIT OR Apache-2.0 | https://github.com/djc/hashlink
+hayro 0.8.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-ccitt 0.4.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-cmap 0.1.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-interpret 0.8.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-jbig2 0.3.1 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-jpeg2000 0.4.1 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-postscript 0.1.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
+hayro-syntax 0.8.0 | Apache-2.0 OR MIT | https://github.com/LaurenzV/hayro
 heck 0.4.1 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck
 heck 0.5.0 | MIT OR Apache-2.0 | https://github.com/withoutboats/heck
 hex 0.4.3 | MIT OR Apache-2.0 | https://github.com/KokaKiwi/rust-hex
@@ -149,6 +177,8 @@ icu_provider 2.4.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 ident_case 1.0.1 | MIT/Apache-2.0 | https://github.com/TedDriggs/ident_case
 idna 1.1.0 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/
 idna_adapter 1.2.2 | Apache-2.0 OR MIT | https://github.com/hsivonen/idna_adapter
+image 0.25.10 | MIT OR Apache-2.0 | https://github.com/image-rs/image
+image-webp 0.2.4 | MIT OR Apache-2.0 | https://github.com/image-rs/image-webp
 indexmap 1.9.3 | Apache-2.0 OR MIT | https://github.com/bluss/indexmap
 indexmap 2.14.2 | Apache-2.0 OR MIT | https://github.com/indexmap-rs/indexmap
 infer 0.22.0 | MIT | https://github.com/bojand/infer
@@ -162,16 +192,19 @@ jiff-tzdb-platform 0.1.3 | Unlicense OR MIT | https://github.com/BurntSushi/jiff
 json-patch 4.2.0 | MIT/Apache-2.0 | https://github.com/idubrov/json-patch
 jsonptr 0.7.1 | MIT OR Apache-2.0 | https://github.com/chanced/jsonptr
 keyboard-types 0.8.3 | MIT OR Apache-2.0 | https://github.com/rust-windowing/keyboard-types
+kurbo 0.13.1 | Apache-2.0 OR MIT | https://github.com/linebender/kurbo
 libappindicator 0.9.0 | Apache-2.0 OR MIT
 libappindicator-sys 0.9.0 | Apache-2.0 OR MIT
 libc 0.2.191 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc
 libdbus-sys 0.2.7 | Apache-2.0/MIT | https://github.com/diwic/dbus-rs
 libloading 0.7.4 | ISC | https://github.com/nagisa/rust_libloading/
 libsqlite3-sys 0.39.1 | MIT | https://github.com/rusqlite/rusqlite
+linebender_resource_handle 0.1.1 | Apache-2.0 OR MIT | https://github.com/linebender/raw_resource_handle
 linux-raw-sys 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/sunfishcode/linux-raw-sys
 litemap 0.8.3 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 lock_api 0.4.14 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot
 log 0.4.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/log
+mail-parser 0.11.9 | Apache-2.0 OR MIT | https://github.com/stalwartlabs/mail-parser
 markup5ever 0.39.0 | MIT OR Apache-2.0 | https://github.com/servo/html5ever
 memchr 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr
 memoffset 0.9.1 | MIT | https://github.com/Gilnaa/memoffset
@@ -179,8 +212,11 @@ mime 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime
 miniz_oxide 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 miniz_oxide 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide
 mio 1.2.4 | MIT | https://github.com/tokio-rs/mio
+moxcms 0.8.1 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/moxcms.git
 muda 0.20.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/muda
+multiversion_no_op 1.0.0 | Apache-2.0 OR MIT | https://github.com/hsivonen/multiversion_no_op
 new_debug_unreachable 1.0.6 | MIT | https://github.com/mbrubeck/rust-debug-unreachable
+nix 0.31.3 | MIT | https://github.com/nix-rust/nix
 ntapi 0.4.3 | Apache-2.0 OR MIT | https://github.com/MSxDOS/ntapi
 num-conv 0.2.2 | MIT OR Apache-2.0 | https://github.com/jhpratt/num-conv
 num-traits 0.2.19 | MIT OR Apache-2.0 | https://github.com/rust-num/num-traits
@@ -201,14 +237,17 @@ pango 0.18.3 | MIT | https://github.com/gtk-rs/gtk-rs-core
 pango-sys 0.18.0 | MIT | https://github.com/gtk-rs/gtk-rs-core
 parking_lot 0.12.5 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot
 parking_lot_core 0.9.12 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot
+peniko 0.6.1 | Apache-2.0 OR MIT | https://github.com/linebender/peniko
 percent-encoding 2.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/
 phf 0.13.1 | MIT | https://github.com/rust-phf/rust-phf
 phf_generator 0.13.1 | MIT | https://github.com/rust-phf/rust-phf
 phf_macros 0.13.1 | MIT | https://github.com/rust-phf/rust-phf
 phf_shared 0.13.1 | MIT | https://github.com/rust-phf/rust-phf
+pic-scale 0.7.12 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/pic-scale
 pin-project-lite 0.2.17 | Apache-2.0 OR MIT | https://github.com/taiki-e/pin-project-lite
 plist 1.10.3 | MIT | https://github.com/ebarnard/rust-plist/
 png 0.18.1 | MIT OR Apache-2.0 | https://github.com/image-rs/image-png
+polycool 0.4.0 | MIT OR Apache-2.0 | https://github.com/linebender/kurbo
 postcard 1.1.3 | MIT OR Apache-2.0 | https://github.com/jamesmunns/postcard
 potential_utf 0.1.6 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 powerfmt 0.2.1 | MIT OR Apache-2.0 | https://github.com/jhpratt/powerfmt
@@ -218,10 +257,14 @@ proc-macro-crate 2.0.2 | MIT OR Apache-2.0 | https://github.com/bkchr/proc-macro
 proc-macro-error 1.0.4 | MIT OR Apache-2.0 | https://gitlab.com/CreepySkeleton/proc-macro-error
 proc-macro-error-attr 1.0.4 | MIT OR Apache-2.0 | https://gitlab.com/CreepySkeleton/proc-macro-error
 proc-macro2 1.0.107 | MIT OR Apache-2.0 | https://github.com/dtolnay/proc-macro2
+pxfm 0.1.30 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/pxfm
+quick-error 2.0.1 | MIT/Apache-2.0 | http://github.com/tailhook/quick-error
 quick-xml 0.42.0 | MIT | https://github.com/tafia/quick-xml
 quote 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote
 rand_core 0.10.1 | MIT OR Apache-2.0 | https://github.com/rust-random/rand_core
 raw-window-handle 0.6.2 | MIT OR Apache-2.0 OR Zlib | https://github.com/rust-windowing/raw-window-handle
+read-fonts 0.41.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations
+read-fonts 0.43.3 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations
 ref-cast 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast
 ref-cast-impl 1.0.27 | MIT OR Apache-2.0 | https://github.com/dtolnay/ref-cast
 regex 1.13.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/regex
@@ -258,7 +301,10 @@ serialize-to-javascript-impl 0.1.2 | MIT OR Apache-2.0 | https://github.com/chip
 servo_arc 0.4.3 | MIT OR Apache-2.0 | https://github.com/servo/stylo
 sha2 0.10.9 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes
 simd-adler32 0.3.10 | MIT | https://github.com/mcountryman/simd-adler32
+simdutf8 0.1.5 | MIT OR Apache-2.0 | https://github.com/rusticstuff/simdutf8
 siphasher 1.0.4 | MIT OR Apache-2.0 | https://github.com/jedisct1/rust-siphash
+skrifa 0.44.0 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations
+skrifa 0.46.2 | MIT OR Apache-2.0 | https://github.com/googlefonts/fontations
 slab 0.4.12 | MIT | https://github.com/tokio-rs/slab
 smallvec 1.16.4 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec
 socket2 0.6.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/socket2
@@ -287,6 +333,7 @@ thiserror 1.0.69 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror
 thiserror 2.0.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror
 thiserror-impl 1.0.69 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror
 thiserror-impl 2.0.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror
+tiff 0.11.3 | MIT | https://github.com/image-rs/image-tiff
 time 0.3.55 | MIT OR Apache-2.0 | https://github.com/time-rs/time
 time-core 0.1.9 | MIT OR Apache-2.0 | https://github.com/time-rs/time
 time-macros 0.2.32 | MIT OR Apache-2.0 | https://github.com/time-rs/time
@@ -305,6 +352,7 @@ tracing-core 0.1.36 | MIT | https://github.com/tokio-rs/tracing
 tray-icon 0.25.1 | MIT OR Apache-2.0 | https://github.com/tauri-apps/tray-icon
 ts-rs 12.0.1 | MIT | https://github.com/Aleph-Alpha/ts-rs
 ts-rs-macros 12.0.1 | MIT | https://github.com/Aleph-Alpha/ts-rs
+typed-path 0.12.4 | MIT OR Apache-2.0 | https://github.com/chipsenkbeil/typed-path
 typeid 1.0.3 | MIT OR Apache-2.0 | https://github.com/dtolnay/typeid
 typenum 1.20.1 | MIT OR Apache-2.0 | https://github.com/paholg/typenum
 unicode-ident 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident
@@ -313,6 +361,8 @@ url 2.5.8 | MIT OR Apache-2.0 | https://github.com/servo/rust-url
 urlpattern 0.6.0 | MIT | https://github.com/denoland/rust-urlpattern
 utf8_iter 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter
 uuid 1.29.0 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid
+vello_common 0.3.0 | Apache-2.0 OR MIT | https://github.com/linebender/vello
+vello_cpu 0.3.0 | Apache-2.0 OR MIT | https://github.com/linebender/vello
 walkdir 2.5.0 | Unlicense/MIT | https://github.com/BurntSushi/walkdir
 web-time 1.1.0 | MIT OR Apache-2.0 | https://github.com/daxpedda/web-time
 web_atoms 0.2.6 | MIT OR Apache-2.0 | https://github.com/servo/html5ever
@@ -321,6 +371,7 @@ webkit2gtk-sys 2.0.2 | MIT | https://github.com/tauri-apps/webkit2gtk-rs
 webview2-com 0.39.1 | MIT | https://github.com/wravery/webview2-rs
 webview2-com-macros 0.8.1 | MIT | https://github.com/wravery/webview2-rs
 webview2-com-sys 0.39.1 | MIT | https://github.com/wravery/webview2-rs
+weezl 0.1.12 | MIT OR Apache-2.0 | https://github.com/image-rs/weezl
 winapi 0.3.9 | MIT/Apache-2.0 | https://github.com/retep998/winapi-rs
 winapi-util 0.1.11 | Unlicense OR MIT | https://github.com/BurntSushi/winapi-util
 window-vibrancy 0.8.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri-plugin-vibrancy
@@ -345,13 +396,19 @@ x11 2.21.0 | MIT | https://github.com/AltF02/x11-rs.git
 x11-dl 2.21.0 | MIT | https://github.com/AltF02/x11-rs.git
 yoke 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 yoke-derive 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x
+zerocopy 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy
+zerocopy-derive 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy
 zerofrom 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 zerofrom-derive 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 zerotrie 0.2.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 zerovec 0.11.9 | Unicode-3.0 | https://github.com/unicode-org/icu4x
 zerovec-derive 0.11.7 | Unicode-3.0 | https://github.com/unicode-org/icu4x
+zip 9.0.5 | MIT | https://github.com/zip-rs/zip2
 zlib-rs 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs
 zmij 1.0.23 | MIT | https://github.com/dtolnay/zmij
+zopfli 0.8.4 | Apache-2.0 | https://github.com/zopfli-rs/zopfli
+zune-core 0.5.3 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image
+zune-jpeg 0.5.15 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg
 
 ## npm packages bundled into the UI (10)
 

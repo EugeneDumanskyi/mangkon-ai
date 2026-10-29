@@ -1,50 +1,53 @@
-//! TXT and MD (US-02.3 AC1): one segment per non-blank line.
+//! TXT and MD (US-02.3 AC1): one segment per non-blank line, read as a stream.
 
-use mk_kernel::{LineNumber, Locator, Span};
+use std::io::{BufRead, BufReader};
 
-use crate::content::{Format, ParseError, ParsedContent, ParsedDocument, ParsedSegment, RowState};
+use mk_kernel::{LineNumber, Locator};
 
-/// UTF-8, with or without a byte-order mark. Lines end at `\n`; a `\r` before it is dropped, so
-/// segment text matches the ground truth's decoded line (`docs/07-test-corpus.md` §5). Lines
-/// with only whitespace give no segment but still count for line numbers. Markdown is kept as
-/// written.
-pub fn parse(format: Format, bytes: &[u8]) -> Result<ParsedContent, ParseError> {
-    let text = crate::content::decode(bytes)?;
-    let mut segments = Vec::new();
-    for (i, line) in text.split('\n').enumerate() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.trim().is_empty() {
+use crate::content::{Format, ParseError, ParsedSegment, Place, Sink, Source};
+use crate::encoding::{Decoded, detect};
+
+/// UTF-8, UTF-16 with a byte-order mark, or Windows-1252 (NFR-COMP-06). Lines end at `\n`; a
+/// `\r` before it is dropped, so segment text matches the ground truth's decoded line
+/// (`docs/07-test-corpus.md` §5). Lines with only whitespace give no segment but still count
+/// for line numbers. Markdown is kept as written.
+pub(crate) fn parse(
+    format: Format,
+    input: &mut dyn Source,
+    sink: &mut dyn Sink,
+    place: &Place,
+) -> Result<(), ParseError> {
+    let encoding = detect(input)?;
+    sink.document(place.start(format, Vec::new()))?;
+    let mut reader = BufReader::with_capacity(1 << 16, Decoded::new(input, encoding)?);
+    let mut line = String::new();
+    let mut number = 0u32;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(ParseError::io)? == 0 {
+            return Ok(());
+        }
+        number = number
+            .checked_add(1)
+            .ok_or_else(|| ParseError::new("too_many_lines", "The file has too many lines"))?;
+        let text = line.strip_suffix('\n').unwrap_or(&line);
+        let text = text.strip_suffix('\r').unwrap_or(text);
+        if text.trim().is_empty() {
             continue;
         }
-        let number = u32::try_from(i + 1)
-            .ok()
-            .and_then(LineNumber::new)
-            .ok_or_else(|| ParseError::new("too_many_lines", "The file has too many lines"))?;
-        let len = line.chars().count();
-        segments.push(ParsedSegment {
-            locator: Locator::TextLine {
-                line: number,
-                span: Span::new(0, len, len).expect("non-blank line"),
-            },
-            text: line.to_string(),
-            row_state: RowState::Normal,
-            cell_starts: Vec::new(),
-        });
+        let line = LineNumber::new(number).expect("counted from 1");
+        if let Some(seg) =
+            ParsedSegment::whole(|span| Locator::TextLine { line, span }, text.to_string())
+        {
+            sink.segment(seg)?;
+        }
     }
-    Ok(ParsedContent {
-        documents: vec![ParsedDocument {
-            kind: format,
-            position: "whole".into(),
-            columns: Vec::new(),
-            segments,
-        }],
-        warnings: Vec::new(),
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::content::{Format, parse};
+    use mk_kernel::Locator;
 
     fn lines(bytes: &[u8]) -> Vec<(u32, String)> {
         let parsed = parse(Format::Text, bytes).unwrap();
@@ -80,10 +83,29 @@ mod tests {
         assert_eq!(parsed.segment_count(), 0);
     }
 
-    /// US-02.7 AC1, NFR-USE-05: a non-UTF-8 file fails alone with a plain reason.
+    /// NFR-COMP-06, US-02.3 AC3: UTF-16 with a mark and Windows-1252 are decoded; line numbers
+    /// count the decoded lines.
     #[test]
-    fn us_02_7_ac1_other_encodings_fail_plainly() {
-        for bytes in [&b"caf\xe9"[..], b"\xff\xfeh\x00i\x00"] {
+    fn nfr_comp_06_encodings() {
+        assert_eq!(
+            lines(b"caf\xe9\r\n\r\nStra\xdfe \x80"),
+            vec![(1, "café".into()), (3, "Straße €".into())]
+        );
+        let mut le = vec![0xff, 0xfe];
+        let mut be = vec![0xfe, 0xff];
+        for u in "a\nZoë a@x.example\n".encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        let want = vec![(1, "a".to_string()), (2, "Zoë a@x.example".to_string())];
+        assert_eq!(lines(&le), want);
+        assert_eq!(lines(&be), want);
+    }
+
+    /// US-02.7 AC1, NFR-USE-05: a binary file or cut UTF-8 fails alone with a plain reason.
+    #[test]
+    fn us_02_7_ac1_unknown_encodings_fail_plainly() {
+        for bytes in [&b"\x89PNG\r\n\x1a\n"[..], b"cut \xc3"] {
             let e = parse(Format::Text, bytes).unwrap_err();
             assert_eq!(e.code, "unknown_text_encoding");
             assert_eq!(e.to_string(), "Unknown text encoding");

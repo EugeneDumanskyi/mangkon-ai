@@ -7,6 +7,7 @@
 //! corpus-gen check    [--out testdata]   regenerate into a temp dir and compare with corpus.sha256
 //! corpus-gen td2 [--copies 99] [--out testdata]   write TD-2 (scale corpus) from TD-1
 //! corpus-gen csv-rows [--rows 1000000] [--out testdata]   write s2a/rows-<n>.csv (spike S2a)
+//! corpus-gen mbox-messages [--bytes 2G] [--out testdata]   write w3a/messages-<size>.mbox (W3a-2)
 //! ```
 
 mod afm;
@@ -31,7 +32,7 @@ use std::process::ExitCode;
 use mk_bench::Generator;
 
 /// Bump when any output byte changes for the same seed.
-pub const GENERATOR_VERSION: u32 = 2;
+pub const GENERATOR_VERSION: u32 = 4;
 pub const SEED: u64 = 20261022;
 
 /// SHA-256 of every generated file, committed so that drift shows up without committing data.
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
     let mut cmd = None;
     let mut copies = td2::DEFAULT_COPIES;
     let mut rows = 1_000_000usize;
+    let mut size = String::from("2G");
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -58,7 +60,13 @@ fn main() -> ExitCode {
                 Some(n) => rows = n,
                 None => return usage(),
             },
-            "fetch" | "generate" | "check" | "td2" | "csv-rows" if cmd.is_none() => {
+            "--bytes" => match it.next() {
+                Some(b) if parse_size(b).is_some() => size = b.clone(),
+                _ => return usage(),
+            },
+            "fetch" | "generate" | "check" | "td2" | "csv-rows" | "mbox-messages"
+                if cmd.is_none() =>
+            {
                 cmd = Some(a.clone())
             }
             _ => return usage(),
@@ -103,6 +111,18 @@ fn main() -> ExitCode {
                 )
             })
         }
+        Some("mbox-messages") => {
+            let target = parse_size(&size).expect("checked");
+            let path = out
+                .join("w3a")
+                .join(format!("messages-{}.mbox", size.to_ascii_lowercase()));
+            td2::mbox_messages(&path, target, SEED).map(|(bytes, messages)| {
+                println!(
+                    "wrote {} ({messages} messages, {bytes} bytes)",
+                    path.display()
+                )
+            })
+        }
         _ => return usage(),
     };
     match result {
@@ -118,10 +138,21 @@ fn main() -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: corpus-gen (fetch | generate | check | td2 [--copies N] | csv-rows [--rows N]) \
-         [--out DIR]"
+        "usage: corpus-gen (fetch | generate | check | td2 [--copies N] | csv-rows [--rows N] \
+         | mbox-messages [--bytes N[K|M|G]]) [--out DIR]"
     );
     ExitCode::from(2)
+}
+
+/// `2G`, `500M`, `64K` or plain bytes.
+fn parse_size(s: &str) -> Option<u64> {
+    let (num, shift) = match s.as_bytes().last()? {
+        b'K' | b'k' => (&s[..s.len() - 1], 10),
+        b'M' | b'm' => (&s[..s.len() - 1], 20),
+        b'G' | b'g' => (&s[..s.len() - 1], 30),
+        _ => (s, 0),
+    };
+    num.parse::<u64>().ok()?.checked_mul(1 << shift)
 }
 
 fn generator() -> Generator {

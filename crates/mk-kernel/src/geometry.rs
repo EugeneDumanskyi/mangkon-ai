@@ -158,11 +158,44 @@ impl std::error::Error for GeometryError {}
 /// it when that text is exactly the stored text (INV-CO-04); any drift is an error, not a wrong
 /// highlight (NFR-QA-12).
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawPageGeometry")
+)]
 pub struct PageGeometry {
     text_len: usize,
     text_hash: ContentHash,
     /// One per `char` of the page text. `None` for characters the layout inserted.
     boxes: Vec<Option<Rect>>,
+}
+
+/// The decoded form of a [`PageGeometry`], checked for one box per character.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawPageGeometry {
+    text_len: usize,
+    text_hash: ContentHash,
+    boxes: Vec<Option<Rect>>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawPageGeometry> for PageGeometry {
+    type Error = GeometryError;
+
+    fn try_from(r: RawPageGeometry) -> Result<Self, GeometryError> {
+        if r.boxes.len() != r.text_len {
+            return Err(GeometryError::BoxCount {
+                boxes: r.boxes.len(),
+                chars: r.text_len,
+            });
+        }
+        Ok(Self {
+            text_len: r.text_len,
+            text_hash: r.text_hash,
+            boxes: r.boxes,
+        })
+    }
 }
 
 impl PageGeometry {

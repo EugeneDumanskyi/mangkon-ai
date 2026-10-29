@@ -2,17 +2,17 @@
 //! and linked statically (ADR-0014). Only the C API calls Mangkon needs are bound, behind the
 //! safe [`Tesseract`] handle.
 //!
-//! `mk-parsers` is the only user. The shared OCR path, the `OcrEngine` port and the hayro adapter
-//! come in M3.
+//! `mk-parsers` is the only user. English is built in ([`ENG_TRAINEDDATA`], ADR-0018): the core
+//! writes it into the app's `tessdata/` folder, next to any languages the user installs there,
+//! and Tesseract reads every language from that one folder.
 
 mod ffi;
 
-use std::path::Path;
-
 pub use ffi::{Error, Page, Tesseract, Word, version};
 
-/// The folder holding the pinned `eng.traineddata` (`tessdata_fast` 4.1.0), as placed by the
-/// build. It is a build-machine path: packaging ships the file with the app (M3).
-pub fn bundled_tessdata_dir() -> &'static Path {
-    Path::new(env!("MK_TESSDATA_DIR"))
-}
+/// The pinned `eng.traineddata` (`tessdata_fast` 4.1.0), embedded at build time.
+pub static ENG_TRAINEDDATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/eng.traineddata"));
+
+/// SHA-256 of [`ENG_TRAINEDDATA`] as pinned in `native/sources.toml` (NFR-SEC-11); the build
+/// fails if the file does not match it.
+pub const ENG_TRAINEDDATA_SHA256: &str = env!("MK_ENG_TRAINEDDATA_SHA256");

@@ -7,8 +7,8 @@ use std::time::Duration;
 use mk_graph::{DecisionKind, DecisionStatus};
 use mk_kernel::{ContentHash, IdentifierKey, IdentifierKind, LineNumber, Locator, Span};
 use mk_store::{
-    DocumentOut, MIGRATIONS, MentionOut, Migration, NewContent, SegmentOut, StageAOutput, Store,
-    StoreError,
+    DocumentOut, MIGRATIONS, MentionOut, Migration, NewContent, SegmentOut, StageAOutput,
+    StagedPart, Store, StoreError,
 };
 use rusqlite::Connection;
 
@@ -35,6 +35,7 @@ fn output(emails: &[&str]) -> StageAOutput {
     let mut doc = DocumentOut {
         kind: "txt".into(),
         position: "whole".into(),
+        parent: None,
         segments: Vec::new(),
     };
     let mut mentions = Vec::new();
@@ -47,6 +48,7 @@ fn output(emails: &[&str]) -> StageAOutput {
             text: e.to_string(),
             malformed: false,
             cell_starts: Vec::new(),
+            ocr: None,
         });
         mentions.push(MentionOut {
             document: 0,
@@ -121,7 +123,7 @@ fn inv_ws_03_newer_schema_is_never_opened() {
             err,
             StoreError::TooNew {
                 found: 99,
-                supported: 1
+                supported: 3
             }
         ),
         "{err}"
@@ -131,14 +133,14 @@ fn inv_ws_03_newer_schema_is_never_opened() {
     assert!(!dir.path().join("project.db-wal").exists());
 }
 
-const V2: Migration = Migration {
-    version: 2,
+const V4: Migration = Migration {
+    version: 4,
     name: "note",
     sql: "ALTER TABLE content ADD COLUMN note TEXT;",
 };
 
-const V2_BROKEN: Migration = Migration {
-    version: 2,
+const V4_BROKEN: Migration = Migration {
+    version: 4,
     name: "broken",
     sql: "ALTER TABLE content ADD COLUMN note TEXT; ALTER TABLE no_such_table ADD COLUMN x;",
 };
@@ -154,7 +156,7 @@ fn inv_ws_04_backup_before_migration() {
         let (store, report) = Store::open(&db, &backups).unwrap();
         assert_eq!(
             (report.from_version, report.to_version, report.backup),
-            (0, 1, None)
+            (0, 3, None)
         );
         ingest(&store, 1, &["a@x.example"]);
         ingest(&store, 2, &["a@x.example"]);
@@ -167,13 +169,13 @@ fn inv_ws_04_backup_before_migration() {
             )
             .unwrap();
     }
-    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS[0], V2]).unwrap();
-    assert_eq!((report.from_version, report.to_version), (1, 2));
+    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS, &[V4]].concat()).unwrap();
+    assert_eq!((report.from_version, report.to_version), (3, 4));
     assert!(report.derived_rebuilt);
     let backup = report.backup.expect("backup written");
     let name = backup.file_name().unwrap().to_string_lossy().into_owned();
     assert!(
-        name.starts_with("project-v1-") && name.ends_with("Z.db"),
+        name.starts_with("project-v3-") && name.ends_with("Z.db"),
         "{name}"
     );
     let b = Connection::open(&backup).unwrap();
@@ -183,7 +185,7 @@ fn inv_ws_04_backup_before_migration() {
     let decisions: i64 = b
         .query_row("SELECT COUNT(*) FROM decision", [], |r| r.get(0))
         .unwrap();
-    assert_eq!((v, decisions), (1, 1));
+    assert_eq!((v, decisions), (3, 1));
     assert_eq!(count(&store, "decision"), 1);
     let derived = store.derived_state().unwrap();
     assert!(derived.connections["email:a@x.example"].ignored);
@@ -209,12 +211,12 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
         let (store, _) = Store::open(&db, &backups).unwrap();
         ingest(&store, 1, &["a@x.example"]);
     }
-    let err = Store::open_with(&db, &backups, &[MIGRATIONS[0], V2_BROKEN])
+    let err = Store::open_with(&db, &backups, &[MIGRATIONS, &[V4_BROKEN]].concat())
         .err()
         .expect("migration fails");
     let StoreError::MigrationFailed {
-        from: 1,
-        to: 2,
+        from: 3,
+        to: 4,
         backup: Some(backup),
         reason,
     } = &err
@@ -223,7 +225,7 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
     };
     assert!(backup.exists(), "{reason}");
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (1, 1));
+    assert_eq!((report.from_version, report.to_version), (3, 3));
     assert_eq!(count(&store, "identifier_mention"), 1);
     let has_note = store
         .read_raw(|c| Ok(c.prepare("SELECT note FROM content").is_ok()))
@@ -272,6 +274,39 @@ fn inv_pr_04_uncommitted_write_is_gone_after_reopen() {
         // Dropped without COMMIT.
     }
     let store = open(dir.path());
+    assert_eq!(count(&store, "source_root"), 0);
+}
+
+/// NFR-REL-03: a kill while a new project's file is written, before WAL is on, leaves a hot
+/// rollback journal. The project still opens, at its last commit.
+#[test]
+fn nfr_rel_03_hot_journal_from_creation_opens() {
+    let (live, crashed) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let c = Connection::open(live.path().join("project.db")).unwrap();
+    c.execute_batch(
+        "PRAGMA cache_size = 1;
+         CREATE TABLE early (x);
+         BEGIN;
+         CREATE TABLE half (x);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+         INSERT INTO half SELECT randomblob(100) FROM n;",
+    )
+    .unwrap();
+    // The files as a kill would leave them: the transaction open, the journal on disk.
+    for f in ["project.db", "project.db-journal"] {
+        std::fs::copy(live.path().join(f), crashed.path().join(f)).unwrap();
+    }
+    drop(c);
+    let store = open(crashed.path());
+    let tables: Vec<String> = store
+        .read_raw(|c| {
+            let mut s =
+                c.prepare("SELECT name FROM sqlite_master WHERE name IN ('early', 'half')")?;
+            let names = s.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+            Ok(names)
+        })
+        .unwrap();
+    assert_eq!(tables, ["early"]);
     assert_eq!(count(&store, "source_root"), 0);
 }
 
@@ -418,4 +453,244 @@ fn segment_window_bounds_at_file_start_and_end() {
         assert_eq!(w.first.text, "p0@x.example");
     }
     assert_eq!(store.segment_window(i64::MAX, 1, 1).unwrap(), None);
+}
+
+/// NFR-REL-11, INV-WS-04: an M2 project (v1) migrates through v2 (`segment.loc_ref`) and v3
+/// (`segment.ocr`) in one step with one backup, and every M2 segment and mention stays readable.
+#[test]
+fn nfr_rel_11_migration_v1_to_v3_with_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("project.db");
+    let backups = dir.path().join("backups");
+    {
+        let (store, _) = Store::open_with(&db, &backups, &MIGRATIONS[..1]).unwrap();
+        let items = store
+            .enqueue_contents(vec![NewContent {
+                hash: ContentHash::from_bytes([1; 32]),
+                file_type: "txt".into(),
+                size: 10,
+            }])
+            .unwrap();
+        store.start_item(items[0]).unwrap().unwrap();
+        // An M2 commit, as the v1 schema stored it.
+        store
+            .write_raw(|c| {
+                c.execute_batch(
+                    "INSERT INTO document (id, content_id, position, kind) VALUES (1, 1, 'whole', 'txt');
+                     INSERT INTO segment (id, document_id, ordinal, loc_kind, loc_pos, text)
+                         VALUES (1, 1, 0, 'text_line', 3, 'mail a@x.example');
+                     INSERT INTO identifier_mention (segment_id, document_id, content_id,
+                         identifier_key, span_start, span_end, raw, confidence, found_by)
+                         VALUES (1, 1, 1, 'email:a@x.example', 5, 16, 'a@x.example', 1.0, 'builtin');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let (store, report) = Store::open(&db, &backups).unwrap();
+    assert_eq!((report.from_version, report.to_version), (1, 3));
+    let backup = report.backup.expect("backup written");
+    assert!(
+        backup
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("project-v1-")
+    );
+    let segs = store.segments(1).unwrap();
+    let line = LineNumber::new(3).unwrap();
+    assert_eq!(
+        segs[0].locator,
+        Locator::TextLine {
+            line,
+            span: Span::new(0, 16, 16).unwrap()
+        }
+    );
+    let mentions = store.mentions(1).unwrap();
+    assert_eq!(
+        mentions[0].locator,
+        Locator::TextLine {
+            line,
+            span: Span::new(5, 16, 16).unwrap()
+        }
+    );
+}
+
+fn seg(locator: Locator, text: &str) -> SegmentOut {
+    SegmentOut {
+        locator,
+        text: text.into(),
+        malformed: false,
+        cell_starts: Vec::new(),
+        ocr: None,
+    }
+}
+
+fn whole(text: &str) -> Span {
+    let n = text.chars().count();
+    Span::new(0, n, n).unwrap()
+}
+
+fn staged_item(store: &Store, n: u8) -> i64 {
+    let items = store
+        .enqueue_contents(vec![NewContent {
+            hash: ContentHash::from_bytes([n; 32]),
+            file_type: "eml".into(),
+            size: 10,
+        }])
+        .unwrap();
+    store.start_item(items[0]).unwrap().unwrap();
+    items[0]
+}
+
+/// INV-PR-04, INV-CO-05, §4 #16: a staged result is written part by part in one transaction;
+/// attachments get their parent; mentions point into the batch just before them.
+#[test]
+fn inv_pr_04_staged_commit_with_parents_and_batches() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let item = staged_item(&store, 1);
+    let from = "a@x.example";
+    let header = Locator::EmailHeader {
+        name: "From".into(),
+        span: whole(from),
+    };
+    let body = "see b@x.example";
+    let part = Locator::MimePart {
+        part: "1".into(),
+        span: whole(body),
+    };
+    let attached = "c@x.example";
+    let line = Locator::TextLine {
+        line: LineNumber::new(1).unwrap(),
+        span: whole(attached),
+    };
+    let mention = |document, segment, locator: &Locator, span: Span, raw: &str| MentionOut {
+        document,
+        segment,
+        locator: locator.with_span(span).unwrap(),
+        raw: raw.into(),
+        key: key(raw),
+        confidence: 1.0,
+    };
+    let parts = vec![
+        StagedPart::Document {
+            kind: "eml".into(),
+            position: "whole".into(),
+            parent: None,
+        },
+        StagedPart::Segments(vec![seg(header.clone(), from)]),
+        StagedPart::Mentions(vec![mention(0, 0, &header, whole(from), from)]),
+        StagedPart::Segments(vec![seg(part.clone(), body)]),
+        StagedPart::Mentions(vec![mention(
+            0,
+            1,
+            &part,
+            Span::new(4, 15, 15).unwrap(),
+            "b@x.example",
+        )]),
+        StagedPart::Document {
+            kind: "txt".into(),
+            position: "part 2: n.txt".into(),
+            parent: Some(0),
+        },
+        StagedPart::Segments(vec![seg(line.clone(), attached)]),
+        StagedPart::Mentions(vec![mention(1, 0, &line, whole(attached), attached)]),
+    ];
+    let out = store
+        .commit_stage_a_staged(item, parts.into_iter().map(Ok), vec!["w".into()])
+        .unwrap();
+    assert_eq!((out.segments, out.mentions), (3, 3));
+    let docs: Vec<(i64, Option<i64>, String)> = store
+        .read_raw(|c| {
+            let mut s = c.prepare("SELECT id, parent_id, kind FROM document ORDER BY id")?;
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .unwrap();
+    assert_eq!(docs[1].1, Some(docs[0].0));
+    let info = store.document_info(docs[1].0).unwrap().unwrap();
+    assert_eq!(
+        (info.kind.as_str(), info.parent, info.segments),
+        ("txt", Some(docs[0].0), 1)
+    );
+    assert_eq!(store.child_documents(docs[0].0).unwrap().len(), 1);
+    let segs = store.document_segments(docs[0].0, 10).unwrap();
+    assert_eq!(
+        segs.iter().map(|s| s.locator.clone()).collect::<Vec<_>>(),
+        vec![header.clone(), part.clone()]
+    );
+    let got = store.mentions(1).unwrap();
+    assert_eq!(
+        got[1].locator,
+        part.with_span(Span::new(4, 15, 15).unwrap()).unwrap()
+    );
+}
+
+/// INV-PR-04: a mention outside the batch just before it, or a failed part (a spill file that
+/// cannot be read), rolls the whole commit back.
+#[test]
+fn inv_pr_04_staged_commit_rolls_back_on_bad_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path());
+    let item = staged_item(&store, 1);
+    let text = "a@x.example";
+    let line = |n| Locator::TextLine {
+        line: LineNumber::new(n).unwrap(),
+        span: whole(text),
+    };
+    let doc = || StagedPart::Document {
+        kind: "txt".into(),
+        position: "whole".into(),
+        parent: None,
+    };
+    let stale = vec![
+        doc(),
+        StagedPart::Segments(vec![seg(line(1), text)]),
+        StagedPart::Segments(vec![seg(line(2), text)]),
+        StagedPart::Mentions(vec![MentionOut {
+            document: 0,
+            segment: 0,
+            locator: line(1),
+            raw: text.into(),
+            key: key(text),
+            confidence: 1.0,
+        }]),
+    ];
+    let err = store
+        .commit_stage_a_staged(item, stale.into_iter().map(Ok), Vec::new())
+        .unwrap_err();
+    assert!(err.to_string().contains("no segment"), "{err}");
+    let broken = vec![
+        Ok(doc()),
+        Ok(StagedPart::Segments(vec![seg(line(1), text)])),
+        Err(StoreError::Invalid("spill file cut short".into())),
+    ];
+    store
+        .commit_stage_a_staged(item, broken.into_iter(), Vec::new())
+        .unwrap_err();
+    assert_eq!(count(&store, "document"), 0);
+    assert_eq!(count(&store, "segment"), 0);
+    assert_eq!(
+        store.start_item(item).unwrap(),
+        None,
+        "item is still in progress"
+    );
+}
+
+/// US-02.2 AC4, INV-WS-06: a project reads `eng` until its OCR languages are set, and keeps
+/// them across a reopen.
+#[test]
+fn us_02_2_ac4_ocr_languages_setting() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("project.db");
+    let backups = dir.path().join("backups");
+    {
+        let (store, _) = Store::open(&db, &backups).unwrap();
+        assert_eq!(store.ocr_languages().unwrap(), "eng");
+        store.set_ocr_languages("eng+deu").unwrap();
+        store.set_ocr_languages("eng+fra").unwrap();
+    }
+    let (store, _) = Store::open(&db, &backups).unwrap();
+    assert_eq!(store.ocr_languages().unwrap(), "eng+fra");
 }

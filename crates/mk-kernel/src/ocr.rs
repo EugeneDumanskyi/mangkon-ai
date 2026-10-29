@@ -11,6 +11,7 @@ pub struct ImageSize {
 
 /// One recognised word of a page's OCR text.
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct OcrWord {
     /// Where the word sits in the page text.
     pub span: Span,
@@ -28,6 +29,11 @@ pub struct OcrWord {
 /// length and hash of the text it was built from, and maps a span only through that exact text
 /// (INV-CO-04).
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(try_from = "RawOcrGeometry")
+)]
 pub struct OcrGeometry {
     text_len: usize,
     text_hash: ContentHash,
@@ -35,6 +41,47 @@ pub struct OcrGeometry {
     /// Sorted by span, no two overlapping. Characters between words (spaces and newlines the
     /// layout inserted) belong to no word.
     words: Vec<OcrWord>,
+}
+
+/// The decoded form of an [`OcrGeometry`], checked by the same rules as [`OcrGeometry::new`]
+/// before it becomes one.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct RawOcrGeometry {
+    text_len: usize,
+    text_hash: ContentHash,
+    image: ImageSize,
+    words: Vec<OcrWord>,
+}
+
+#[cfg(feature = "serde")]
+impl TryFrom<RawOcrGeometry> for OcrGeometry {
+    type Error = GeometryError;
+
+    fn try_from(r: RawOcrGeometry) -> Result<Self, GeometryError> {
+        check_words(&r.words, r.text_len)?;
+        Ok(Self {
+            text_len: r.text_len,
+            text_hash: r.text_hash,
+            image: r.image,
+            words: r.words,
+        })
+    }
+}
+
+/// Words in text order, spans inside `text_len` and not overlapping, confidences in `[0, 1]`.
+fn check_words(words: &[OcrWord], text_len: usize) -> Result<(), GeometryError> {
+    let mut end = 0;
+    for (index, w) in words.iter().enumerate() {
+        if w.span.start() < end || w.span.end() > text_len {
+            return Err(GeometryError::WordSpan { index });
+        }
+        if w.confidence.is_some_and(|c| !(0.0..=1.0).contains(&c)) {
+            return Err(GeometryError::Confidence { index });
+        }
+        end = w.span.end();
+    }
+    Ok(())
 }
 
 impl OcrGeometry {
@@ -46,22 +93,24 @@ impl OcrGeometry {
         words: Vec<OcrWord>,
     ) -> Result<Self, GeometryError> {
         let text_len = page_text.chars().count();
-        let mut end = 0;
-        for (index, w) in words.iter().enumerate() {
-            if w.span.start() < end || w.span.end() > text_len {
-                return Err(GeometryError::WordSpan { index });
-            }
-            if w.confidence.is_some_and(|c| !(0.0..=1.0).contains(&c)) {
-                return Err(GeometryError::Confidence { index });
-            }
-            end = w.span.end();
-        }
+        check_words(&words, text_len)?;
         Ok(Self {
             text_len,
             text_hash: ContentHash::of(page_text.as_bytes()),
             image,
             words,
         })
+    }
+
+    /// The mean confidence of the page's words that have one; `None` if none has. A page under
+    /// 0.6 is "Low OCR quality" (US-02.2 AC3).
+    pub fn mean_confidence(&self) -> Option<f32> {
+        let (sum, n) = self
+            .words
+            .iter()
+            .filter_map(|w| w.confidence)
+            .fold((0.0f64, 0usize), |(s, n), c| (s + f64::from(c), n + 1));
+        (n > 0).then(|| (sum / n as f64) as f32)
     }
 
     pub fn text_len(&self) -> usize {

@@ -14,13 +14,12 @@ use mk_graph::DecisionKind;
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_parsers::Format;
-use mk_store::{
-    OpenReport, Progress, Recovery, RescanChange, RescanOutcome, StageAOutput, Store, StoreError,
-};
+use mk_store::{OpenReport, Progress, Recovery, RescanChange, RescanOutcome, Store, StoreError};
+use mk_worker::Settings;
 use mk_workspace::{ProjectLayout, RootKind};
 
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
-use crate::stage_a::Failure;
+use crate::stage_a::{Failure, SPILL_AT, Staging};
 use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
 
 #[derive(Debug)]
@@ -29,6 +28,8 @@ pub enum ProjectError {
     Io(PathBuf, std::io::Error),
     /// No worker could be started; the remaining items stay Pending.
     Worker(WorkerError),
+    /// A setting was refused; the plain reason.
+    Invalid(String),
 }
 
 impl fmt::Display for ProjectError {
@@ -37,6 +38,7 @@ impl fmt::Display for ProjectError {
             ProjectError::Store(e) => e.fmt(f),
             ProjectError::Io(p, e) => write!(f, "{}: {e}", p.display()),
             ProjectError::Worker(e) => e.fmt(f),
+            ProjectError::Invalid(m) => f.write_str(m),
         }
     }
 }
@@ -150,6 +152,10 @@ pub struct Project {
     events: Events,
     workers: usize,
     worker_config: WorkerConfig,
+    /// The OCR language files (ADR-0018); `None` leaves OCR off.
+    tessdata: Option<PathBuf>,
+    /// The page view's render worker, started on the first page shown (ADR-0011).
+    renderer: Mutex<Option<WorkerProcess>>,
 }
 
 /// Whether `dir` holds a project database.
@@ -159,7 +165,21 @@ pub fn project_exists(dir: &Path) -> bool {
 
 /// The file types with a parser (US-01.3 AC3).
 pub fn file_types() -> FileTypes {
-    FileTypes::new(Format::ALL.iter().map(|f| f.as_str()))
+    FileTypes::new(Format::ALL.iter().flat_map(|f| f.extensions()))
+}
+
+/// "File too large (limit: X)" for a file over its format's size limit (NFR-CAP-05/06/07).
+fn too_large(path: &str, file_type: &str) -> Option<Failure> {
+    let limit = Format::from_name(file_type)?.size_limit()?;
+    let size = std::fs::metadata(path).ok()?.len();
+    (size > limit).then(|| {
+        let label = if limit % (1 << 30) == 0 {
+            format!("{} GB", limit >> 30)
+        } else {
+            format!("{} MB", limit >> 20)
+        };
+        Failure::new("file_too_large", format!("File too large (limit: {label})"))
+    })
 }
 
 impl Project {
@@ -170,6 +190,9 @@ impl Project {
         std::fs::create_dir_all(dir).map_err(|e| ProjectError::Io(dir.into(), e))?;
         let (store, schema) = Store::open(&layout.database(), &layout.backups())?;
         let recovered = store.recover_after_restart()?;
+        // Staged results of a killed run: their items run again (ADR-0006).
+        crate::stage_a::clear_staging(&layout.cache())
+            .map_err(|e| ProjectError::Io(layout.cache(), e))?;
         let workers =
             mk_jobs::stage_a_limit(std::thread::available_parallelism().map_or(1, |n| n.get()));
         Ok((
@@ -179,6 +202,8 @@ impl Project {
                 events: Events::start(DEBOUNCE),
                 workers,
                 worker_config: WorkerConfig::default(),
+                tessdata: None,
+                renderer: Mutex::new(None),
             },
             OpenSummary { schema, recovered },
         ))
@@ -206,6 +231,72 @@ impl Project {
     /// How Stage A workers are started and limited (default: this executable with `--worker`).
     pub fn worker_config_mut(&mut self) -> &mut WorkerConfig {
         &mut self.worker_config
+    }
+
+    pub(crate) fn worker_config(&self) -> &WorkerConfig {
+        &self.worker_config
+    }
+
+    pub(crate) fn renderer(&self) -> &Mutex<Option<WorkerProcess>> {
+        &self.renderer
+    }
+
+    /// The folder of OCR language files (ADR-0018); `None` until set.
+    pub fn tessdata_dir(&self) -> Option<&Path> {
+        self.tessdata.as_deref()
+    }
+
+    /// Sets the folder of OCR language files: the apps pass [`crate::tessdata_dir`], tests a
+    /// temp folder. `None` (the default) turns OCR off: files that need it fail with a plain
+    /// reason.
+    pub fn set_tessdata_dir(&mut self, dir: Option<PathBuf>) {
+        self.tessdata = dir;
+    }
+
+    /// The project's OCR languages, `+`-joined; `eng` until set (US-02.2 AC4).
+    pub fn ocr_languages(&self) -> Result<String, ProjectError> {
+        Ok(self.store.ocr_languages()?)
+    }
+
+    /// Sets the project's OCR languages, `+`-joined codes such as `eng+deu` (US-02.2 AC4).
+    /// They take effect for files read after this; a language whose file is not installed
+    /// fails the files that need OCR with "OCR language not installed: <code>" (ADR-0018).
+    pub fn set_ocr_languages(&self, languages: &str) -> Result<(), ProjectError> {
+        let codes = mk_parsers::ocr::languages(languages);
+        if codes.is_empty() {
+            return Err(ProjectError::Invalid("No OCR language given".into()));
+        }
+        if let Some(bad) = codes.iter().find(|c| !mk_parsers::ocr::valid_language(c)) {
+            return Err(ProjectError::Invalid(format!(
+                "Not an OCR language code: {bad}"
+            )));
+        }
+        Ok(self.store.set_ocr_languages(&codes.join("+"))?)
+    }
+
+    /// The OCR languages installed in [`Project::tessdata_dir`], after writing the built-in
+    /// English file there if it is missing or differs (ADR-0018).
+    pub fn installed_ocr_languages(&self) -> Result<Vec<String>, ProjectError> {
+        let Some(dir) = &self.tessdata else {
+            return Ok(Vec::new());
+        };
+        mk_parsers::ocr::install_english(dir).map_err(|e| ProjectError::Io(dir.clone(), e))?;
+        Ok(mk_parsers::ocr::installed_languages(dir))
+    }
+
+    /// What the workers of this run need to OCR: the project's languages and the language
+    /// folder, with English written there first. Without a folder, or if English cannot be
+    /// written, OCR is off and files that need it fail with a plain reason.
+    fn ocr_settings(&self) -> Result<Settings, ProjectError> {
+        let tessdata = self.tessdata.as_ref().and_then(|dir| {
+            mk_parsers::ocr::install_english(dir).ok()?;
+            dir.to_str().map(str::to_string)
+        });
+        Ok(Settings {
+            ocr_languages: self.store.ocr_languages()?,
+            tessdata,
+            ..Settings::default()
+        })
     }
 
     /// `ConnectionsChanged` events, debounced 500 ms.
@@ -373,6 +464,16 @@ impl Project {
                     (p.item.id, need)
                 })
                 .collect();
+            // Language files are only touched when a run may OCR: a PDF, an image, or an email
+            // that may carry one.
+            let settings = if pending.iter().any(|p| {
+                Format::from_name(&p.file_type)
+                    .is_some_and(|f| f.is_paged() || matches!(f, Format::Eml | Format::Mbox))
+            }) {
+                self.ocr_settings()?
+            } else {
+                Settings::default()
+            };
             let items: Vec<_> = pending.iter().map(|p| p.item).collect();
             let order = mk_jobs::next_batch(&items, 0, items.len());
             let queue = Budget::new(
@@ -402,11 +503,12 @@ impl Project {
                 let handles: Vec<_> = slots
                     .iter()
                     .map(|slot| {
-                        let (queue, fatal, summary) = (&queue, &fatal, &summary);
+                        let (queue, fatal, summary, settings) =
+                            (&queue, &fatal, &summary, &settings);
                         s.spawn(move || {
                             let mut worker = None;
                             while let Some((id, need)) = queue.take() {
-                                let r = self.run_item(id, &mut worker, slot, summary);
+                                let r = self.run_item(id, &mut worker, settings, slot, summary);
                                 queue.release(need);
                                 if let Err(e) = r {
                                     fatal
@@ -447,6 +549,7 @@ impl Project {
         &self,
         id: i64,
         worker: &mut Option<WorkerProcess>,
+        settings: &Settings,
         rss: &AtomicU64,
         summary: &Mutex<StageASummary>,
     ) -> Result<(), ProjectError> {
@@ -467,17 +570,33 @@ impl Project {
             )?;
             return Ok(());
         };
+        // NFR-CAP-05/06/07: over-limit files fail before a worker reads them.
+        if let Some(f) = too_large(path, &started.file_type) {
+            self.fail(id, &f, summary)?;
+            return Ok(());
+        }
         let w = worker.as_mut().expect("started above");
+        let staging = Staging::new(
+            Some(&crate::stage_a::staging_dir(&self.layout.cache())),
+            id,
+            SPILL_AT,
+        );
         let result = w.run(
             cfg,
+            settings,
             path.to_string(),
             started.hash,
             started.file_type.clone(),
+            staging,
             rss,
         );
         match result {
-            ItemResult::Done(output) => self.commit(id, output, summary)?,
+            ItemResult::Done(staging, warnings) => self.commit(id, staging, warnings, summary)?,
             ItemResult::Failed(f) => self.fail(id, &f, summary)?,
+            ItemResult::Lost(f) => {
+                *worker = None;
+                self.fail(id, &f, summary)?;
+            }
             ItemResult::Stopped(stop) => {
                 *worker = None;
                 self.fail(id, &stop.why.failure(), summary)?;
@@ -498,11 +617,25 @@ impl Project {
     fn commit(
         &self,
         id: i64,
-        output: StageAOutput,
+        staging: Staging,
+        warnings: Vec<String>,
         summary: &Mutex<StageASummary>,
     ) -> Result<(), StoreError> {
         let parsed_at = Instant::now();
-        match self.store.commit_stage_a(id, output) {
+        let parts = match staging.into_parts() {
+            Ok(p) => p,
+            Err(e) => {
+                return self.fail(
+                    id,
+                    &Failure::new(
+                        "internal_error",
+                        format!("Could not store the results: {e}"),
+                    ),
+                    summary,
+                );
+            }
+        };
+        match self.store.commit_stage_a_staged(id, parts, warnings) {
             Ok(outcome) => {
                 let latency = parsed_at.elapsed();
                 if outcome.connections_changed {

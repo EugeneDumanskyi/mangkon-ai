@@ -1,4 +1,4 @@
-//! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), the kill-test driver
+//! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), the kill-test driver
 //! (NFR-REL-02/03/04, M2c) and the `--worker` entry; `bench` comes in M4.
 
 mod ingest;
@@ -11,8 +11,10 @@ const HELP: &str = "\
 Mangkon AI command line
 
 Usage: mangkon-cli [--help | --version]
-       mangkon-cli ingest --project DIR [--json] SOURCE...
+       mangkon-cli ingest --project DIR [--ocr-lang LANGS] [--tessdata DIR] [--json] SOURCE...
        mangkon-cli rebuild --project DIR [--json]
+       mangkon-cli render --project DIR (--mention ID | --key KEY | --document ID --page N)
+                          --out FILE [--tessdata DIR] [--json]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
 
 Commands:
@@ -20,9 +22,18 @@ Commands:
               (a source already in the project is kept), find new and changed files, and
               read them. Prints the counts and every failed file with its reason. Exits 0
               unless the project itself fails; failed files do not change the exit code.
+              --ocr-lang  the project's OCR languages, `+`-joined (default eng), for example
+                          eng+deu. Other than English, each needs its .traineddata file in
+                          the OCR language folder.
+              --tessdata  the OCR language folder (default: tessdata/ in the app's data
+                          folder; the built-in English file is written there)
   rebuild     Rebuild the connections of the project in DIR from what was read and the
               decisions made, and check that they equal the ones it had. Exits 1 if not.
-  kill-test   Ingest DIR (TXT and CSV files) again and again, kill the process at a random
+  render      Show a PDF or image page as the page view does: write it to FILE as a PNG and
+              print the highlight boxes of a mention (--mention), of the first mention of a
+              connection key such as email:a@b.example (--key), or none (--document, --page).
+              Exits 1 if the page image cannot be shown (the note says why).
+  kill-test   Ingest DIR (its text-format files) again and again, kill the process at a random
               moment each time, then reopen, check and finish the project. Every run must
               leave a healthy project that ends up equal to a run without a kill.
               --runs   kills (default 20)
@@ -51,6 +62,10 @@ fn main() -> ExitCode {
         }
         Some("ingest") => match ingest_options(&args[1..]) {
             Ok(opts) => ingest::ingest(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("render") => match render_options(&args[1..]) {
+            Ok(opts) => ingest::render(&opts),
             Err(e) => usage_error(&e),
         },
         Some("rebuild") => match rebuild_options(&args[1..]) {
@@ -105,6 +120,8 @@ fn ingest_options(args: &[String]) -> Result<ingest::IngestOptions, String> {
     let mut opts = ingest::IngestOptions {
         project: PathBuf::new(),
         sources: Vec::new(),
+        ocr_languages: None,
+        tessdata: None,
         json: false,
     };
     let mut it = args.iter();
@@ -112,6 +129,12 @@ fn ingest_options(args: &[String]) -> Result<ingest::IngestOptions, String> {
         match a.as_str() {
             "--project" => {
                 project = Some(PathBuf::from(it.next().ok_or("--project needs a value")?))
+            }
+            "--ocr-lang" => {
+                opts.ocr_languages = Some(it.next().ok_or("--ocr-lang needs a value")?.clone())
+            }
+            "--tessdata" => {
+                opts.tessdata = Some(PathBuf::from(it.next().ok_or("--tessdata needs a value")?))
             }
             "--json" => opts.json = true,
             other if other.starts_with("--") => {
@@ -122,6 +145,47 @@ fn ingest_options(args: &[String]) -> Result<ingest::IngestOptions, String> {
     }
     opts.project = project.ok_or("ingest needs --project DIR")?;
     Ok(opts)
+}
+
+fn render_options(args: &[String]) -> Result<ingest::RenderOptions, String> {
+    let (mut project, mut out, mut tessdata, mut json) = (None, None, None, false);
+    let (mut mention, mut key, mut document, mut page) = (None, None, None, None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--out" => out = Some(PathBuf::from(value()?)),
+            "--tessdata" => tessdata = Some(PathBuf::from(value()?)),
+            "--mention" => {
+                mention = Some(value()?.parse().map_err(|_| "--mention takes a number")?)
+            }
+            "--key" => key = Some(value()?.clone()),
+            "--document" => {
+                document = Some(value()?.parse().map_err(|_| "--document takes a number")?)
+            }
+            "--page" => page = Some(value()?.parse().map_err(|_| "--page takes a number")?),
+            "--json" => json = true,
+            other => return Err(format!("unknown render argument {other:?}")),
+        }
+    }
+    let target = match (mention, key, document, page) {
+        (Some(m), None, None, None) => ingest::RenderTarget::Mention(m),
+        (None, Some(k), None, None) => ingest::RenderTarget::Key(k),
+        (None, None, Some(document), Some(page)) => ingest::RenderTarget::Page { document, page },
+        _ => {
+            return Err(
+                "render takes one of --mention ID, --key KEY or --document ID --page N".into(),
+            );
+        }
+    };
+    Ok(ingest::RenderOptions {
+        project: project.ok_or("render needs --project DIR")?,
+        target,
+        out: out.ok_or("render needs --out FILE")?,
+        tessdata,
+        json,
+    })
 }
 
 fn rebuild_options(args: &[String]) -> Result<ingest::RebuildOptions, String> {

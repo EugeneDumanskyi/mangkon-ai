@@ -124,11 +124,11 @@ fn breakdown(csv: &Path) -> Value {
 
     let t = Instant::now();
     let mut r = FrameReader::new(&frames[..]);
-    let mut asm = mk_core::stage_a::Assembler::default();
+    let mut staging = mk_core::stage_a::Staging::in_memory();
     while let Some(FromWorker::Chunk(c)) = r.recv().unwrap() {
-        asm.push(c).unwrap();
+        staging.push(c).unwrap();
     }
-    let output = asm.finish(Vec::new());
+    let output = staging.into_output(Vec::new()).unwrap();
     let decode_assemble = t.elapsed();
     let mentions = output.mentions.len();
 

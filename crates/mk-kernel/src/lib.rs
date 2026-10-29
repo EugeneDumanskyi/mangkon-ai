@@ -20,6 +20,6 @@ mod span;
 pub use geometry::{GeometryError, PageGeometry, Rect};
 pub use hash::{ContentHash, ParseHashError};
 pub use identifier::{IdentifierKey, IdentifierKind, ParseKeyError};
-pub use locator::{Column, LineNumber, Locator, PageNumber};
+pub use locator::{Column, LineNumber, Locator, PageNumber, json_path};
 pub use ocr::{ImageSize, OcrGeometry, OcrWord};
 pub use span::{Span, SpanError};

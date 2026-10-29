@@ -35,8 +35,12 @@ fn main() -> std::process::ExitCode {
         commands::connections_page,
         commands::occurrences,
         commands::source_context,
+        commands::source_document,
+        commands::page_view,
+        commands::page_image,
         commands::subscribe,
-        commands::record_ui_timing
+        commands::record_ui_timing,
+        commands::record_view_sweep
     ]);
     #[cfg(feature = "spike-s2d")]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -51,8 +55,12 @@ fn main() -> std::process::ExitCode {
         commands::connections_page,
         commands::occurrences,
         commands::source_context,
+        commands::source_document,
+        commands::page_view,
+        commands::page_image,
         commands::subscribe,
         commands::record_ui_timing,
+        commands::record_view_sweep,
         commands::synthetic_rows,
         commands::record_frame_stats
     ]);

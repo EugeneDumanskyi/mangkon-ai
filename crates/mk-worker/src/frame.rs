@@ -129,6 +129,7 @@ mod tests {
                 text: "ab x@y.zz".into(),
                 malformed: false,
                 cell_starts: vec![],
+                ocr: None,
             }])),
             FromWorker::Chunk(Chunk::Mentions(vec![Mention {
                 segment: 0,

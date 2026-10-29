@@ -20,6 +20,7 @@ ab_glyph = "0.2.32"
 png = "0.18.1"
 jpeg-encoder = "0.7.1"
 tiff = { version = "0.11.3", default-features = false, features = ["lzw"] }
+image-webp = "0.2.4"
 encoding_rs = "0.8.42"
 md-5 = "0.11.0"
 base64 = "0.23.1"

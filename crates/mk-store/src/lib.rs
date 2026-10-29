@@ -29,11 +29,11 @@ use mk_kernel::ContentHash;
 
 pub use ops::{
     CommitOutcome, DocumentOut, MentionOut, NewContent, Recovery, RescanChange, RescanOutcome,
-    SegmentOut, StageAOutput, StartedItem,
+    SegmentOut, StageAOutput, StagedPart, StartedItem,
 };
 pub use read::{
-    ContentRow, FailedFile, MentionRow, OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow,
-    SegmentWindow, WindowSegment,
+    ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, MentionRow, OccurrenceRow,
+    PendingWork, Progress, RootRow, SegmentRow, SegmentWindow, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 
@@ -154,6 +154,13 @@ impl Store {
             .call(move |tx| ops::add_source_root(tx, &path, &kind))
     }
 
+    /// Sets the project's OCR languages, `+`-joined (US-02.2 AC4). The caller checks the codes.
+    pub fn set_ocr_languages(&self, languages: &str) -> Result<(), StoreError> {
+        let languages = languages.to_string();
+        self.writer
+            .call(move |tx| ops::set_ocr_languages(tx, &languages))
+    }
+
     /// See `ops::apply_rescan`.
     pub fn apply_rescan(
         &self,
@@ -179,10 +186,22 @@ impl Store {
     pub fn commit_stage_a(
         &self,
         item: i64,
-        output: StageAOutput,
+        mut output: StageAOutput,
+    ) -> Result<CommitOutcome, StoreError> {
+        let warnings = std::mem::take(&mut output.warnings);
+        self.commit_stage_a_staged(item, output.into_parts().map(Ok), warnings)
+    }
+
+    /// Commits a staged Stage A result, read part by part in one transaction: memory stays
+    /// O(batch) whatever the file's size (§4 #16, ADR-0016). An `Err` part rolls it all back.
+    pub fn commit_stage_a_staged(
+        &self,
+        item: i64,
+        parts: impl Iterator<Item = Result<StagedPart, StoreError>> + Send + 'static,
+        warnings: Vec<String>,
     ) -> Result<CommitOutcome, StoreError> {
         self.writer
-            .call(move |tx| ops::commit_stage_a(tx, item, &output))
+            .call(move |tx| ops::commit_stage_a(tx, item, parts, &warnings))
     }
 
     pub fn fail_item(&self, item: i64, code: &str, reason: &str) -> Result<(), StoreError> {
@@ -231,6 +250,11 @@ impl Store {
 
     pub fn source_roots(&self) -> Result<Vec<RootRow>, StoreError> {
         self.readers.with(read::source_roots)
+    }
+
+    /// The project's OCR languages; [`DEFAULT_OCR_LANGUAGES`] until set.
+    pub fn ocr_languages(&self) -> Result<String, StoreError> {
+        self.readers.with(read::ocr_languages)
     }
 
     pub fn stored_refs(&self) -> Result<Vec<StoredRef>, StoreError> {
@@ -282,6 +306,39 @@ impl Store {
     ) -> Result<Option<SegmentWindow>, StoreError> {
         self.readers
             .with(|c| read::segment_window(c, segment, before, after))
+    }
+
+    pub fn document_info(&self, document: i64) -> Result<Option<DocumentInfo>, StoreError> {
+        self.readers.with(|c| read::document_info(c, document))
+    }
+
+    /// The first `limit` segments of a document, in order.
+    pub fn document_segments(
+        &self,
+        document: i64,
+        limit: usize,
+    ) -> Result<Vec<WindowSegment>, StoreError> {
+        self.readers
+            .with(|c| read::document_segments(c, document, limit))
+    }
+
+    /// The text segment of one page of a PDF or image document (US-08.3).
+    pub fn page_segment(
+        &self,
+        document: i64,
+        page: u32,
+    ) -> Result<Option<WindowSegment>, StoreError> {
+        self.readers.with(|c| read::page_segment(c, document, page))
+    }
+
+    /// The last page of a PDF or image document with stored text, or 0.
+    pub fn last_text_page(&self, document: i64) -> Result<u32, StoreError> {
+        self.readers.with(|c| read::last_text_page(c, document))
+    }
+
+    /// A document's attachments: `(id, kind, position)` in order.
+    pub fn child_documents(&self, document: i64) -> Result<Vec<(i64, String, String)>, StoreError> {
+        self.readers.with(|c| read::child_documents(c, document))
     }
 
     pub fn progress(&self) -> Result<Progress, StoreError> {

@@ -1,5 +1,6 @@
 //! Builds Leptonica and Tesseract from the archives pinned in `native/sources.toml` and links them
-//! statically (ADR-0014). Copies `eng.traineddata` next to the build output.
+//! statically (ADR-0014). Copies `eng.traineddata` next to the build output, where `src/lib.rs`
+//! embeds it (ADR-0018).
 //!
 //! Fetching uses the system `curl` (a build prerequisite, NFR-MNT-01), so no HTTP crate enters
 //! the dependency graph (ADR-0009). Every file is checked by SHA-256 before use; a mismatch fails
@@ -87,14 +88,9 @@ fn main() {
     }
     // MSVC links its C++ runtime by itself.
 
-    let tessdata = out_dir.join("tessdata");
-    fs::create_dir_all(&tessdata).unwrap();
-    fs::copy(
-        fetch(find("tessdata_fast-eng")),
-        tessdata.join("eng.traineddata"),
-    )
-    .unwrap();
-    println!("cargo:rustc-env=MK_TESSDATA_DIR={}", tessdata.display());
+    let eng = find("tessdata_fast-eng");
+    fs::copy(fetch(eng), out_dir.join("eng.traineddata")).unwrap();
+    println!("cargo:rustc-env=MK_ENG_TRAINEDDATA_SHA256={}", eng.sha256);
 }
 
 /// A cmake build shared by both libraries: static, Release, position-independent.

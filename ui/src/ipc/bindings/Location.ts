@@ -3,4 +3,4 @@
 /**
  * Where a mention is (INV-CO-03), as the UI labels it.
  */
-export type Location = { "kind": "line", line: number, } | { "kind": "cell", row: number, columnName: string | null, columnIndex: number | null, } | { "kind": "other" };
+export type Location = { "kind": "line", line: number, } | { "kind": "cell", row: number, columnName: string | null, columnIndex: number | null, } | { "kind": "paragraph", paragraph: number, } | { "kind": "htmlText", offset: number, } | { "kind": "jsonPath", path: string, } | { "kind": "header", name: string, } | { "kind": "part", part: string, } | { "kind": "page", page: number, ocr: boolean, } | { "kind": "other" };

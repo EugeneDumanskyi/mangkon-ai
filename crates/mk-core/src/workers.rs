@@ -12,12 +12,14 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use mk_store::StageAOutput;
 use mk_worker::frame::{FrameReader, FrameWriter};
-use mk_worker::{FromWorker, Limits, PROTOCOL, ProcessContent, Settings, ToWorker};
+use mk_worker::{
+    FromWorker, Limits, PROTOCOL, PageImage, ProcessContent, RenderPage, Settings, ToWorker,
+    WorkStage,
+};
 use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
-use crate::stage_a::{Assembler, Failure};
+use crate::stage_a::{ChunkOrderError, Failure, Staging};
 
 const MB: u64 = 1 << 20;
 
@@ -28,8 +30,14 @@ pub struct WorkerConfig {
     /// The worker program; `None` is this executable. Started with `args`.
     pub program: Option<PathBuf>,
     pub args: Vec<String>,
-    /// Per-file parse limit (NFR-REL-06): 120 s.
+    /// Per-file parse limit (NFR-REL-06): 120 s. For MBOX it is per message, for PDFs and
+    /// images per page: it restarts each time the worker reports one more finished unit
+    /// (ADR-0016, ADR-0017).
     pub deadline: Duration,
+    /// While a page is in OCR it must finish within this: 30 s (NFR-REL-06, ADR-0017).
+    pub ocr_page_deadline: Duration,
+    /// A page render for the page view: 10 s (ASSUMPTION, ADR-0011).
+    pub render_deadline: Duration,
     /// Per-file memory limit (NFR-REL-07): 1 GB of resident memory.
     pub max_memory: u64,
     /// How often the watchdog samples a busy worker's resident memory: 100 ms.
@@ -56,6 +64,8 @@ impl Default for WorkerConfig {
             program: None,
             args: vec!["--worker".into()],
             deadline: Duration::from_secs(120),
+            ocr_page_deadline: Duration::from_secs(30),
+            render_deadline: Duration::from_secs(10),
             max_memory: 1024 * MB,
             sample_every: Duration::from_millis(100),
             heartbeat_timeout: Duration::from_secs(15),
@@ -170,11 +180,13 @@ impl Stopped {
 /// What one item on one worker came to.
 pub(crate) enum ItemResult {
     /// The worker sent `Done` (and is still usable).
-    Done(StageAOutput),
+    Done(Staging, Vec<String>),
     /// The worker sent `Failed` (and is still usable).
     Failed(Failure),
     /// The worker was stopped or stopped itself; it is gone.
     Stopped(WorkerStop),
+    /// The core could not stage the result (its spill file failed); the worker was stopped.
+    Lost(Failure),
 }
 
 impl WorkerProcess {
@@ -184,10 +196,15 @@ impl WorkerProcess {
             Some(p) => p.clone(),
             None => std::env::current_exe().map_err(|e| WorkerError::Spawn("worker".into(), e))?,
         };
-        let mut child = Command::new(&program)
+        let mut child = Command::new(&program);
+        child
             .args(&cfg.args)
             .arg("--max-memory")
-            .arg(cfg.max_memory.to_string())
+            .arg(cfg.max_memory.to_string());
+        if let Some(t) = malloc_tunables() {
+            child.env("GLIBC_TUNABLES", t);
+        }
+        let mut child = child
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -320,17 +337,25 @@ impl WorkerProcess {
         }
     }
 
-    /// Runs one content on this worker under the limits of `cfg`. `rss` gets each sample of the
-    /// worker's resident memory (for the run's peak). On `Stopped` the process has been killed
-    /// and reaped.
+    /// Runs one content on this worker under the limits of `cfg`, staging its chunks in
+    /// `staging`. `settings` carries the project's OCR languages; `rss` gets each sample of the
+    /// worker's resident memory (for the run's peak). On `Stopped` and `Lost` the process has
+    /// been killed and reaped.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         &mut self,
         cfg: &WorkerConfig,
+        settings: &Settings,
         path: String,
         content_hash: mk_kernel::ContentHash,
         file_type: String,
+        mut staging: Staging,
         rss: &AtomicU64,
     ) -> ItemResult {
+        // ADR-0016/0017: an MBOX's deadline runs from its last finished message, a PDF's or an
+        // image's from its last finished page.
+        let per_unit = mk_parsers::Format::from_name(&file_type)
+            .is_some_and(|f| f == mk_parsers::Format::Mbox || f.is_paged());
         let req = ToWorker::Process(ProcessContent {
             path,
             content_hash,
@@ -338,9 +363,13 @@ impl WorkerProcess {
             limits: cfg.limits,
             settings: Settings {
                 test_faults: cfg.test_faults,
+                ..settings.clone()
             },
         });
-        let started = Instant::now();
+        let mut started = Instant::now();
+        let mut units = 0u64;
+        // When the page now in OCR started it (ADR-0017).
+        let mut ocr_since: Option<Instant> = None;
         let mut heard = started;
         let mut sampled = started;
         // The last sample at or under the memory limit, and the highest sample.
@@ -362,27 +391,44 @@ impl WorkerProcess {
             let why = self.classify_exit();
             return stopped(self, why, false, under_limit, peak);
         }
-        let mut asm = Assembler::default();
         loop {
             match self.from.recv_timeout(cfg.sample_every) {
                 Ok(Ok(msg)) => {
                     heard = Instant::now();
                     match msg {
-                        FromWorker::Heartbeat { .. } => {}
-                        FromWorker::Chunk(c) => {
-                            if asm.push(c).is_err() {
+                        FromWorker::Heartbeat { units: u, stage } => {
+                            if per_unit && u > units {
+                                units = u;
+                                started = heard;
+                            }
+                            ocr_since = match stage {
+                                WorkStage::Ocr => ocr_since.or(Some(heard)),
+                                _ => None,
+                            };
+                        }
+                        FromWorker::Chunk(c) => match staging.push(c) {
+                            Ok(()) => {}
+                            Err(Ok(ChunkOrderError)) => {
                                 return stopped(self, Stopped::Crashed, true, under_limit, peak);
                             }
-                        }
+                            Err(Err(e)) => {
+                                self.kill();
+                                rss.store(0, Ordering::Relaxed);
+                                return ItemResult::Lost(Failure::new(
+                                    "internal_error",
+                                    format!("Could not store the results: {e}"),
+                                ));
+                            }
+                        },
                         FromWorker::Done { warnings } => {
                             self.files += 1;
-                            return ItemResult::Done(asm.finish(warnings));
+                            return ItemResult::Done(staging, warnings);
                         }
                         FromWorker::Failed { code, plain_reason } => {
                             self.files += 1;
                             return ItemResult::Failed(Failure::from_worker(code, plain_reason));
                         }
-                        FromWorker::Hello { .. } => {
+                        FromWorker::Hello { .. } | FromWorker::PageImage(_) => {
                             return stopped(self, Stopped::Crashed, true, under_limit, peak);
                         }
                     }
@@ -405,11 +451,63 @@ impl WorkerProcess {
                 }
                 under_limit = now;
             }
-            if now.duration_since(started) > cfg.deadline {
+            if now.duration_since(started) > cfg.deadline
+                || ocr_since.is_some_and(|t| now.duration_since(t) > cfg.ocr_page_deadline)
+            {
                 return stopped(self, Stopped::Deadline, true, under_limit, peak);
             }
             if now.duration_since(heard) > cfg.heartbeat_timeout {
                 return stopped(self, Stopped::Silent, true, under_limit, peak);
+            }
+        }
+    }
+}
+
+/// Why a page render gave no image.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum RenderError {
+    /// The worker refused (a changed or missing file, no such page); it is still usable.
+    Failed(Failure),
+    /// The worker was stopped or stopped itself; it is gone.
+    Stopped(Stopped),
+}
+
+impl WorkerProcess {
+    /// Renders one page under [`WorkerConfig::render_deadline`] and the memory limit (ADR-0011).
+    pub(crate) fn render(
+        &mut self,
+        cfg: &WorkerConfig,
+        req: RenderPage,
+    ) -> Result<PageImage, RenderError> {
+        if self.to.send(&ToWorker::RenderPage(req)).is_err() {
+            return Err(RenderError::Stopped(self.classify_exit()));
+        }
+        let started = Instant::now();
+        let stop = |w: &mut WorkerProcess, why| {
+            w.kill();
+            Err(RenderError::Stopped(why))
+        };
+        loop {
+            match self.from.recv_timeout(cfg.sample_every) {
+                Ok(Ok(FromWorker::PageImage(page))) => return Ok(page),
+                Ok(Ok(FromWorker::Failed { code, plain_reason })) => {
+                    return Err(RenderError::Failed(Failure::from_worker(
+                        code,
+                        plain_reason,
+                    )));
+                }
+                Ok(Ok(FromWorker::Heartbeat { .. })) => {}
+                Ok(Ok(_)) | Ok(Err(_)) => return stop(self, Stopped::Crashed),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(RenderError::Stopped(self.classify_exit()));
+                }
+            }
+            if self.rss().unwrap_or(0) > cfg.max_memory {
+                return stop(self, Stopped::Memory);
+            }
+            if started.elapsed() > cfg.render_deadline {
+                return stop(self, Stopped::Deadline);
             }
         }
     }
@@ -424,6 +522,22 @@ impl Drop for WorkerProcess {
 }
 
 /// Resident memory of this process, in bytes.
+/// Memory a worker frees goes back to the OS (NFR-RES-02). glibc raises its mmap threshold
+/// after the first large buffer is freed (up to 32 MB), so later page buffers (8.7 MB for a
+/// 300 DPI A4 page) come from the heap and an idle worker keeps tens of MB of them. A fixed
+/// 1 MB threshold stops that: on TD-2, 23 workers peaked ≈ 530–560 MB lower (`docs/11-ingestion.md`
+/// §7). Other C libraries ignore the variable. Kept in front of tunables set by the user.
+fn malloc_tunables() -> Option<String> {
+    if !cfg!(all(target_os = "linux", target_env = "gnu")) {
+        return None;
+    }
+    const OURS: &str = "glibc.malloc.mmap_threshold=1048576";
+    Some(match std::env::var("GLIBC_TUNABLES") {
+        Ok(t) if !t.is_empty() => format!("{OURS}:{t}"),
+        _ => OURS.to_string(),
+    })
+}
+
 pub(crate) fn own_rss(sys: &mut System) -> u64 {
     let pid = Pid::from_u32(std::process::id());
     sys.refresh_processes_specifics(

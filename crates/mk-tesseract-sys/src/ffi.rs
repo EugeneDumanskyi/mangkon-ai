@@ -23,7 +23,8 @@ struct TessPageIterator {
     _private: [u8; 0],
 }
 
-/// `TessPageIteratorLevel::RIL_WORD`.
+/// `TessPageIteratorLevel::RIL_TEXTLINE` and `RIL_WORD`.
+const RIL_TEXTLINE: c_int = 2;
 const RIL_WORD: c_int = 3;
 
 unsafe extern "C" {
@@ -46,6 +47,7 @@ unsafe extern "C" {
     );
     fn TessBaseAPISetSourceResolution(handle: *mut TessBaseAPI, ppi: c_int);
     fn TessBaseAPIRecognize(handle: *mut TessBaseAPI, monitor: *mut c_void) -> c_int;
+    fn TessBaseAPIClear(handle: *mut TessBaseAPI);
     fn TessBaseAPIGetUTF8Text(handle: *mut TessBaseAPI) -> *mut c_char;
     fn TessBaseAPIGetIterator(handle: *mut TessBaseAPI) -> *mut TessResultIterator;
     fn TessResultIteratorDelete(handle: *mut TessResultIterator);
@@ -58,6 +60,7 @@ unsafe extern "C" {
     fn TessResultIteratorGetPageIteratorConst(
         handle: *const TessResultIterator,
     ) -> *const TessPageIterator;
+    fn TessPageIteratorIsAtBeginningOf(handle: *const TessPageIterator, level: c_int) -> c_int;
     fn TessPageIteratorBoundingBox(
         handle: *const TessPageIterator,
         level: c_int,
@@ -116,6 +119,9 @@ pub struct Word {
     pub bottom: i32,
     /// Tesseract's word confidence, 0 to 100.
     pub confidence: f32,
+    /// 0-based index of the text line the word is in, in Tesseract's order. Words of one line
+    /// are consecutive.
+    pub line: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,7 +138,8 @@ pub struct Tesseract {
 }
 
 impl Tesseract {
-    /// `datapath` is the folder that holds `<language>.traineddata`.
+    /// `datapath` is the folder that holds `<language>.traineddata`. `language` is one code or
+    /// several joined by `+` (`eng+deu`).
     pub fn new(datapath: &Path, language: &str) -> Result<Self, Error> {
         let path = datapath.to_str().ok_or(Error::BadPath)?;
         let path = CString::new(path).map_err(|_| Error::BadPath)?;
@@ -179,11 +186,16 @@ impl Tesseract {
         // SAFETY: the handle is live and recognition has run.
         let text = unsafe { take_text(TessBaseAPIGetUTF8Text(api)) };
         let words = self.words();
+        // SAFETY: the handle is live; no iterator or result of this page is used after this.
+        // Frees the page image and results, which Tesseract otherwise keeps until the next
+        // page, so an idle worker holds only the loaded language data (NFR-RES-02).
+        unsafe { TessBaseAPIClear(api) };
         Ok(Page { text, words })
     }
 
     fn words(&mut self) -> Vec<Word> {
         let mut words = Vec::new();
+        let mut line = None::<u32>;
         // SAFETY: the handle is live and recognition has run. The iterator is deleted below and
         // is not used after that.
         unsafe {
@@ -196,6 +208,9 @@ impl Tesseract {
                 let confidence = TessResultIteratorConfidence(it, RIL_WORD);
                 let (mut l, mut t, mut r, mut b) = (0, 0, 0, 0);
                 let page = TessResultIteratorGetPageIteratorConst(it);
+                if line.is_none() || TessPageIteratorIsAtBeginningOf(page, RIL_TEXTLINE) != 0 {
+                    line = Some(line.map_or(0, |n| n + 1));
+                }
                 let has_box =
                     TessPageIteratorBoundingBox(page, RIL_WORD, &mut l, &mut t, &mut r, &mut b);
                 if has_box != 0 && !text.is_empty() {
@@ -206,6 +221,7 @@ impl Tesseract {
                         right: r,
                         bottom: b,
                         confidence,
+                        line: line.unwrap_or(0),
                     });
                 }
                 if TessResultIteratorNext(it, RIL_WORD) == 0 {

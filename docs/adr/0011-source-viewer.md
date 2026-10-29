@@ -47,7 +47,7 @@ Use **option 3**.
 - If the original file is missing or changed (hash differs), the viewer opens the text view with a note: "Original file missing — showing stored text".
 
 **Safety**
-- HTML and email bodies are **never** rendered as live HTML in v0.1. They are converted to text during parsing. ASSUMPTION (gap A8).
+- HTML and email bodies are **never** rendered as live HTML in v0.1. They are converted to text during parsing (gap A8, confirmed 2026-10-29).
 - The CSP from ADR-0003 blocks remote images, frames, and scripts anyway, as a second layer.
 - Links inside documents are shown as text. Opening one needs a click and a confirm, and it opens in the system browser.
 

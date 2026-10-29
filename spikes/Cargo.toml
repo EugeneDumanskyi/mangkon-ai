@@ -1,9 +1,9 @@
-# Throwaway harnesses: spike S0 (M0b PDF, M0c OCR) and spike S1 (M1 local models). Not part of
-# the main workspace. pdf-bakeoff is removed in M2a once ADR-0014 records the numbers (roadmap
-# M0). Proposed: model-check stays until the M6 LLM benchmark (NFR-MNT-06) replaces it.
+# Throwaway harness of spike S1 (M1 local models). Not part of the main workspace. It stays until
+# the M6 LLM benchmark (NFR-MNT-06) replaces it. Spike S0's pdf-bakeoff was removed in M3b, once
+# its PDF and OCR code moved into mk-parsers.
 [workspace]
 resolver = "3"
-members = ["pdf-bakeoff", "model-check"]
+members = ["model-check"]
 
 [workspace.package]
 version = "0.0.0"

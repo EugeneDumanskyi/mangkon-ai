@@ -50,7 +50,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-PERF-10 | First cross-source identifier visible after dropping TD-1 ("within seconds") | ≤ 10 s | Timer from drop to first row on connections screen | Brief ("seconds") · ASSUMPTION (10 s) |
-| NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION |
+| NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION · M3b (RM-1, `mangkon-cli ingest` on all 101 TD-1 files, fresh project): 2.3–2.4 s (`11-ingestion.md` §7) |
 | NFR-PERF-12 | First cross-source person/org visible after drop on TD-1 ("within minutes") | ≤ 5 min | Timer | Brief ("minutes") · ASSUMPTION (5 min) |
 | NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 with the recommended minimum-tier model, 4 slots (NFR-PERF-25). Bigger models are a quality choice and show an estimate instead | Timer | M1: estimate ~11 min for Qwen3.5-4B with 4 slots (~24 min with 1); 35B-A3B ~94 min (`09-model-check.md` §5.1) · ASSUMPTION (estimate, measured in M6) |
 | NFR-PERF-14 | Click on a link → source viewer shows highlight | ≤ 1 s p95 (PDF ≤ 500 pages, CSV ≤ 1,000,000 rows, MBOX message) | Timer, 50 random clicks on TD-1 and TD-2 | Brief ("one click") · ASSUMPTION (1 s) |
@@ -59,10 +59,10 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-PERF-20 | Text-PDF parsing + identifier extraction | ≥ 20 pages/s | Benchmark on TD-1 PDFs | ASSUMPTION |
-| NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core (decode + OCR + layout, one thread) | Benchmark on TD-1 scans | M0: Tesseract, slowest clean A4 page 0.26 s on RM-1 (ADR-0014) |
-| NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION · M2c (S2a, RM-1): ~385,000 rows/s end to end in a worker process, including the commit (`10-walking-skeleton.md` §S2a) |
-| NFR-PERF-23 | Email parsing (MBOX) | ≥ 200 messages/s (without attachments OCR) | Benchmark on public Enron slice | ASSUMPTION |
+| NFR-PERF-20 | Text-PDF parsing + identifier extraction | ≥ 20 pages/s | Benchmark on TD-1 PDFs | ASSUMPTION · M3b (RM-1, one thread, `w3b_pdf_throughput`): ≈ 5,700 pages/s on TD-1's 527 text-PDF pages (`11-ingestion.md` §7) |
+| NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core (decode + OCR + layout, one thread) | Benchmark on TD-1 scans | M0: Tesseract, slowest clean A4 page 0.26 s on RM-1 (ADR-0014) · M3b (RM-1, `w3b_ocr_page_time`, TD-1's 22 OCR pages): p95 0.31 s, slowest 0.42 s (`11-ingestion.md` §7) |
+| NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION · M2c (S2a, RM-1): ~385,000 rows/s end to end in a worker process, including the commit (`10-walking-skeleton.md` §S2a) · M3a (W3a-1, RM-1, streaming path): 452,797 rows/s on the same file (`11-ingestion.md` §2) |
+| NFR-PERF-23 | Email parsing (MBOX) | ≥ 200 messages/s (without attachments OCR) | Benchmark on public Enron slice | ASSUMPTION · M3a (W3a-2, RM-1): 13,964 messages/s end to end with the commit, ≈ 61,000 in the worker, on a generated 2 GB MBOX (1.29M messages, `11-ingestion.md` §3). The Enron slice is ruled out by NFR-LEG-04 (`07-test-corpus.md`); proposal: measure on the generated MBOX (`corpus-gen mbox-messages`) |
 | NFR-PERF-24 | LLM extraction speed | ≥ 1 segment/s on RM-1 with the minimum-tier model (segment ≤ 2,000 chars) | Benchmark | M1: Qwen3.5-4B 1.39 segments/s with 4 slots, 0.66 with 1; no model reached the earlier 2/s (`09-model-check.md` §5.1). Target lowered 2026-10-24 (gap A3) |
 | NFR-PERF-25 | Parallel workers | Stage A uses up to (CPU cores − 1) workers; Stage B uses up to 4 parallel requests (server slots) per local model | Config check | ASSUMPTION · M1: 4 slots give 2.1× throughput at the same quality (decided 2026-10-24, gap A3) |
 
@@ -85,10 +85,10 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-CAP-01 | Files per project (supported and tested) | 10,000 files | TD-2 run | ASSUMPTION |
 | NFR-CAP-02 | Raw data per project | 20 GB | Synthetic large-file test | ASSUMPTION |
 | NFR-CAP-03 | Segments per project | 2,000,000 | Load test | ASSUMPTION |
-| NFR-CAP-04 | Largest single PDF | 2,000 pages | Test file | ASSUMPTION |
-| NFR-CAP-05 | Largest single CSV | 1,000,000 rows or 500 MB | Test file | ASSUMPTION · M2c: 1M rows (75 MB) met. 500 MB conflicts with NFR-REL-07: a CSV needs ≈ 10 × its size in memory today, so the practical limit is ≈ 175 MB (`10-walking-skeleton.md` §S2a). Decided (2026-10-27): 500 MB stays; M3 builds a streaming CSV parser and a commit that does not hold the whole result |
-| NFR-CAP-06 | Largest single MBOX | 2 GB (streamed, not loaded into memory) | Test file + memory check | ASSUMPTION |
-| NFR-CAP-07 | Over-limit file | Fails with "File too large (limit: X)"; batch continues | TD-3 | ASSUMPTION |
+| NFR-CAP-04 | Largest single PDF | 2,000 pages | Test file | ASSUMPTION · M3b: TD-3 `pages-2000.pdf` is read, `pages-2001.pdf` fails with "File too large (limit: 2,000 pages)" (`nfr_rel_01_td3_pdf_images_fail_alone`) |
+| NFR-CAP-05 | Largest single CSV | 1,000,000 rows or 500 MB | Test file | ASSUMPTION · M2c: 1M rows (75 MB) met. 500 MB conflicts with NFR-REL-07: a CSV needs ≈ 10 × its size in memory today, so the practical limit is ≈ 175 MB (`10-walking-skeleton.md` §S2a). Decided (2026-10-27): 500 MB stays; M3 builds a streaming CSV parser and a commit that does not hold the whole result. M3a (W3a-1): met, a 479 MiB CSV (6.7M rows) in 16 s with 44 MB peak, core + worker (`11-ingestion.md` §2) |
+| NFR-CAP-06 | Largest single MBOX | 2 GB (streamed, not loaded into memory) | Test file + memory check | ASSUMPTION · M3a (W3a-2): met, a 2 GB MBOX in 92 s with 82 MB peak, core + worker (`11-ingestion.md` §3) |
+| NFR-CAP-07 | Over-limit file | Fails with "File too large (limit: X)"; batch continues | TD-3 | ASSUMPTION · M3a: built for CSV (500 MB) and MBOX (2 GB); checked before a worker starts, "File too large (limit: 500 MB)" / "(limit: 2 GB)" (`nfr_cap_07_over_limit_csv_mbox`) |
 | NFR-CAP-08 | Project database size | ≤ 3× extracted text size, plus vectors | Measure on TD-2 | ASSUMPTION |
 
 ---
@@ -98,12 +98,12 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-RES-01 | App memory when idle (project open, model not loaded) | ≤ 500 MB | OS process monitor | ASSUMPTION · M2c (RM-1): 439 MB RSS for the app and its WebKit processes, no project open. M2d: 475 MB with the TD-2 project open; 530 MB right after ingesting it in the same session (PSS 242 / 300 MB). Over the limit after a large ingest; follow-up in M3 (`10-walking-skeleton.md` §5, §6) |
-| NFR-RES-02 | App memory during Stage A on TD-2 (model not counted) | ≤ 2 GB | OS process monitor | ASSUMPTION · M2c (RM-1, the CSV part of TD-2, 23 workers): peak 233 MB, 908 MB with the desktop binary as worker (`10-walking-skeleton.md` §5). All formats: M3 |
+| NFR-RES-02 | App memory during Stage A on TD-2 (model not counted) | ≤ 2 GB | OS process monitor | ASSUMPTION · M2c (RM-1, the CSV part of TD-2, 23 workers): peak 233 MB, 908 MB with the desktop binary as worker (`10-walking-skeleton.md` §5). M3a (RM-1, TD-2's text formats, 3,664 files): 260 MB, 952 MB with the desktop binary as worker (`11-ingestion.md` §4). M3b (RM-1, all 10,000 TD-2 files, OCR included): 1,218 MB, 1,906 MB with the desktop binary as worker, after two fixes: Tesseract clears each page, workers start with a fixed 1 MB glibc mmap threshold (first build: 2,064 / 2,675 MB; `11-ingestion.md` §7). Linux only |
 | NFR-RES-03 | CPU when idle | < 2% average over 1 min | OS process monitor | ASSUMPTION |
 | NFR-RES-04 | Free disk for models + project data | ~30 GB | README + hardware check | Brief |
 | NFR-RES-05 | Model download disk check | Model size + 2 GB headroom required before download | Test with a full disk | ASSUMPTION |
 | NFR-RES-06 | Local model stops after idle | After 10 min with no AI work | Timer | ASSUMPTION |
-| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION · M0: PDF + OCR engines with English OCR data add 18.8 MB on Linux (ADR-0014); `llama-server` is not shipped (ADR-0015); M2a: shell share ~10.8 MB (release binary 10.91 MB with Tesseract linked, 10.77 MB without; `10-walking-skeleton.md` §2), so ~30 MB expected with the engines |
+| NFR-RES-07 | App binary size (without models) | ≤ 150 MB per OS | Build output | ASSUMPTION · M0: PDF + OCR engines with English OCR data add 18.8 MB on Linux (ADR-0014); `llama-server` is not shipped (ADR-0015); M2a: shell share ~10.8 MB (release binary 10.91 MB with Tesseract linked, 10.77 MB without; `10-walking-skeleton.md` §2), so ~30 MB expected with the engines · M3b (RM-1): release binary 37.35 MB with hayro, Tesseract and the embedded English data (`11-ingestion.md` §7) |
 
 ---
 
@@ -111,12 +111,12 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-REL-01 | One bad file never stops the batch | 100% of TD-3 files fail alone; all other files finish | TD-3 mixed into TD-1 | Brief · M2c: met for the TXT/CSV files of TD-3 and the fault files (`nfr_rel_01_td3_txt_csv_fail_alone`); PDF and images: M3 |
+| NFR-REL-01 | One bad file never stops the batch | 100% of TD-3 files fail alone; all other files finish | TD-3 mixed into TD-1 | Brief · M2c: met for the TXT/CSV files of TD-3 and the fault files. M3a: met for every text-format file of TD-3 v3 (TXT, CSV, EML, MBOX, DOCX, JSON, HTML), each outcome and reason as `expected.json` says (`nfr_rel_01_td3_text_formats_fail_alone`); PDF and images: M3b |
 | NFR-REL-02 | Crash safety | After a forced kill during ingestion: 0 corrupted projects in 20 kill tests; SQLite in WAL mode | Kill tests | ASSUMPTION (20 tests) · M2c (RM-1, `mangkon-cli kill-test`): 0 of 20 on the TD-1 TXT/CSV subset and 0 of 20 on TD-2's TXT/CSV (`10-walking-skeleton.md` §4) |
 | NFR-REL-03 | Work lost on crash | At most the files in progress at crash time | Kill tests + job log | ASSUMPTION · M2c: met in 40 kills (at most 23 items, the lane width) |
 | NFR-REL-04 | Job queue survives restart | 100% of queued/paused/running jobs restored | Restart tests | Brief · M2c: met in 40 kills (no item left in progress; every resumed project equal to a run without a kill). Paused jobs: M3 |
 | NFR-REL-05 | Pause takes effect | ≤ 5 s | Timer | ASSUMPTION |
-| NFR-REL-06 | Per-file processing limit | Parse step ≤ 120 s per file (OCR: ≤ 30 s per page); over limit → file fails | TD-3 slow files | ASSUMPTION · M2c: deadline kill built and tested ("Took too long to read"); OCR pages: M3 |
+| NFR-REL-06 | Per-file processing limit | Parse step ≤ 120 s per file; for MBOX ≤ 120 s per message, counted from the last finished message (ADR-0016); for PDFs and images ≤ 120 s per page, counted from the last finished page, and ≤ 30 s per OCR page (ADR-0017); over limit → file fails | TD-3 slow files | ASSUMPTION · M2c: deadline kill built and tested ("Took too long to read"). M3a: MBOX per message (decided 2026-10-29, ADR-0016; `adr_0016_mbox_deadline_per_message`). M3b: PDFs and images per page, OCR page cap (ADR-0017 Proposed; `adr_0017_pdf_deadline_per_page`, `adr_0017_ocr_page_deadline`) |
 | NFR-REL-07 | Parser memory guard | A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with "Needed too much memory" | TD-3 | Reworded per gap A5 (2026-10-27). M2c (S2b, Linux): stopped ≤ 160 ms after passing 1 GB |
 | NFR-REL-08 | Model download | Resumes after network loss; SHA-256 verified on 100% of downloads | Pull network cable mid-download | Brief |
 | NFR-REL-09 | User decisions kept | 100% of decisions survive re-scan, model change, and app upgrade | Automated regression test | Brief |
@@ -138,7 +138,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-QA-04 | Identifier precision, other types (email, phone, domain, Solana) | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-05 | Identifier recall, text-native files | ≥ 95% | Benchmark | ASSUMPTION |
 | NFR-QA-06 | Identifier recall, OCR'd files (clean 300 DPI scans) | ≥ 85% | Benchmark | ASSUMPTION |
-| NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · ASSUMPTION (definition) |
+| NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · M3b (production path, `nfr_qa_07_ocr_accuracy_clean_tier`): 98.46% on 6 clean pages · ASSUMPTION (definition) |
 | NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% (micro, per-segment name keys, `09-model-check.md` §3.1) | Benchmark | M1: confirmed. Qwen3.5-4B 82.9% (minimum tier), 35B-A3B 91.2%, Flash-Next 93.4% → Layer 2 Experimental until M6 re-measures |
 | NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | M1: confirmed. 94.0% / 96.7% / 98.5% on reference text; OCR noise measured in M6 |
 | NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
@@ -195,7 +195,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-COMP-03 | GPU support | NVIDIA (CUDA) full; Apple (Metal) full; AMD/Intel (Vulkan) best effort | Maintainer + community tests | Brief |
 | NFR-COMP-04 | NVIDIA driver | CUDA 12-capable driver | Hardware check message | ASSUMPTION |
 | NFR-COMP-05 | External endpoints | OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`; tested with llama-server, Ollama, LM Studio | Endpoint test suite | Brief · ASSUMPTION (test list) |
-| NFR-COMP-06 | Text encodings | UTF-8, UTF-16 (BOM), Windows-1252 | Test files | ASSUMPTION |
+| NFR-COMP-06 | Text encodings | UTF-8, UTF-16 (BOM), Windows-1252 | Test files | ASSUMPTION · M3a: met for TXT/MD, CSV, JSON and HTML (`nfr_comp_06_encodings`): a BOM picks UTF-8 or UTF-16; else valid UTF-8; else Windows-1252, unless the bytes look binary ("Unknown text encoding"). `<meta charset>` is not read (ASSUMPTION). Email parts use their MIME charset |
 | NFR-COMP-07 | Project portability | A project folder copied to another supported OS opens and works (given original files at same or relocated path) | Cross-OS test | ASSUMPTION |
 
 ---
@@ -233,4 +233,4 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 These are placeholders until the M0 and M1 spikes produce real data (`06-roadmap.md`):
 - After M0 (PDF/OCR engines): NFR-PERF-21, NFR-QA-07, NFR-RES-07. **Done in M0c:** targets kept, measured values in the rows above (ADR-0014, `08-engine-bakeoff.md` §13). NFR-RES-07 still needs the shell share (M2a). **Done in M2a:** shell share ~10.8 MB (row above).
 - After M1 (local models): NFR-PERF-13, -24 (LLM speed), NFR-QA-01, -02, -08, -09 (quality targets), model tiers and catalog (brief §14). **Done in M1 (2026-10-24):** quality and link targets kept; NFR-PERF-24 lowered to ≥ 1 segment/s and NFR-PERF-25 raised to 4 slots (gap A3); NFR-PERF-13 kept for the minimum-tier model; tiers in brief §8; catalog v0 in `crates/mk-models` (`09-model-check.md`). ADR-0015 follow-ups applied to NFR-SEC-11, -LEG-05, -USE-01.
-- NFR-PERF-11 (Stage A incl. OCR): M0 gives about 0.2 s per OCR page on one core (TD-1 has 22 OCR pages, about 5 s). The 3-min target is kept and checked in M3.
+- NFR-PERF-11 (Stage A incl. OCR): M0 gives about 0.2 s per OCR page on one core (TD-1 has 22 OCR pages, about 5 s). The 3-min target is kept and checked in M3. **Done in M3b:** 2.4 s on RM-1 (row above).

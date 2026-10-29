@@ -42,10 +42,13 @@ pub enum Td3Category {
     EndlessLoop,
     /// The parser process dies (TD-3 v2: a test fault).
     Crash,
+    /// A valid file of a less common shape: a multi-page TIFF, a WEBP, a scan inside an email
+    /// (TD-3 v4).
+    Format,
 }
 
 impl Td3Category {
-    pub const ALL: [Td3Category; 10] = [
+    pub const ALL: [Td3Category; 11] = [
         Td3Category::Empty,
         Td3Category::Blank,
         Td3Category::Encrypted,
@@ -56,6 +59,7 @@ impl Td3Category {
         Td3Category::MemoryBomb,
         Td3Category::EndlessLoop,
         Td3Category::Crash,
+        Td3Category::Format,
     ];
 }
 
