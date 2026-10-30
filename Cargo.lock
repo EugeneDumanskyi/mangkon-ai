@@ -2565,6 +2565,7 @@ dependencies = [
  "mk-graph",
  "mk-jobs",
  "mk-kernel",
+ "mk-workspace",
  "proptest",
  "rusqlite",
  "tempfile",

@@ -2,9 +2,8 @@ use std::fmt;
 
 /// Ingestion state of a source content (domain §7.1). "Done" means Stage A is done.
 ///
-/// M2b reaches Queued, Processing, Done, Failed, Missing and Replaced. NotProcessed (cancel) and
-/// Removed (remove from project) exist so the stored states need no migration later; nothing
-/// moves into them yet.
+/// M2b reaches Queued, Processing, Done, Failed, Missing and Replaced; M3c NotProcessed (cancel)
+/// and Removed (remove from project).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum IngestionState {
     Queued,
@@ -21,7 +20,8 @@ use IngestionState::*;
 
 /// Every move of domain §7.1, plus ASSUMPTION (M2b): a Queued, Failed or Missing content whose
 /// last path now has a new hash is Replaced too, not only a Done one. Its pending work is
-/// skipped and its data, if any, deleted with it.
+/// skipped and its data, if any, deleted with it. A content being read (Processing) is never
+/// Removed: the core refuses that removal.
 const MOVES: &[(IngestionState, IngestionState)] = &[
     (Queued, Processing),
     (Processing, Done),
@@ -43,6 +43,9 @@ const MOVES: &[(IngestionState, IngestionState)] = &[
     (Done, Removed),
     (Failed, Removed),
     (Missing, Removed),
+    // ASSUMPTION (M3c): a file can be removed before it is read, or after a cancel.
+    (Queued, Removed),
+    (NotProcessed, Removed),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

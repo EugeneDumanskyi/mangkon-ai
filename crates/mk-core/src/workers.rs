@@ -19,6 +19,7 @@ use mk_worker::{
 };
 use sysinfo::{Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System, UpdateKind};
 
+use crate::control::RunControl;
 use crate::stage_a::{ChunkOrderError, Failure, Staging};
 
 const MB: u64 = 1 << 20;
@@ -187,6 +188,9 @@ pub(crate) enum ItemResult {
     Stopped(WorkerStop),
     /// The core could not stage the result (its spill file failed); the worker was stopped.
     Lost(Failure),
+    /// Pause, cancel or close: the worker was killed once the item's grace was over. The item
+    /// committed nothing and goes back to Pending (ADR-0006).
+    Interrupted,
 }
 
 impl WorkerProcess {
@@ -339,8 +343,8 @@ impl WorkerProcess {
 
     /// Runs one content on this worker under the limits of `cfg`, staging its chunks in
     /// `staging`. `settings` carries the project's OCR languages; `rss` gets each sample of the
-    /// worker's resident memory (for the run's peak). On `Stopped` and `Lost` the process has
-    /// been killed and reaped.
+    /// worker's resident memory (for the run's peak); `control` interrupts it on pause, cancel
+    /// or close. On `Stopped`, `Lost` and `Interrupted` the process has been killed and reaped.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         &mut self,
@@ -351,6 +355,7 @@ impl WorkerProcess {
         file_type: String,
         mut staging: Staging,
         rss: &AtomicU64,
+        control: &RunControl,
     ) -> ItemResult {
         // ADR-0016/0017: an MBOX's deadline runs from its last finished message, a PDF's or an
         // image's from its last finished page.
@@ -458,6 +463,11 @@ impl WorkerProcess {
             }
             if now.duration_since(heard) > cfg.heartbeat_timeout {
                 return stopped(self, Stopped::Silent, true, under_limit, peak);
+            }
+            if control.must_interrupt().is_some() {
+                self.kill();
+                rss.store(0, Ordering::Relaxed);
+                return ItemResult::Interrupted;
             }
         }
     }

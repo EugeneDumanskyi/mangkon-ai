@@ -1,9 +1,20 @@
 //! BC-01 Workspace: project settings, source roots and lifecycle (domain §3).
 //!
-//! M2b: [`SourceRoot`] and the [`ProjectLayout`] of a project folder. Creating and opening
-//! projects from the UI, the app-level registry and settings come in M2d.
+//! M2b: [`SourceRoot`] and the [`ProjectLayout`] of a project folder. M3c: [`ProjectName`],
+//! [`ProjectSettings`] and the registry rules (domain §5.2, §6.1). `mk-store` keeps the registry
+//! in `app.db` and the settings in the project; `mk-core` creates and opens projects.
+
+mod registry;
+mod settings;
 
 use std::path::{Path, PathBuf};
+
+pub use registry::{
+    MAX_NAME, NameError, ProjectName, RegistryEntry, name_key, name_taken, newest_first,
+};
+pub use settings::{
+    DEFAULT_OCR_LANGUAGE, DEFAULT_STOP_LIST, ProjectSettings, Reprocess, SettingsError,
+};
 
 /// Whether a source root is a folder (walked recursively) or one file (domain §5.1).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

@@ -7,7 +7,7 @@ use mk_graph::model::{
     ContentFact, DecisionRecord, DerivedState, Facts, IdentifierRow, MentionFact,
 };
 use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey};
-use mk_jobs::{ItemState, PendingItem};
+use mk_jobs::{ItemState, JobState, PendingItem};
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -132,13 +132,22 @@ pub struct PendingWork {
     pub file_type: String,
 }
 
+/// Pending items of Queued and Running jobs: a Paused or Cancelled job starts nothing
+/// (INV-PR-06).
 pub(crate) fn pending_items(conn: &Connection) -> Result<Vec<PendingWork>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT w.id, w.priority, COALESCE(c.size, 0), COALESCE(c.file_type, '')
-         FROM work_item w LEFT JOIN content c ON c.id = w.content_id
-         WHERE w.state = ?1 ORDER BY w.priority, w.id",
+         FROM work_item w
+         JOIN job j ON j.id = w.job_id
+         LEFT JOIN content c ON c.id = w.content_id
+         WHERE w.state = ?1 AND j.state IN (?2, ?3) ORDER BY w.priority, w.id",
     )?;
-    let rows = stmt.query_map([ItemState::Pending.as_str()], |r| {
+    let args = params![
+        ItemState::Pending.as_str(),
+        JobState::Queued.as_str(),
+        JobState::Running.as_str()
+    ];
+    let rows = stmt.query_map(args, |r| {
         Ok(PendingWork {
             item: PendingItem {
                 id: r.get(0)?,
@@ -728,6 +737,7 @@ pub(crate) fn child_documents(
 /// A content whose ingestion failed, with its first path and the plain reason (NFR-USE-05).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct FailedFile {
+    pub content_id: i64,
     pub path: Option<String>,
     pub file_type: String,
     pub code: Option<String>,
@@ -737,7 +747,7 @@ pub struct FailedFile {
 /// Failed contents in id order, at most `limit`.
 pub(crate) fn failed_files(conn: &Connection, limit: usize) -> Result<Vec<FailedFile>, StoreError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT c.file_type, c.failure_code, c.failure_reason, r.path, f.rel_path
+        "SELECT c.file_type, c.failure_code, c.failure_reason, r.path, f.rel_path, c.id
          FROM content c
          LEFT JOIN file_ref f ON f.id = (
              SELECT id FROM file_ref WHERE content_id = c.id AND present = 1 ORDER BY id LIMIT 1)
@@ -748,6 +758,7 @@ pub(crate) fn failed_files(conn: &Connection, limit: usize) -> Result<Vec<Failed
         params![IngestionState::Failed.as_str(), limit as i64],
         |r| {
             Ok(FailedFile {
+                content_id: r.get(5)?,
                 path: display_path(r.get(3)?, r.get(4)?),
                 file_type: r.get(0)?,
                 code: r.get(1)?,

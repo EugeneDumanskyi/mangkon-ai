@@ -44,6 +44,13 @@ pub fn compact(secs: i64) -> String {
     format!("{y:04}{mo:02}{d:02}T{h:02}{mi:02}{s:02}Z")
 }
 
+/// Milliseconds since the Unix epoch, UTC.
+pub fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
 pub fn now_iso() -> String {
     iso(now_secs())
 }

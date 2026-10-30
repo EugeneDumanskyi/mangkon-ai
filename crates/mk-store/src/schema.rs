@@ -34,6 +34,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "pages",
         sql: include_str!("../migrations/0003_pages.sql"),
     },
+    Migration {
+        version: 4,
+        name: "projects_queue",
+        sql: include_str!("../migrations/0004_projects_queue.sql"),
+    },
 ];
 
 /// What opening did.
@@ -95,6 +100,7 @@ pub fn open_write(
             return Err(StoreError::TooNew {
                 found,
                 supported: latest,
+                app_version: stored_app_version(path),
             });
         }
     }
@@ -146,6 +152,18 @@ pub fn open_write(
         }
     }
     Ok((conn, report))
+}
+
+/// The app version a project was made or last migrated by, if it says (from schema v4). Read
+/// from a too-new project without changing it (US-01.2 AC3).
+fn stored_app_version(path: &Path) -> Option<String> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    conn.query_row(
+        "SELECT value FROM project_meta WHERE key = 'app_version'",
+        [],
+        |r| r.get(0),
+    )
+    .ok()
 }
 
 /// A read connection: `query_only`, so it can never write.

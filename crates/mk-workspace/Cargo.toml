@@ -1,6 +1,6 @@
 [package]
 name = "mk-workspace"
-description = "BC-01: workspace settings and lifecycle (filled in M2b/M2d)."
+description = "BC-01: workspace settings, project names and registry rules (M2b, M3c)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,8 +1,10 @@
-//! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), the kill-test driver
-//! (NFR-REL-02/03/04, M2c) and the `--worker` entry; `bench` comes in M4.
+//! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
+//! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c) and the `--worker`
+//! entry; `bench` comes in M4.
 
 mod ingest;
 mod kill_test;
+mod manage;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,6 +17,10 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli rebuild --project DIR [--json]
        mangkon-cli render --project DIR (--mention ID | --key KEY | --document ID --page N)
                           --out FILE [--tessdata DIR] [--json]
+       mangkon-cli projects (list | create NAME --in DIR | forget DIR) [--app-data DIR] [--json]
+       mangkon-cli retry --project DIR (--all-failed | --path PATH...) [--tessdata DIR] [--json]
+       mangkon-cli remove --project DIR [--json] PATH...
+       mangkon-cli relocate --project DIR --root OLD --to NEW [--tessdata DIR] [--json]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
 
 Commands:
@@ -33,6 +39,17 @@ Commands:
               print the highlight boxes of a mention (--mention), of the first mention of a
               connection key such as email:a@b.example (--key), or none (--document, --page).
               Exits 1 if the page image cannot be shown (the note says why).
+  projects    The app's project list, newest first: list it, create the project NAME in a
+              new folder DIR/NAME, or remove the project in DIR from the list (its folder is
+              kept).
+              --app-data  the app's data folder, which holds the list (default: the OS one)
+  retry       Queue failed and not-processed files again (all, or those at or inside each
+              PATH) and read them.
+  remove      Remove the files at or inside each PATH from the project: their data goes
+              unless another path has the same content, and connections are rebuilt. The
+              files themselves are not touched. Prints how many connections lost evidence.
+  relocate    The source OLD was moved to NEW: point the project at NEW and re-scan. Files
+              that did not change are not read again.
   kill-test   Ingest DIR (its text-format files) again and again, kill the process at a random
               moment each time, then reopen, check and finish the project. Every run must
               leave a healthy project that ends up equal to a run without a kill.
@@ -70,6 +87,22 @@ fn main() -> ExitCode {
         },
         Some("rebuild") => match rebuild_options(&args[1..]) {
             Ok(opts) => ingest::rebuild(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("projects") => match projects_options(&args[1..]) {
+            Ok(opts) => manage::projects(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("retry") => match retry_options(&args[1..]) {
+            Ok(opts) => manage::retry(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("remove") => match remove_options(&args[1..]) {
+            Ok(opts) => manage::remove(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("relocate") => match relocate_options(&args[1..]) {
+            Ok(opts) => manage::relocate(&opts),
             Err(e) => usage_error(&e),
         },
         Some("kill-test") => match kill_test_options(&args[1..]) {
@@ -203,6 +236,117 @@ fn rebuild_options(args: &[String]) -> Result<ingest::RebuildOptions, String> {
     }
     Ok(ingest::RebuildOptions {
         project: project.ok_or("rebuild needs --project DIR")?,
+        json,
+    })
+}
+
+fn projects_options(args: &[String]) -> Result<manage::ProjectsOptions, String> {
+    let (mut app_data, mut json, mut location) = (None, false, None);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--app-data" => app_data = Some(PathBuf::from(value()?)),
+            "--in" => location = Some(PathBuf::from(value()?)),
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown projects argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let command = match (words.as_slice(), location) {
+        (["list"], None) => manage::ProjectsCommand::List,
+        (["create", name], Some(location)) => manage::ProjectsCommand::Create {
+            name: (*name).to_string(),
+            location,
+        },
+        (["forget", path], None) => manage::ProjectsCommand::Forget {
+            path: PathBuf::from(path),
+        },
+        _ => return Err("projects takes list, create NAME --in DIR or forget DIR".into()),
+    };
+    Ok(manage::ProjectsOptions {
+        command,
+        app_data,
+        json,
+    })
+}
+
+fn retry_options(args: &[String]) -> Result<manage::RetryOptions, String> {
+    let (mut project, mut tessdata, mut json, mut all) = (None, None, false, false);
+    let mut paths = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--tessdata" => tessdata = Some(PathBuf::from(value()?)),
+            "--all-failed" => all = true,
+            "--path" => paths.push(PathBuf::from(value()?)),
+            "--json" => json = true,
+            other => return Err(format!("unknown retry argument {other:?}")),
+        }
+    }
+    let target = match (all, paths.is_empty()) {
+        (true, true) => manage::RetryTarget::AllFailed,
+        (false, false) => manage::RetryTarget::Paths(paths),
+        _ => return Err("retry takes --all-failed or --path PATH".into()),
+    };
+    Ok(manage::RetryOptions {
+        project: project.ok_or("retry needs --project DIR")?,
+        target,
+        tessdata,
+        json,
+    })
+}
+
+fn remove_options(args: &[String]) -> Result<manage::RemoveOptions, String> {
+    let (mut project, mut json) = (None, false);
+    let mut paths = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--project" => {
+                project = Some(PathBuf::from(it.next().ok_or("--project needs a value")?))
+            }
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown remove argument {other:?}"));
+            }
+            path => paths.push(PathBuf::from(path)),
+        }
+    }
+    if paths.is_empty() {
+        return Err("remove needs at least one PATH".into());
+    }
+    Ok(manage::RemoveOptions {
+        project: project.ok_or("remove needs --project DIR")?,
+        paths,
+        json,
+    })
+}
+
+fn relocate_options(args: &[String]) -> Result<manage::RelocateOptions, String> {
+    let (mut project, mut root, mut to, mut tessdata, mut json) = (None, None, None, None, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--root" => root = Some(PathBuf::from(value()?)),
+            "--to" => to = Some(PathBuf::from(value()?)),
+            "--tessdata" => tessdata = Some(PathBuf::from(value()?)),
+            "--json" => json = true,
+            other => return Err(format!("unknown relocate argument {other:?}")),
+        }
+    }
+    Ok(manage::RelocateOptions {
+        project: project.ok_or("relocate needs --project DIR")?,
+        root: root.ok_or("relocate needs --root OLD")?,
+        to: to.ok_or("relocate needs --to NEW")?,
+        tessdata,
         json,
     })
 }

@@ -2,10 +2,12 @@
 //! No I/O: `mk-store` persists the states, `mk-core` runs the lanes.
 //!
 //! M2b: every state of domain §7.2 (so schema v1 needs no migration later), the Stage A lane
-//! and the restart rule. M2c: the worker memory budget ([`pick_next`], gap A2). Pause and
-//! cancel commands come in M3; AI lanes in M5.
+//! and the restart rule. M2c: the worker memory budget ([`pick_next`], gap A2). M3c: the move
+//! Queued → Paused (a project-wide pause covers jobs not started yet) and the ETA rule
+//! ([`estimate`]). AI lanes come in M5.
 
 use std::fmt;
+use std::time::Duration;
 
 /// Job state (domain §7.2).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -102,6 +104,8 @@ states!(JobState {
     Cancelled => "cancelled",
 } moves [
     (Queued, Running),
+    // ASSUMPTION (M3c): pause is project-wide (D11), so a job not started yet pauses too.
+    (Queued, Paused),
     (Running, Paused),
     (Paused, Running),
     (Running, Blocked),
@@ -240,9 +244,47 @@ pub fn pick_next(needs: &[u64], in_use: u64, in_flight: usize, total: u64) -> Op
         .or_else(|| (in_flight == 0 && !needs.is_empty()).then_some(0))
 }
 
+/// Finished items before an ETA is shown; until then the panel says "Estimating…" (US-03.1
+/// AC2).
+pub const ETA_MIN_DONE: u64 = 5;
+
+/// Time left for `remaining` units at the rate of this run: `done` units in `elapsed`
+/// (ASSUMPTION M3c: units are bytes, so a big file counts for more than a small one). `None`
+/// while fewer than [`ETA_MIN_DONE`] items are finished or nothing was done yet.
+pub fn estimate(
+    finished_items: u64,
+    done: u64,
+    remaining: u64,
+    elapsed: Duration,
+) -> Option<Duration> {
+    if finished_items < ETA_MIN_DONE || done == 0 || elapsed.is_zero() {
+        return None;
+    }
+    let secs = elapsed.as_secs_f64() * remaining as f64 / done as f64;
+    Some(Duration::from_secs_f64(secs.min(1e9)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// US-03.1 AC2: no ETA before 5 finished files; then remaining ÷ rate.
+    #[test]
+    fn us_03_1_ac2_eta_none_until_5() {
+        let s = Duration::from_secs;
+        assert_eq!(estimate(4, 400, 100, s(4)), None);
+        assert_eq!(estimate(5, 0, 100, s(4)), None);
+        assert_eq!(estimate(5, 500, 1000, s(10)), Some(s(20)));
+        assert_eq!(estimate(9, 500, 0, s(10)), Some(s(0)));
+    }
+
+    /// D11: a project-wide pause pauses jobs that have not started.
+    #[test]
+    fn d11_queued_job_can_pause() {
+        assert!(JobState::Queued.can_move_to(JobState::Paused));
+        assert!(JobState::Paused.can_move_to(JobState::Running));
+        assert!(!JobState::Paused.can_move_to(JobState::Queued));
+    }
 
     #[test]
     fn names_round_trip() {

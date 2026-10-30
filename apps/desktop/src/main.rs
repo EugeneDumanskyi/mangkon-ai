@@ -12,7 +12,7 @@ mod nav;
 mod state;
 
 use tauri::webview::NewWindowResponse;
-use tauri::{DragDropEvent, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{DragDropEvent, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 use crate::state::AppState;
 
@@ -38,9 +38,31 @@ fn main() -> std::process::ExitCode {
         commands::source_document,
         commands::page_view,
         commands::page_image,
+        commands::pick_files,
+        commands::recent_projects,
+        commands::create_project,
+        commands::locate_project,
+        commands::forget_project,
+        commands::rescan,
+        commands::pause,
+        commands::resume,
+        commands::cancel,
+        commands::documents_page,
+        commands::documents_count,
+        commands::document_types,
+        commands::retry,
+        commands::removal_impact,
+        commands::remove_files,
+        commands::project_settings,
+        commands::save_settings,
+        commands::reprocess,
+        commands::source_roots,
+        commands::relocate_root,
+        commands::remove_root,
         commands::subscribe,
         commands::record_ui_timing,
-        commands::record_view_sweep
+        commands::record_view_sweep,
+        commands::record_queue_walk
     ]);
     #[cfg(feature = "spike-s2d")]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -58,9 +80,31 @@ fn main() -> std::process::ExitCode {
         commands::source_document,
         commands::page_view,
         commands::page_image,
+        commands::pick_files,
+        commands::recent_projects,
+        commands::create_project,
+        commands::locate_project,
+        commands::forget_project,
+        commands::rescan,
+        commands::pause,
+        commands::resume,
+        commands::cancel,
+        commands::documents_page,
+        commands::documents_count,
+        commands::document_types,
+        commands::retry,
+        commands::removal_impact,
+        commands::remove_files,
+        commands::project_settings,
+        commands::save_settings,
+        commands::reprocess,
+        commands::source_roots,
+        commands::relocate_root,
+        commands::remove_root,
         commands::subscribe,
         commands::record_ui_timing,
         commands::record_view_sweep,
+        commands::record_queue_walk,
         commands::synthetic_rows,
         commands::record_frame_stats
     ]);
@@ -89,7 +133,13 @@ fn main() -> std::process::ExitCode {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start Mangkon AI");
+        .build(tauri::generate_context!())
+        .expect("failed to start Mangkon AI")
+        // Quitting stops the run and keeps the queue's state (US-03.4 AC1).
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                app.state::<AppState>().close();
+            }
+        });
     std::process::ExitCode::SUCCESS
 }

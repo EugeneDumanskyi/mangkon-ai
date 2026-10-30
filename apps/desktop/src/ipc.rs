@@ -20,6 +20,20 @@ pub struct AppInfo {
     /// then save the counts with `record_view_sweep` (`MK_UI_TIMING=1` and `MK_VIEW_SWEEP=1`;
     /// the NFR-SEC-09 network check).
     pub view_sweep: bool,
+    /// The scripted queue walk (`MK_QUEUE_WALK=1` or `2`): the UI clicks through the project and
+    /// queue controls, then saves the steps with `record_queue_walk` (M3c release check).
+    pub queue_walk: Option<QueueWalkInfo>,
+}
+
+/// What the queue walk works on: `MK_QUEUE_WALK_LOCATION` (where phase 1 makes the project) and
+/// `MK_QUEUE_WALK_SOURCES` (folders to add, a path list like `PATH`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QueueWalkInfo {
+    pub phase: u8,
+    pub location: String,
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -41,6 +55,17 @@ impl From<mk_core::AppInfo> for AppInfo {
             }),
             ui_timing: ui_timing_enabled(),
             view_sweep: view_sweep_enabled(),
+            queue_walk: queue_walk_phase().map(|phase| QueueWalkInfo {
+                phase,
+                location: std::env::var("MK_QUEUE_WALK_LOCATION").unwrap_or_default(),
+                sources: std::env::var_os("MK_QUEUE_WALK_SOURCES")
+                    .map(|v| {
+                        std::env::split_paths(&v)
+                            .map(|p| p.display().to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }),
         }
     }
 }
@@ -173,6 +198,35 @@ pub fn view_sweep_enabled() -> bool {
     ui_timing_enabled() && std::env::var_os("MK_VIEW_SWEEP").is_some_and(|v| v == "1")
 }
 
+/// `MK_QUEUE_WALK=1` (create, add, pause, cancel, retry, remove, settings, quit paused) or `2`
+/// (reopen, still paused, resume to the end).
+pub fn queue_walk_phase() -> Option<u8> {
+    match std::env::var("MK_QUEUE_WALK").as_deref() {
+        Ok("1") => Some(1),
+        Ok("2") => Some(2),
+        _ => None,
+    }
+}
+
+/// One phase of the queue walk: each step with the time it took, and what went wrong.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QueueWalk {
+    pub phase: u8,
+    pub steps: Vec<QueueWalkStep>,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct QueueWalkStep {
+    pub name: String,
+    pub ms: f64,
+    pub detail: String,
+}
+
 /// One view sweep: how many mention and document views were opened, and what went wrong.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -226,21 +280,100 @@ impl From<mk_core::ProjectError> for IpcError {
     }
 }
 
+impl From<mk_core::WorkspaceError> for IpcError {
+    fn from(e: mk_core::WorkspaceError) -> Self {
+        use mk_core::WorkspaceError as W;
+        let code = match &e {
+            W::Name(_) => "name",
+            W::NameTaken => "name_taken",
+            W::NotWritable(_) => "not_writable",
+            W::FolderExists(_) => "folder_exists",
+            W::NotFound(_) => "not_found",
+            W::NotAProject(_) => "not_a_project",
+            W::TooNew { .. } => "too_new",
+            W::MigrationFailed { .. } => "migration_failed",
+            W::NoEntry(_) => "no_entry",
+            W::Project(_) => "project",
+        };
+        IpcError::new(code, e.to_string())
+    }
+}
+
 /// The open project (A7: one at a time).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct ProjectInfo {
+    /// Its entry in the project list.
+    #[ts(type = "number")]
+    pub id: i64,
+    pub name: String,
     pub path: String,
     /// Source folders and files, as added.
     pub sources: Vec<String>,
+}
+
+/// A project in the recent list (US-01.2 AC1), newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RecentProject {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    /// Milliseconds since the Unix epoch, UTC.
+    #[ts(type = "number")]
+    pub last_opened_at: i64,
+    /// `false` when the folder no longer holds the project: the UI offers Locate… and Remove
+    /// from list (US-01.2 AC2).
+    pub present: bool,
+}
+
+impl From<mk_core::RecentProject> for RecentProject {
+    fn from(r: mk_core::RecentProject) -> Self {
+        Self {
+            id: r.entry.id,
+            name: r.entry.name,
+            path: r.entry.path,
+            last_opened_at: r.entry.last_opened_at,
+            present: r.present,
+        }
+    }
 }
 
 fn count(n: u64) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// File counts for the progress panel (US-03.1 AC1).
+/// The time left as the progress panel shows it (US-03.1 AC2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Eta {
+    /// Fewer than 5 files finished in this run.
+    Estimating,
+    Left {
+        seconds: u32,
+    },
+    /// Nothing is running.
+    None,
+}
+
+impl From<mk_core::Eta> for Eta {
+    fn from(e: mk_core::Eta) -> Self {
+        match e {
+            mk_core::Eta::Estimating => Eta::Estimating,
+            mk_core::Eta::Left(d) => Eta::Left {
+                seconds: u32::try_from(d.as_secs()).unwrap_or(u32::MAX),
+            },
+            mk_core::Eta::None => Eta::None,
+        }
+    }
+}
+
+/// The progress panel (US-03.1 AC1): the project's file counts and, while a run is going on,
+/// the stage, the files of this run, the files in a worker now and the time left.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -250,20 +383,279 @@ pub struct Progress {
     pub failed: u32,
     /// Waiting or in a worker now.
     pub queued: u32,
+    /// Stopped by Cancel (D10).
+    pub not_processed: u32,
     /// A re-scan or Stage A run is going on.
     pub ingesting: bool,
+    /// The queue is paused (US-03.2); it stays paused when the project is reopened.
+    pub paused: bool,
+    /// `"A"` while Stage A work is open; `null` when the queue is empty.
+    pub stage: Option<String>,
+    /// Files finished in this run, and those plus the files still to do.
+    pub run_done: u32,
+    pub run_total: u32,
+    pub current_files: Vec<String>,
+    pub eta: Eta,
 }
 
 impl Progress {
-    pub fn new(c: mk_core::IngestCounts, ingesting: bool) -> Self {
+    pub fn new(c: mk_core::IngestCounts, v: mk_core::ProgressView) -> Self {
         Self {
             total: count(c.total),
             done: count(c.done),
             failed: count(c.failed),
             queued: count(c.queued + c.processing),
-            ingesting,
+            not_processed: count(
+                c.total
+                    .saturating_sub(c.done + c.failed + c.queued + c.processing),
+            ),
+            ingesting: v.running,
+            paused: v.paused,
+            stage: v.stage.map(str::to_string),
+            run_done: count(v.files_done),
+            run_total: count(v.files_total),
+            current_files: v.current_files,
+            eta: v.eta.into(),
         }
     }
+}
+
+/// Filters of the documents list (US-02.8 AC2); `null` matches all.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentFilter {
+    /// `queued`, `processing`, `done`, `failed`, `not_processed` or `missing`.
+    pub status: Option<String>,
+    pub file_type: Option<String>,
+}
+
+impl From<DocumentFilter> for mk_core::DocumentFilter {
+    fn from(f: DocumentFilter) -> Self {
+        Self {
+            status: f.status,
+            file_type: f.file_type,
+        }
+    }
+}
+
+/// Where the documents list continues.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentCursor {
+    pub root: String,
+    pub rel_path: String,
+}
+
+impl From<DocumentCursor> for mk_core::DocumentCursor {
+    fn from(c: DocumentCursor) -> Self {
+        Self {
+            root: c.root,
+            rel_path: c.rel_path,
+        }
+    }
+}
+
+impl From<mk_core::DocumentCursor> for DocumentCursor {
+    fn from(c: mk_core::DocumentCursor) -> Self {
+        Self {
+            root: c.root,
+            rel_path: c.rel_path,
+        }
+    }
+}
+
+/// One row of the documents list: one path in the project (US-02.8 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentItem {
+    /// What `removal_impact` and `remove_files` take.
+    #[ts(type = "number")]
+    pub ref_id: i64,
+    /// What `retry` takes.
+    #[ts(type = "number")]
+    pub content_id: i64,
+    pub path: String,
+    pub file_type: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Pages, rows or messages read; `null` for other types or before the file is read.
+    pub units: Option<u32>,
+    /// `pages`, `rows` or `messages`.
+    pub unit: Option<String>,
+    /// `queued`, `processing`, `done`, `failed`, `not_processed` or `missing`.
+    pub status: String,
+    pub warnings: Vec<String>,
+    /// The plain reason of a failed file (US-02.7 AC2).
+    pub failure_reason: Option<String>,
+    /// The technical text behind "Show details".
+    pub failure_detail: Option<String>,
+    /// Other paths with the same content (US-01.3 AC4).
+    pub other_paths: u32,
+}
+
+impl From<mk_core::DocumentRow> for DocumentItem {
+    fn from(r: mk_core::DocumentRow) -> Self {
+        let path = if r.rel_path.is_empty() {
+            r.root.clone()
+        } else {
+            std::path::Path::new(&r.root)
+                .join(&r.rel_path)
+                .display()
+                .to_string()
+        };
+        Self {
+            ref_id: r.ref_id,
+            content_id: r.content_id,
+            path,
+            file_type: r.file_type,
+            size: r.size,
+            units: r.units.map(|(n, _)| count(n)),
+            unit: r.units.map(|(_, u)| u.to_string()),
+            status: r.status,
+            warnings: r.warnings,
+            failure_reason: r.failure_reason,
+            failure_detail: r.failure_detail,
+            other_paths: count(r.other_paths),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentsPage {
+    pub rows: Vec<DocumentItem>,
+    /// `null` on the last page.
+    pub next: Option<DocumentCursor>,
+}
+
+impl From<mk_core::DocumentsPage> for DocumentsPage {
+    fn from(p: mk_core::DocumentsPage) -> Self {
+        Self {
+            rows: p.rows.into_iter().map(Into::into).collect(),
+            next: p.next.map(Into::into),
+        }
+    }
+}
+
+/// A file type in the project and how many paths have it (US-02.8 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DocumentType {
+    pub file_type: String,
+    pub count: u32,
+}
+
+/// What a removal did (US-01.5 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RemoveSummary {
+    pub removed: u32,
+    /// Files whose data was deleted: no other path had the same content.
+    pub deleted: u32,
+}
+
+impl From<mk_core::RemoveOutcome> for RemoveSummary {
+    fn from(o: mk_core::RemoveOutcome) -> Self {
+        Self {
+            removed: count(o.refs as u64),
+            deleted: count(o.contents as u64),
+        }
+    }
+}
+
+/// A project's settings (US-01.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Settings {
+    /// Two letters, such as `DE`; `null` reads only numbers with a country code.
+    pub phone_region: Option<String>,
+    /// Tesseract codes, at least one.
+    pub ocr_languages: Vec<String>,
+    pub domain_stop_list: Vec<String>,
+}
+
+impl From<mk_core::ProjectSettings> for Settings {
+    fn from(s: mk_core::ProjectSettings) -> Self {
+        Self {
+            phone_region: s.phone_region,
+            ocr_languages: s.ocr_languages,
+            domain_stop_list: s.domain_stop_list,
+        }
+    }
+}
+
+impl From<Settings> for mk_core::ProjectSettings {
+    fn from(s: Settings) -> Self {
+        Self {
+            phone_region: s.phone_region,
+            ocr_languages: s.ocr_languages,
+            domain_stop_list: s.domain_stop_list,
+        }
+    }
+}
+
+/// The settings and what the settings screen offers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SettingsInfo {
+    pub settings: Settings,
+    /// OCR languages whose files are in the OCR language folder (English is built in).
+    pub installed_ocr_languages: Vec<String>,
+}
+
+/// What saving settings changes in files already read (INV-WS-07): the UI asks "Re-process
+/// affected files now?" when something does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SettingsSaved {
+    /// Files with OCR'd pages, or that failed for a missing OCR language.
+    pub reprocess_ocr: bool,
+}
+
+/// A source folder or file of the project.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SourceRoot {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub path: String,
+    /// `folder` or `file`.
+    pub kind: String,
+    /// `false` when it is not there now: the UI offers Locate… (D12).
+    pub present: bool,
+    /// Paths removed from it (US-01.5).
+    pub excluded: u32,
+}
+
+impl From<mk_core::SourceRootInfo> for SourceRoot {
+    fn from(r: mk_core::SourceRootInfo) -> Self {
+        Self {
+            id: r.id,
+            path: r.path,
+            kind: r.kind.as_str().to_string(),
+            present: r.present,
+            excluded: count(r.excluded as u64),
+        }
+    }
+}
+
+/// A file a re-scan left out, with the reason (INV-CO-11).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SkippedFile {
+    pub path: String,
+    pub reason: String,
 }
 
 /// Where the connections list continues: the ranking key of the last row loaded (domain §9.2).
@@ -797,11 +1189,22 @@ pub enum UiEvent {
     /// A project was opened or closed, or its sources changed (also after a drop).
     ProjectChanged,
     IngestStarted,
-    /// `error` is set when the run stopped because of the project itself.
+    /// Files finished or started, or the queue was paused or resumed (at most every 500 ms).
+    ProgressChanged,
+    /// `error` is set when the run stopped because of the project itself. The add summary
+    /// (US-01.3 AC5): new paths, those with content already stored, and the files left out (at
+    /// most 100 listed).
+    #[serde(rename_all = "camelCase")]
     IngestFinished {
         done: u32,
         failed: u32,
         error: Option<String>,
+        /// `pause`, `cancel` or `close` when the run was stopped.
+        interrupted: Option<String>,
+        added: u32,
+        duplicates: u32,
+        skipped: u32,
+        skipped_files: Vec<SkippedFile>,
     },
     /// Something the user did outside a command failed (a drop), with a plain message.
     Error {

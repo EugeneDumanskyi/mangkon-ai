@@ -3,7 +3,11 @@
 /**
  * The open project (A7: one at a time).
  */
-export type ProjectInfo = { path: string, 
+export type ProjectInfo = { 
+/**
+ * Its entry in the project list.
+ */
+id: number, name: string, path: string, 
 /**
  * Source folders and files, as added.
  */

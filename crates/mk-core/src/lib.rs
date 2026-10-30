@@ -11,13 +11,19 @@
 //!
 //! - M2d: [`Project::ingest`] and [`Project::rebuild`] for both apps, and the slice reads
 //!   (connections, occurrences, source context with the hit split out, `view`).
+//! - M3c: [`Workspace`] (the project registry in `app.db`: create, open, recent, locate,
+//!   forget); pause, resume and cancel on [`Project`] ([`Stop`]); the documents list, retry,
+//!   removing files, settings, relocating roots and the progress panel (`manage`).
 
+mod control;
 mod events;
+mod manage;
 mod page;
 mod project;
 pub mod stage_a;
 mod view;
 mod workers;
+mod workspace;
 
 #[cfg(feature = "spike-s2d")]
 pub mod spike_s2d;
@@ -25,11 +31,17 @@ pub mod spike_s2d;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+pub use control::{PAUSE_GRACE, Stop};
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
 pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
-pub use mk_store::{DocumentInfo, FailedFile, OccurrenceRow};
+pub use mk_store::{
+    CancelOutcome, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow, FailedFile,
+    OccurrenceRow, RemoveOutcome, STATUS_MISSING,
+};
+pub use mk_workspace::{ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
 pub use project::{
     HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
@@ -41,6 +53,7 @@ pub use view::{
     WHOLE_EMAIL_SEGMENTS,
 };
 pub use workers::{Stopped, WorkerConfig, WorkerError, WorkerStop, worker_processes};
+pub use workspace::{RecentProject, Workspace, WorkspaceError};
 
 /// The worker entry (ADR-0007): if this process was started as `<exe> --worker [...]`, runs the
 /// worker loop on stdin/stdout and returns its exit code. Both apps call it first thing in

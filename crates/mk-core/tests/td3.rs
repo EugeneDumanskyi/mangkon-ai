@@ -288,3 +288,52 @@ fn nfr_cap_07_over_limit_csv_mbox() {
         assert_eq!(state(ok).state, IngestionState::Done, "{ok}");
     }
 }
+
+/// M3c, US-02.8 AC1 and US-02.7 AC2 on TD-1 + TD-3: the documents list has one row per stored
+/// path with its name, type, size and status; failed rows have a plain reason and the detail
+/// behind "Show details"; read CSV and MBOX files show their rows or messages.
+#[test]
+fn us_02_8_ac1_documents_page_fields() {
+    let Some(f) = fixture() else { return };
+    let p = &f.project;
+    let filter = mk_core::DocumentFilter::default();
+    let mut rows = Vec::new();
+    let mut after = None;
+    loop {
+        let page = p.documents_page(&filter, after.as_ref(), 200).unwrap();
+        rows.extend(page.rows);
+        match page.next {
+            Some(n) => after = Some(n),
+            None => break,
+        }
+    }
+    let stored = p.store().stored_refs().unwrap();
+    assert_eq!(rows.len(), stored.len());
+    assert_eq!(rows.len() as u64, p.documents_count(&filter).unwrap());
+    let mut failed = 0;
+    for r in &rows {
+        let path = mk_corpus::fs::resolve(Path::new(&r.root), &r.rel_path);
+        assert_eq!(
+            r.size,
+            std::fs::metadata(&path).unwrap().len(),
+            "{}",
+            r.rel_path
+        );
+        assert!(!r.file_type.is_empty(), "{}", r.rel_path);
+        match r.status.as_str() {
+            "done" => {
+                // Pages come from stored page text, so a PDF of blank pages shows none.
+                if r.size > 0 && matches!(r.file_type.as_str(), "csv" | "mbox") {
+                    assert!(r.units.is_some(), "{} has no units", r.rel_path);
+                }
+            }
+            "failed" => {
+                failed += 1;
+                assert!(r.failure_reason.is_some(), "{}", r.rel_path);
+                assert!(r.failure_detail.is_some(), "{}", r.rel_path);
+            }
+            other => panic!("{}: {other}", r.rel_path),
+        }
+    }
+    assert!(failed > 0);
+}

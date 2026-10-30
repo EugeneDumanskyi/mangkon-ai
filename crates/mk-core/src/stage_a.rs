@@ -19,6 +19,8 @@ use mk_worker::frame::{FrameReader, FrameWriter};
 pub struct Failure {
     pub code: String,
     pub reason: String,
+    /// The technical text behind "Show details" (US-02.7 AC2); the code alone when `None`.
+    pub detail: Option<String>,
 }
 
 impl Failure {
@@ -26,11 +28,21 @@ impl Failure {
         Self {
             code: code.to_string(),
             reason: reason.into(),
+            detail: None,
         }
     }
 
     pub(crate) fn from_worker(code: String, reason: String) -> Self {
-        Self { code, reason }
+        Self {
+            code,
+            reason,
+            detail: None,
+        }
+    }
+
+    pub(crate) fn with_detail(mut self, detail: String) -> Self {
+        self.detail = Some(detail);
+        self
     }
 }
 

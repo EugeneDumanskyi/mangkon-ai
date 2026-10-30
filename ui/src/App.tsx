@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "./ipc/commands";
 import { connectCoreEvents, onCoreEvent } from "./lib/coreEvents";
 import { ProjectScreen } from "./project/ProjectScreen";
+import { runQueueWalk } from "./project/queueWalk";
 import { StartScreen } from "./project/StartScreen";
 import { S2dScreen } from "./spike/S2dScreen";
 
@@ -21,6 +22,15 @@ export function App() {
       if (event.kind === "ingestFinished" && event.error !== null) setNotice(event.error);
     });
   }, [client]);
+
+  // Scripted runs only (`MK_QUEUE_WALK`): the M3c walk through the project and queue controls.
+  const walked = useRef(false);
+  const walk = info.data?.queueWalk ?? null;
+  useEffect(() => {
+    if (walk === null || !project.isSuccess || walked.current) return;
+    walked.current = true;
+    void runQueueWalk(walk, client);
+  }, [walk, project.isSuccess, client]);
 
   return (
     <div className="flex h-full flex-col">

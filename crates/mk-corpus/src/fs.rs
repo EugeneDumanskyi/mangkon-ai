@@ -1,6 +1,7 @@
 //! File system side of re-scan: walk source roots and hash files. The only I/O in this crate;
 //! the diff itself is pure ([`crate::rescan`]). Reads only, never writes (INV-CO-01).
 
+use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -88,6 +89,17 @@ pub fn meta(md: &std::fs::Metadata) -> FileMeta {
 /// Walks a source root: a folder (recursively) or a single file. Symbolic links are not
 /// followed.
 pub fn walk(root_id: RootId, root: &Path, types: &FileTypes) -> Walk {
+    walk_excluding(root_id, root, types, &BTreeSet::new())
+}
+
+/// [`walk`], leaving out the relative paths removed from the project (US-01.5, ASSUMPTION
+/// M3c): an excluded file is not found, an excluded folder is not entered. Neither is reported.
+pub fn walk_excluding(
+    root_id: RootId,
+    root: &Path,
+    types: &FileTypes,
+    excluded: &BTreeSet<String>,
+) -> Walk {
     let mut out = Walk::default();
     let md = match std::fs::metadata(root) {
         Ok(md) => md,
@@ -115,7 +127,16 @@ pub fn walk(root_id: RootId, root: &Path, types: &FileTypes) -> Walk {
         .follow_links(false)
         .sort_by_file_name()
         .into_iter()
-        .filter_entry(|e| e.depth() == 0 || !is_hidden_or_system(&e.file_name().to_string_lossy()));
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !(is_hidden_or_system(&e.file_name().to_string_lossy())
+                    || (!excluded.is_empty()
+                        && e.path()
+                            .strip_prefix(root)
+                            .ok()
+                            .and_then(rel_path_of)
+                            .is_some_and(|r| excluded.contains(&r))))
+        });
     for entry in it {
         let entry = match entry {
             Ok(e) => e,
@@ -222,6 +243,22 @@ mod tests {
             }]
         );
         assert!(w.errors.is_empty());
+    }
+
+    /// US-01.5: removed paths are not walked again; an excluded folder is not entered.
+    #[test]
+    fn us_01_5_excluded_paths_are_not_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        std::fs::create_dir_all(p.join("sub/old")).unwrap();
+        for f in ["a.txt", "b.txt", "sub/c.txt", "sub/old/d.txt"] {
+            std::fs::write(p.join(f), b"x").unwrap();
+        }
+        let excluded: BTreeSet<String> = ["b.txt".into(), "sub/old".into()].into();
+        let w = walk_excluding(1, p, &types(), &excluded);
+        let rels: Vec<&str> = w.entries.iter().map(|e| e.rel_path.as_str()).collect();
+        assert_eq!(rels, vec!["a.txt", "sub/c.txt"]);
+        assert!(w.skipped.is_empty());
     }
 
     #[test]

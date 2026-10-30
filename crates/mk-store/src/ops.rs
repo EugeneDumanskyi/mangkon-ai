@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::StoreError;
 use crate::codec;
 use crate::derive::rebuild_keys;
-use crate::time::now_iso;
+use crate::time::{now_iso, now_ms};
 
 /// One re-scan outcome with the file type of its content (from the path's extension).
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -32,6 +32,11 @@ pub struct RescanOutcome {
     pub missing_contents: usize,
     pub found_contents: usize,
     pub replaced_contents: usize,
+    /// New paths (US-01.3 AC5 "N added").
+    pub added: usize,
+    /// New paths whose content was already stored or came earlier in this re-scan: read once
+    /// (US-01.3 AC4/AC5 "N duplicates").
+    pub duplicates: usize,
     /// A connection row was added, removed or changed.
     pub connections_changed: bool,
 }
@@ -163,18 +168,18 @@ pub struct Recovery {
     pub contents: usize,
 }
 
-fn invalid(msg: impl Into<String>) -> StoreError {
+pub(crate) fn invalid(msg: impl Into<String>) -> StoreError {
     StoreError::Invalid(msg.into())
 }
 
-fn content_state(conn: &Connection, id: i64) -> Result<IngestionState, StoreError> {
+pub(crate) fn content_state(conn: &Connection, id: i64) -> Result<IngestionState, StoreError> {
     let s: String = conn
         .prepare_cached("SELECT state FROM content WHERE id = ?1")?
         .query_row([id], |r| r.get(0))?;
     IngestionState::from_name(&s).ok_or_else(|| invalid(format!("unknown content state {s}")))
 }
 
-fn set_content_state(
+pub(crate) fn set_content_state(
     conn: &Connection,
     id: i64,
     to: IngestionState,
@@ -186,7 +191,10 @@ fn set_content_state(
     Ok(from)
 }
 
-fn item_state(conn: &Connection, id: i64) -> Result<(ItemState, i64, Option<i64>), StoreError> {
+pub(crate) fn item_state(
+    conn: &Connection,
+    id: i64,
+) -> Result<(ItemState, i64, Option<i64>), StoreError> {
     let (s, job, content): (String, i64, Option<i64>) = conn
         .prepare_cached("SELECT state, job_id, content_id FROM work_item WHERE id = ?1")?
         .query_row([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
@@ -194,7 +202,7 @@ fn item_state(conn: &Connection, id: i64) -> Result<(ItemState, i64, Option<i64>
     Ok((s, job, content))
 }
 
-fn set_item_state(
+pub(crate) fn set_item_state(
     conn: &Connection,
     id: i64,
     to: ItemState,
@@ -207,7 +215,7 @@ fn set_item_state(
 }
 
 /// The identifier keys of a content's stored mentions.
-fn content_keys(
+pub(crate) fn content_keys(
     conn: &Connection,
     content: i64,
     keys: &mut BTreeSet<String>,
@@ -226,7 +234,7 @@ fn content_keys(
 }
 
 /// Marks a job Completed once none of its items is Pending or In progress (domain §7.2).
-fn complete_job_if_done(conn: &Connection, job: i64) -> Result<(), StoreError> {
+pub(crate) fn complete_job_if_done(conn: &Connection, job: i64) -> Result<(), StoreError> {
     let open: i64 = conn
         .prepare_cached("SELECT COUNT(*) FROM work_item WHERE job_id = ?1 AND state IN (?2, ?3)")?
         .query_row(
@@ -255,7 +263,8 @@ fn complete_job_if_done(conn: &Connection, job: i64) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn create_job(conn: &Connection, trigger: Trigger) -> Result<i64, StoreError> {
+/// A new Stage A job: Queued, or Paused while the project's queue is paused (INV-PR-06).
+pub(crate) fn create_job(conn: &Connection, trigger: Trigger) -> Result<i64, StoreError> {
     conn.prepare_cached(
         "INSERT INTO job (trigger, stage, state, created_at) VALUES (?1, ?2, ?3, ?4)",
     )?
@@ -265,10 +274,23 @@ fn create_job(conn: &Connection, trigger: Trigger) -> Result<i64, StoreError> {
         JobState::Queued.as_str(),
         now_iso()
     ])?;
-    Ok(conn.last_insert_rowid())
+    let job = conn.last_insert_rowid();
+    if crate::documents::queue_paused(conn)? {
+        JobState::Queued
+            .move_to(JobState::Paused)
+            .map_err(|e| invalid(e.to_string()))?;
+        conn.prepare_cached("UPDATE job SET state = ?2, paused_at = ?3 WHERE id = ?1")?
+            .execute(params![job, JobState::Paused.as_str(), now_ms()])?;
+    }
+    Ok(job)
 }
 
-fn add_item(conn: &Connection, job: i64, content: i64, size: u64) -> Result<i64, StoreError> {
+pub(crate) fn add_item(
+    conn: &Connection,
+    job: i64,
+    content: i64,
+    size: u64,
+) -> Result<i64, StoreError> {
     // M2b parses only text-native formats.
     let priority = mk_jobs::stage_a_priority(true, size);
     conn.prepare_cached(
@@ -280,7 +302,7 @@ fn add_item(conn: &Connection, job: i64, content: i64, size: u64) -> Result<i64,
 
 /// Pending items of a content become Skipped: its target went missing or away before it
 /// started (domain §7.2).
-fn skip_pending(conn: &Connection, content: i64) -> Result<(), StoreError> {
+pub(crate) fn skip_pending(conn: &Connection, content: i64) -> Result<(), StoreError> {
     let jobs: Vec<i64> = {
         let mut stmt = conn.prepare_cached(
             "SELECT DISTINCT job_id FROM work_item WHERE content_id = ?1 AND state = ?2",
@@ -373,6 +395,7 @@ pub(crate) fn apply_rescan(
     trigger: Trigger,
 ) -> Result<RescanOutcome, StoreError> {
     let now = now_iso();
+    let mut out = RescanOutcome::default();
     let mut affected: BTreeSet<i64> = BTreeSet::new();
     let mut created: BTreeSet<i64> = BTreeSet::new();
     let lookup = |hash: &ContentHash| -> Result<i64, StoreError> {
@@ -389,7 +412,10 @@ pub(crate) fn apply_rescan(
                 let (id, new) = ensure_content(conn, hash, file_type, meta.size)?;
                 if new {
                     created.insert(id);
+                } else {
+                    out.duplicates += 1;
                 }
+                out.added += 1;
                 conn.prepare_cached(
                     "INSERT INTO file_ref (root_id, rel_path, content_id, size, mtime_ns, present,
                                            last_seen_at)
@@ -483,7 +509,6 @@ pub(crate) fn apply_rescan(
         }
     }
 
-    let mut out = RescanOutcome::default();
     let mut touched: BTreeSet<String> = BTreeSet::new();
     let mut needs_work: Vec<(i64, u64)> = Vec::new();
     for &id in &affected {
@@ -574,8 +599,11 @@ pub(crate) fn start_item(conn: &Connection, item: i64) -> Result<Option<StartedI
     }
     let content = content.ok_or_else(|| invalid(format!("item {item} has no content")))?;
     set_item_state(conn, item, ItemState::InProgress)?;
-    conn.prepare_cached("UPDATE work_item SET attempts = attempts + 1 WHERE id = ?1")?
-        .execute([item])?;
+    conn.prepare_cached(
+        "UPDATE work_item SET attempts = attempts + 1, started_at = ?2, finished_at = NULL
+         WHERE id = ?1",
+    )?
+    .execute(params![item, now_ms()])?;
     set_content_state(conn, content, IngestionState::Processing)?;
     let job_state: String = conn
         .prepare_cached("SELECT state FROM job WHERE id = ?1")?
@@ -757,37 +785,55 @@ pub(crate) fn commit_stage_a(
         }
     }
     conn.prepare_cached(
-        "UPDATE content SET warnings = ?2, failure_code = NULL, failure_reason = NULL
+        "UPDATE content SET warnings = ?2, failure_code = NULL, failure_reason = NULL,
+                            failure_detail = NULL
          WHERE id = ?1",
     )?
     .execute(params![content, warnings.join("\n")])?;
+    conn.prepare_cached("UPDATE work_item SET finished_at = ?2 WHERE id = ?1")?
+        .execute(params![item, now_ms()])?;
     out.touched_keys = touched.len();
     out.connections_changed = rebuild_keys(conn, &touched)?;
     complete_job_if_done(conn, job)?;
     Ok(out)
 }
 
-/// Fails an item and its content with a stable code and a plain reason (INV-CO-09, US-02.7).
-/// No other content changes.
+/// Fails an item and its content with a stable code, a plain reason and the technical detail
+/// behind "Show details" (INV-CO-09, US-02.7 AC2). No other content changes.
 pub(crate) fn fail_item(
     conn: &Connection,
     item: i64,
     code: &str,
     reason: &str,
+    detail: &str,
 ) -> Result<(), StoreError> {
     let (job, content) = set_item_state(conn, item, ItemState::Failed)?;
     conn.prepare_cached(
-        "UPDATE work_item SET failure_code = ?2, failure_reason = ?3 WHERE id = ?1",
+        "UPDATE work_item SET failure_code = ?2, failure_reason = ?3, finished_at = ?4
+         WHERE id = ?1",
     )?
-    .execute(params![item, code, reason])?;
+    .execute(params![item, code, reason, now_ms()])?;
     if let Some(content) = content {
         set_content_state(conn, content, IngestionState::Failed)?;
         conn.prepare_cached(
-            "UPDATE content SET failure_code = ?2, failure_reason = ?3 WHERE id = ?1",
+            "UPDATE content SET failure_code = ?2, failure_reason = ?3, failure_detail = ?4
+             WHERE id = ?1",
         )?
-        .execute(params![content, code, reason])?;
+        .execute(params![content, code, reason, detail])?;
     }
     complete_job_if_done(conn, job)?;
+    Ok(())
+}
+
+/// Puts an item stopped by pause, cancel or close back to Pending, and its content back to
+/// Queued: nothing of it was committed (INV-PR-04, domain §7.2 "forced stop on pause").
+pub(crate) fn release_item(conn: &Connection, item: i64) -> Result<(), StoreError> {
+    let (_, content) = set_item_state(conn, item, ItemState::Pending)?;
+    conn.prepare_cached("UPDATE work_item SET started_at = NULL WHERE id = ?1")?
+        .execute([item])?;
+    if let Some(content) = content {
+        set_content_state(conn, content, IngestionState::Queued)?;
+    }
     Ok(())
 }
 

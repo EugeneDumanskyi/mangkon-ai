@@ -9,8 +9,11 @@
 //!
 //! Plain `std` threads and channels, no async runtime.
 
+mod app_store;
 mod codec;
 mod derive;
+mod documents;
+mod manage;
 mod ops;
 mod read;
 mod readers;
@@ -26,7 +29,11 @@ use mk_graph::model::{DerivedState, Facts};
 use mk_graph::{ConnectionRow, DecisionKind, RankKey};
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
+use mk_workspace::ProjectSettings;
 
+pub use app_store::{APP_MIGRATIONS, AppStore};
+pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
+pub use manage::{CancelOutcome, RemoveOutcome};
 pub use ops::{
     CommitOutcome, DocumentOut, MentionOut, NewContent, Recovery, RescanChange, RescanOutcome,
     SegmentOut, StageAOutput, StagedPart, StartedItem,
@@ -45,9 +52,11 @@ pub enum StoreError {
     Sqlite(rusqlite::Error),
     Io(std::io::Error),
     /// The project was written by a newer app. It was not opened or changed (INV-WS-03).
+    /// `app_version` is the app that wrote it, when the project says (schema v4 on).
     TooNew {
         found: u32,
         supported: u32,
+        app_version: Option<String>,
     },
     /// A migration failed and was rolled back; the project is still at `from`, and the backup
     /// is kept (INV-WS-04).
@@ -61,6 +70,8 @@ pub enum StoreError {
     Invalid(String),
     /// The writer thread is gone.
     WriterGone,
+    /// Another registered project has this name, ignoring case (INV-WS-01).
+    NameTaken(String),
 }
 
 impl fmt::Display for StoreError {
@@ -68,11 +79,23 @@ impl fmt::Display for StoreError {
         match self {
             StoreError::Sqlite(e) => write!(f, "database error: {e}"),
             StoreError::Io(e) => write!(f, "file error: {e}"),
-            StoreError::TooNew { found, supported } => write!(
-                f,
-                "This project was made by a newer version of Mangkon AI (schema {found}; this \
-                 version reads up to {supported}). It was not opened or changed."
-            ),
+            StoreError::TooNew {
+                found,
+                supported,
+                app_version,
+            } => {
+                match app_version {
+                    Some(v) => write!(f, "This project needs Mangkon AI {v} or newer")?,
+                    None => {
+                        f.write_str("This project was made by a newer version of Mangkon AI")?
+                    }
+                }
+                write!(
+                    f,
+                    " (schema {found}; this version reads up to {supported}). It was not opened \
+                     or changed."
+                )
+            }
             StoreError::MigrationFailed {
                 from,
                 backup,
@@ -90,6 +113,7 @@ impl fmt::Display for StoreError {
             }
             StoreError::Invalid(m) => f.write_str(m),
             StoreError::WriterGone => f.write_str("the database writer stopped"),
+            StoreError::NameTaken(_) => f.write_str("A project with this name already exists"),
         }
     }
 }
@@ -204,10 +228,86 @@ impl Store {
             .call(move |tx| ops::commit_stage_a(tx, item, parts, &warnings))
     }
 
-    pub fn fail_item(&self, item: i64, code: &str, reason: &str) -> Result<(), StoreError> {
-        let (code, reason) = (code.to_string(), reason.to_string());
+    /// Fails an item with a stable code, a plain reason and the technical detail behind "Show
+    /// details" (US-02.7 AC2).
+    pub fn fail_item(
+        &self,
+        item: i64,
+        code: &str,
+        reason: &str,
+        detail: &str,
+    ) -> Result<(), StoreError> {
+        let (code, reason, detail) = (code.to_string(), reason.to_string(), detail.to_string());
         self.writer
-            .call(move |tx| ops::fail_item(tx, item, &code, &reason))
+            .call(move |tx| ops::fail_item(tx, item, &code, &reason, &detail))
+    }
+
+    /// An item stopped by pause, cancel or close goes back to Pending (domain §7.2).
+    pub fn release_item(&self, item: i64) -> Result<(), StoreError> {
+        self.writer.call(move |tx| ops::release_item(tx, item))
+    }
+
+    /// Pauses (or resumes) the project's queue: open jobs Paused (or Running again), and new
+    /// jobs start Paused while it is (US-03.2, INV-PR-06). Returns the jobs moved.
+    pub fn set_queue_paused(&self, paused: bool) -> Result<usize, StoreError> {
+        self.writer
+            .call(move |tx| manage::set_queue_paused(tx, paused))
+    }
+
+    /// Cancels every open job; their unfinished contents become Not processed (US-03.3, D10).
+    pub fn cancel_queue(&self) -> Result<CancelOutcome, StoreError> {
+        self.writer.call(|tx| manage::cancel_queue(tx))
+    }
+
+    /// Failed and not-processed `contents` run again under a new Retry job (US-02.7 AC3).
+    /// Returns how many were queued.
+    pub fn retry_contents(&self, contents: Vec<i64>) -> Result<usize, StoreError> {
+        self.writer
+            .call(move |tx| manage::retry_contents(tx, &contents).map(|(_, n)| n))
+    }
+
+    /// Contents OCR read, or could not for a missing language, run again (US-01.6 AC3).
+    pub fn requeue_for_ocr(&self) -> Result<usize, StoreError> {
+        self.writer
+            .call(|tx| manage::requeue_for_ocr(tx).map(|(_, n)| n))
+    }
+
+    /// Removes file references; contents left without one are Removed (US-01.5, INV-CO-08).
+    pub fn remove_file_refs(&self, refs: Vec<i64>) -> Result<RemoveOutcome, StoreError> {
+        self.writer
+            .call(move |tx| manage::remove_file_refs(tx, &refs))
+    }
+
+    /// Removes a source root with all its paths.
+    pub fn remove_root(&self, root: i64) -> Result<RemoveOutcome, StoreError> {
+        self.writer.call(move |tx| manage::remove_root(tx, root))
+    }
+
+    /// Points a source root at a new absolute path (D12).
+    pub fn relocate_root(&self, root: i64, path: &str) -> Result<(), StoreError> {
+        let path = path.to_string();
+        self.writer
+            .call(move |tx| manage::relocate_root(tx, root, &path))
+    }
+
+    /// Removes the exclusions at and under `rel_path` of `root` (the path was added again).
+    pub fn clear_exclusions(&self, root: i64, rel_path: &str) -> Result<usize, StoreError> {
+        let rel_path = rel_path.to_string();
+        self.writer
+            .call(move |tx| manage::clear_exclusions(tx, root, &rel_path))
+    }
+
+    /// Stores checked settings (US-01.6).
+    pub fn set_settings(&self, settings: ProjectSettings) -> Result<(), StoreError> {
+        self.writer
+            .call(move |tx| manage::set_settings(tx, &settings))
+    }
+
+    /// Writes the project's name (when given) and the app version that wrote it (US-01.2 AC3).
+    pub fn stamp(&self, name: Option<&str>, app_version: &str) -> Result<(), StoreError> {
+        let (name, version) = (name.map(str::to_string), app_version.to_string());
+        self.writer
+            .call(move |tx| manage::stamp(tx, name.as_deref(), &version))
     }
 
     /// Appends a decision and rebuilds its anchor. Returns its `seq` and whether a connection
@@ -255,6 +355,58 @@ impl Store {
     /// The project's OCR languages; [`DEFAULT_OCR_LANGUAGES`] until set.
     pub fn ocr_languages(&self) -> Result<String, StoreError> {
         self.readers.with(read::ocr_languages)
+    }
+
+    /// The project's settings, with the defaults for what was never set (INV-WS-05).
+    pub fn settings(&self) -> Result<ProjectSettings, StoreError> {
+        self.readers.with(documents::settings)
+    }
+
+    /// A project-meta value, such as `name` or `app_version`.
+    pub fn meta(&self, key: &str) -> Result<Option<String>, StoreError> {
+        self.readers.with(|c| documents::meta(c, key))
+    }
+
+    /// Paths removed from `root` (US-01.5).
+    pub fn exclusions(&self, root: i64) -> Result<std::collections::BTreeSet<String>, StoreError> {
+        self.readers.with(|c| documents::exclusions(c, root))
+    }
+
+    /// One page of the documents list in path order (US-02.8).
+    pub fn documents_page(
+        &self,
+        filter: &DocumentFilter,
+        after: Option<&DocumentCursor>,
+        limit: usize,
+    ) -> Result<Vec<DocumentRow>, StoreError> {
+        self.readers
+            .with(|c| documents::documents_page(c, filter, after, limit))
+    }
+
+    pub fn documents_count(&self, filter: &DocumentFilter) -> Result<u64, StoreError> {
+        self.readers.with(|c| documents::documents_count(c, filter))
+    }
+
+    /// Paths per file type.
+    pub fn document_type_counts(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, u64>, StoreError> {
+        self.readers.with(documents::document_type_counts)
+    }
+
+    /// Connections that lose evidence if `refs` are removed (US-01.5 AC2).
+    pub fn removal_impact(&self, refs: &[i64]) -> Result<u64, StoreError> {
+        self.readers.with(|c| documents::removal_impact(c, refs))
+    }
+
+    /// The Stage A queue since `since` (UTC ms), for the progress panel (US-03.1).
+    pub fn progress_detail(&self, since: Option<i64>) -> Result<ProgressDetail, StoreError> {
+        self.readers.with(|c| documents::progress_detail(c, since))
+    }
+
+    /// Whether a run would start an item now (a Pending item in a Queued or Running job).
+    pub fn has_runnable_work(&self) -> Result<bool, StoreError> {
+        self.readers.with(documents::has_runnable_work)
     }
 
     pub fn stored_refs(&self) -> Result<Vec<StoredRef>, StoreError> {

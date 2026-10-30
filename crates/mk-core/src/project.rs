@@ -1,12 +1,12 @@
 //! One open project: its store, source roots, re-scan and the Stage A lane.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mk_corpus::fs::{FileTypes, Skipped};
 use mk_corpus::{RescanPlan, Resolved, RootId};
@@ -18,6 +18,7 @@ use mk_store::{OpenReport, Progress, Recovery, RescanChange, RescanOutcome, Stor
 use mk_worker::Settings;
 use mk_workspace::{ProjectLayout, RootKind};
 
+use crate::control::{RunControl, Stop};
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
 use crate::stage_a::{Failure, SPILL_AT, Staging};
 use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
@@ -78,6 +79,9 @@ pub struct RescanSummary {
     pub skipped: Vec<(RootId, Skipped)>,
     /// Folders or files that could not be read.
     pub errors: Vec<(RootId, String, String)>,
+    /// Pause, cancel or close came while hashing: nothing was committed; the next re-scan
+    /// starts over.
+    pub interrupted: bool,
 }
 
 /// What a Stage A run did.
@@ -99,6 +103,8 @@ pub struct StageASummary {
     pub workers_started: usize,
     /// Workers stopped in the middle of an item (deadline, memory, crash), in order.
     pub stops: Vec<WorkerStop>,
+    /// Items stopped by pause, cancel or close and put back to Pending (ADR-0006).
+    pub interrupted: usize,
 }
 
 /// What [`Project::ingest`] did: the re-scan, then the Stage A run.
@@ -106,6 +112,8 @@ pub struct StageASummary {
 pub struct IngestSummary {
     pub rescan: RescanSummary,
     pub stage_a: StageASummary,
+    /// The run stopped early for this request (US-03.2, US-03.3, US-03.4).
+    pub interrupted: Option<Stop>,
 }
 
 /// What [`Project::rebuild`] did (ADR-0005 "full rebuild").
@@ -156,6 +164,26 @@ pub struct Project {
     tessdata: Option<PathBuf>,
     /// The page view's render worker, started on the first page shown (ADR-0011).
     renderer: Mutex<Option<WorkerProcess>>,
+    /// Pause, cancel and close requests (US-03.2–03.4).
+    control: RunControl,
+    /// Held while a re-scan and Stage A run: pause and cancel wait on it for the run to end.
+    run: Mutex<()>,
+    running: AtomicBool,
+    /// When this run started: the monotonic clock for the ETA and UTC ms for the store.
+    run_started: Mutex<Option<(Instant, i64)>>,
+    /// Item → display path, for "current file" (US-03.1 AC1).
+    in_flight: Mutex<BTreeMap<i64, String>>,
+}
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Milliseconds since the Unix epoch, UTC.
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// Whether `dir` holds a project database.
@@ -189,6 +217,11 @@ impl Project {
         let layout = ProjectLayout::new(dir);
         std::fs::create_dir_all(dir).map_err(|e| ProjectError::Io(dir.into(), e))?;
         let (store, schema) = Store::open(&layout.database(), &layout.backups())?;
+        // The app that created or migrated the project, named if a too-new project is refused
+        // later (US-01.2 AC3).
+        if schema.from_version < schema.to_version {
+            store.stamp(None, env!("CARGO_PKG_VERSION"))?;
+        }
         let recovered = store.recover_after_restart()?;
         // Staged results of a killed run: their items run again (ADR-0006).
         crate::stage_a::clear_staging(&layout.cache())
@@ -204,6 +237,11 @@ impl Project {
                 worker_config: WorkerConfig::default(),
                 tessdata: None,
                 renderer: Mutex::new(None),
+                control: RunControl::default(),
+                run: Mutex::new(()),
+                running: AtomicBool::new(false),
+                run_started: Mutex::new(None),
+                in_flight: Mutex::new(BTreeMap::new()),
             },
             OpenSummary { schema, recovered },
         ))
@@ -304,9 +342,29 @@ impl Project {
         self.events.subscribe()
     }
 
-    /// Adds a folder or a single file as a source root. The path is stored absolute.
+    /// A commit outside the lanes changed connection rows.
+    pub(crate) fn changed(&self) {
+        self.events.changed();
+    }
+
+    /// Adds a folder or a single file as a source root. The path is stored absolute. A path at
+    /// or inside a folder root already in the project adds no root: its removed paths there are
+    /// found again (US-01.5, the exclusions are cleared).
     pub fn add_source_root(&self, path: &Path) -> Result<i64, ProjectError> {
         let abs = std::fs::canonicalize(path).map_err(|e| ProjectError::Io(path.into(), e))?;
+        for root in self.store.source_roots()? {
+            if root.kind != RootKind::Folder.as_str() {
+                continue;
+            }
+            let Ok(rel) = abs.strip_prefix(&root.path) else {
+                continue;
+            };
+            let rel: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
+            if let Some(rel) = rel {
+                self.store.clear_exclusions(root.id, &rel.join("/"))?;
+                return Ok(root.id);
+            }
+        }
         let kind = if abs.is_file() {
             RootKind::File
         } else {
@@ -332,7 +390,8 @@ impl Project {
         let mut paths: HashMap<RootId, PathBuf> = HashMap::new();
         for root in &roots {
             let path = PathBuf::from(&root.path);
-            let w = mk_corpus::fs::walk(root.id, &path, &types);
+            let excluded = self.store.exclusions(root.id)?;
+            let w = mk_corpus::fs::walk_excluding(root.id, &path, &types, &excluded);
             walked.extend(w.entries);
             summary
                 .skipped
@@ -353,6 +412,10 @@ impl Project {
         let plan = mk_corpus::plan(&stored, &walked, &root_ids, full);
         let hashes = self.hash_planned(&plan, &paths);
         summary.hashed = hashes.len();
+        if self.control.stopping() {
+            summary.interrupted = true;
+            return Ok(summary);
+        }
         let Resolved { changes, unchanged } = plan.resolve(&hashes);
         summary.unchanged = unchanged;
         if changes.is_empty() {
@@ -378,11 +441,101 @@ impl Project {
     }
 
     /// Re-scan, then Stage A until nothing is pending: what both apps run after a folder is
-    /// added (US-01.3) and on reopen (a killed run is finished, ADR-0006).
+    /// added (US-01.3) and on reopen (a killed run is finished, ADR-0006). A paused queue only
+    /// re-scans. Pause, cancel and close end it early ([`IngestSummary::interrupted`]).
     pub fn ingest(&self) -> Result<IngestSummary, ProjectError> {
+        let _run = self.begin_run();
         let rescan = self.rescan(false)?;
-        let stage_a = self.run_stage_a()?;
-        Ok(IngestSummary { rescan, stage_a })
+        let stage_a = if rescan.interrupted {
+            StageASummary::default()
+        } else {
+            self.stage_a_locked()?
+        };
+        Ok(IngestSummary {
+            rescan,
+            stage_a,
+            interrupted: self.control.requested(),
+        })
+    }
+
+    /// Takes the run lock, waiting for a pause or cancel to finish first.
+    fn begin_run(&self) -> RunGuard<'_> {
+        let guard = lock(&self.run);
+        self.running.store(true, Ordering::SeqCst);
+        *lock(&self.run_started) = Some((Instant::now(), now_ms()));
+        RunGuard {
+            project: self,
+            _guard: guard,
+        }
+    }
+
+    /// Whether a re-scan or Stage A run is going on.
+    pub fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    /// Asks the run to stop, waits until it has (≤ 5 s for a pause, NFR-REL-05), then runs
+    /// `then` while no run can start.
+    fn stop_run<R>(
+        &self,
+        stop: Stop,
+        then: impl FnOnce() -> Result<R, ProjectError>,
+    ) -> Result<R, ProjectError> {
+        self.control.request(stop);
+        let _run = lock(&self.run);
+        let result = then();
+        self.control.clear();
+        result
+    }
+
+    /// Pauses the queue (US-03.2 AC1, INV-PR-06): no new file starts; the busy ones finish
+    /// within [`crate::PAUSE_GRACE`] or are stopped and go back to Pending. Returns once the
+    /// lanes have stopped and the jobs are Paused.
+    pub fn pause(&self) -> Result<(), ProjectError> {
+        self.stop_run(Stop::Pause, || {
+            Ok(self.store.set_queue_paused(true).map(|_| ())?)
+        })
+    }
+
+    /// Resumes a paused queue (US-03.2 AC2). The caller starts [`Project::ingest`] again; it
+    /// continues where it stopped and redoes no finished file (INV-PR-05).
+    pub fn resume(&self) -> Result<(), ProjectError> {
+        self.store.set_queue_paused(false)?;
+        Ok(())
+    }
+
+    /// Cancels the queue (US-03.3): the lanes stop at once, finished files are kept, the files
+    /// in progress roll back, and all unfinished work becomes Not processed (D10).
+    pub fn cancel(&self) -> Result<mk_store::CancelOutcome, ProjectError> {
+        self.stop_run(Stop::Cancel, || Ok(self.store.cancel_queue()?))
+    }
+
+    /// Stops the run before the project closes or the app quits: items in progress go back to
+    /// Pending and job states are kept, so running jobs run again on the next open
+    /// (US-03.4 AC1).
+    pub fn stop_for_close(&self) {
+        let _ = self.stop_run(Stop::Close, || Ok(()));
+    }
+
+    /// Whether the queue is paused (persisted, US-03.4 AC1).
+    pub fn is_paused(&self) -> Result<bool, ProjectError> {
+        Ok(self.store.progress_detail(None)?.paused)
+    }
+
+    /// Whether a run would start a file now: what the desktop checks on open, so a paused
+    /// project stays paused (US-03.4 AC1, NFR-REL-04).
+    pub fn has_runnable_work(&self) -> Result<bool, ProjectError> {
+        Ok(self.store.has_runnable_work()?)
+    }
+
+    /// The files in a worker now, by display path (US-03.1 AC1).
+    pub fn current_files(&self) -> Vec<String> {
+        lock(&self.in_flight).values().cloned().collect()
+    }
+
+    /// When the current run started (monotonic, UTC ms); `None` when nothing runs.
+    pub(crate) fn run_started(&self) -> Option<(Instant, i64)> {
+        *lock(&self.run_started)
     }
 
     /// Drops and rebuilds every derived row from machine output and decisions (ADR-0005), then
@@ -426,6 +579,9 @@ impl Project {
             for _ in 0..threads {
                 s.spawn(|| {
                     loop {
+                        if self.control.stopping() {
+                            return;
+                        }
                         let Some((i, path)) = next.lock().unwrap_or_else(|e| e.into_inner()).next()
                         else {
                             return;
@@ -446,11 +602,22 @@ impl Project {
     /// (ADR-0005). A failure, a deadline, a memory limit or a worker crash fails only its item
     /// (INV-CO-09, NFR-REL-01/06/07); the lane then starts a fresh worker. Workers are shut down
     /// when the run ends, so none stays idle (NFR-RES-01).
+    ///
+    /// Pause, cancel and close stop it early: no new item starts, busy items finish within
+    /// their grace or go back to Pending ([`crate::PAUSE_GRACE`], ADR-0006).
     pub fn run_stage_a(&self) -> Result<StageASummary, ProjectError> {
+        let _run = self.begin_run();
+        self.stage_a_locked()
+    }
+
+    fn stage_a_locked(&self) -> Result<StageASummary, ProjectError> {
         let summary = Mutex::new(StageASummary::default());
         let peak = AtomicU64::new(0);
         let peak_core = AtomicU64::new(0);
         loop {
+            if self.control.stopping() {
+                break;
+            }
             let pending = self.store.pending_items()?;
             if pending.is_empty() {
                 break;
@@ -479,6 +646,7 @@ impl Project {
             let queue = Budget::new(
                 order.iter().map(|id| (*id, needs[id])).collect(),
                 self.worker_config.budget,
+                &self.control,
             );
             let lanes = self.workers.min(pending.len());
             let slots: Vec<AtomicU64> = (0..lanes).map(|_| AtomicU64::new(0)).collect();
@@ -555,6 +723,9 @@ impl Project {
     ) -> Result<(), ProjectError> {
         let cfg = &self.worker_config;
         let lock = || summary.lock().unwrap_or_else(|e| e.into_inner());
+        if self.control.stopping() {
+            return Ok(());
+        }
         if worker.is_none() {
             *worker = Some(WorkerProcess::spawn(cfg)?);
             lock().workers_started += 1;
@@ -562,6 +733,27 @@ impl Project {
         let Some(started) = self.store.start_item(id)? else {
             return Ok(());
         };
+        let shown = started
+            .path
+            .as_ref()
+            .map_or_else(|| format!("item {id}"), |p| p.display().to_string());
+        self::lock(&self.in_flight).insert(id, shown);
+        let result = self.run_started_item(id, &started, worker, settings, rss, summary);
+        self::lock(&self.in_flight).remove(&id);
+        result
+    }
+
+    fn run_started_item(
+        &self,
+        id: i64,
+        started: &mk_store::StartedItem,
+        worker: &mut Option<WorkerProcess>,
+        settings: &Settings,
+        rss: &AtomicU64,
+        summary: &Mutex<StageASummary>,
+    ) -> Result<(), ProjectError> {
+        let cfg = &self.worker_config;
+        let lock = || summary.lock().unwrap_or_else(|e| e.into_inner());
         let Some(path) = started.path.as_ref().and_then(|p| p.to_str()) else {
             self.fail(
                 id,
@@ -589,6 +781,7 @@ impl Project {
             started.file_type.clone(),
             staging,
             rss,
+            &self.control,
         );
         match result {
             ItemResult::Done(staging, warnings) => self.commit(id, staging, warnings, summary)?,
@@ -599,8 +792,20 @@ impl Project {
             }
             ItemResult::Stopped(stop) => {
                 *worker = None;
-                self.fail(id, &stop.why.failure(), summary)?;
+                let failure = stop.why.failure().with_detail(format!(
+                    "Error code: {}. The reader process was stopped ({:?}); its memory peaked at \
+                     {} MB.",
+                    stop.code,
+                    stop.why,
+                    stop.peak_rss >> 20
+                ));
+                self.fail(id, &failure, summary)?;
                 lock().stops.push(stop);
+            }
+            ItemResult::Interrupted => {
+                *worker = None;
+                self.store.release_item(id)?;
+                lock().interrupted += 1;
             }
         }
         if let Some(w) = worker.as_mut() {
@@ -661,7 +866,11 @@ impl Project {
     }
 
     fn fail(&self, id: i64, f: &Failure, summary: &Mutex<StageASummary>) -> Result<(), StoreError> {
-        self.store.fail_item(id, &f.code, &f.reason)?;
+        let detail = f
+            .detail
+            .clone()
+            .unwrap_or_else(|| format!("Error code: {}", f.code));
+        self.store.fail_item(id, &f.code, &f.reason, &detail)?;
         summary.lock().unwrap_or_else(|e| e.into_inner()).failed += 1;
         Ok(())
     }
@@ -709,11 +918,27 @@ impl Project {
     }
 }
 
+/// Ends a run: clears the running flag and the run's start, then releases the run lock.
+struct RunGuard<'a> {
+    project: &'a Project,
+    _guard: MutexGuard<'a, ()>,
+}
+
+impl Drop for RunGuard<'_> {
+    fn drop(&mut self) {
+        self.project.running.store(false, Ordering::SeqCst);
+        *lock(&self.project.run_started) = None;
+        lock(&self.project.in_flight).clear();
+    }
+}
+
 /// The Stage A queue in scheduler order, handed out as the memory budget allows (gap A2).
-struct Budget {
+/// Hands out nothing once the run is asked to stop.
+struct Budget<'a> {
     state: Mutex<BudgetState>,
     changed: Condvar,
     total: u64,
+    control: &'a RunControl,
 }
 
 struct BudgetState {
@@ -724,8 +949,11 @@ struct BudgetState {
     stopped: bool,
 }
 
-impl Budget {
-    fn new(items: Vec<(i64, u64)>, total: u64) -> Self {
+/// How often a lane waiting for budget looks at the stop request.
+const STOP_POLL: Duration = Duration::from_millis(50);
+
+impl<'a> Budget<'a> {
+    fn new(items: Vec<(i64, u64)>, total: u64, control: &'a RunControl) -> Self {
         let (ids, needs) = items.into_iter().unzip();
         Budget {
             state: Mutex::new(BudgetState {
@@ -737,6 +965,7 @@ impl Budget {
             }),
             changed: Condvar::new(),
             total,
+            control,
         }
     }
 
@@ -745,7 +974,7 @@ impl Budget {
     fn take(&self) -> Option<(i64, u64)> {
         let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
         loop {
-            if s.stopped || s.ids.is_empty() {
+            if s.stopped || s.ids.is_empty() || self.control.stopping() {
                 return None;
             }
             if let Some(i) = mk_jobs::pick_next(&s.needs, s.in_use, s.in_flight, self.total) {
@@ -754,7 +983,11 @@ impl Budget {
                 s.in_flight += 1;
                 return Some((id, need));
             }
-            s = self.changed.wait(s).unwrap_or_else(|e| e.into_inner());
+            s = self
+                .changed
+                .wait_timeout(s, STOP_POLL)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 

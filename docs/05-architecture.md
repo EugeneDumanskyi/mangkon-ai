@@ -355,7 +355,7 @@ This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB 
     project-v<schema>-<date>.db       ← written before every migration (INV-WS-04)
 
 <OS app-data folder>/mangkon-ai/
-  app.db                              ← registry, endpoints, installed models, hardware profile
+  app.db                              ← registry (M3c); endpoints, installed models, hardware profile later
   models/<model-id>.gguf
   runtime/llama-server-<version>-<backend>/
   logs/mangkon.log (+ rotated)        ← no document content, ≤ 50 MB (NFR-SEC-08)
@@ -364,6 +364,8 @@ This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB 
 
 Rules:
 - Source paths are stored as **source root + relative path**. A moved project can relocate its roots (D12).
+- `app.db` has its own forward-only migrations, with the same backup and newer-schema rules as `project.db` (INV-WS-03/04). Its `registry_entry` table holds name, case-folded name (unique, INV-WS-01), path (unique) and last-opened time.
+- `project.db` schema v4 (M3c) adds `root_exclusion` (paths removed from a source folder, US-01.5), the failure detail behind "Show details" (US-02.7 AC2), item start and finish times (ETA, US-03.1 AC2) and the job pause time. The project's name and the app version that last wrote it are in `project_meta`.
 - Everything under `index/` and `cache/` can be deleted. The app rebuilds it. `cache/staging/` is emptied when a project opens. Details: [ADR-0016](adr/0016-streamed-file-limits.md).
 - API keys are never in either folder (ADR-0012).
 
@@ -373,7 +375,7 @@ Rules:
 
 | Item | Default | Why |
 |---|---|---|
-| Open projects | One at a time. **Decided (2026-10-28, gap A7).** Opening another project while one is being ingested is refused with a plain message until pause and cancel exist (M3). | Keeps memory and the scheduler simple. Matches the screens in the requirements. |
+| Open projects | One at a time. **Decided (2026-10-28, gap A7).** Opening, closing or switching projects while one is being ingested stops its run first: items in progress go back to Pending and job states are kept, so the run picks up on the next open (US-03.4 AC1, M3c). | Keeps memory and the scheduler simple. Matches the screens in the requirements. |
 | Stage A workers | `min(CPU cores − 1, memory budget)`; one worker per lane, started when the lane takes its first item, shut down when the run ends | NFR-PERF-25, NFR-RES-01/02. See gap A2. |
 | Worker memory budget | 1.5 GB for the items in flight; an item needs 40 MB + 32 MB staging + 4 × a window: 64 MB for streamed formats, 256 MB for MBOX (one message at a time), the whole file for EML (`Format::memory_estimate`; ASSUMPTION from M3a, checked in W3a-1/2, `11-ingestion.md`). M2c measured 8 × size (TXT/MD) and 10 × size (CSV) with whole files (`10-walking-skeleton.md` §S2a). One file may use up to 1 GB. ASSUMPTION for 1.5 GB. | NFR-REL-07 vs NFR-RES-02. M2c: TD-2's CSVs peak at 233 MB (908 MB counted with the desktop binary's shared libraries per worker). |
 | Worker limits | 120 s per file (MBOX: per message, [ADR-0016](adr/0016-streamed-file-limits.md); PDFs and images: per page, ≤ 30 s per OCR page, [ADR-0017](adr/0017-paged-file-deadlines.md)); page render 10 s (ASSUMPTION); 1 GB per file, sampled every 100 ms; Linux `RLIMIT_AS` = start size + 1 GB + 512 MB; heartbeat every 500 ms, silent 15 s = stuck | NFR-REL-06/07. S2b: bombs stopped ≤ 160 ms over 1 GB. |
@@ -428,7 +430,7 @@ Milestones as in `06-roadmap.md`.
 | A4 | Re-run with a new model: show old results until the new run is done, or replace segment by segment? | Show old results until done, then switch in one step (5.3). Never mix two models' output. |
 | A5 | NFR-REL-07 on macOS can only be a watchdog, not a hard OS limit (R5). | Reword: "killed within 200 ms after passing 1 GB". **Decided (2026-10-27).** On Linux every bomb was stopped ≤ 160 ms after passing 1 GB (S2b). Windows has the watchdog only, like macOS (no hard cap without `unsafe`, ADR-0007 follow-up). NFR-REL-07 now reads: "A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with 'Needed too much memory'." |
 | A6 | The embedding model must work well with binary vectors (R2). | **Decided in M1 (2026-10-24):** a listed embedding model needs binary top 200 → float rescore recall@20 ≥ 0.9; `Catalog::validate` in `mk-models` checks it. All three M1 candidates pass (0.954–0.984). |
-| A7 | Only one open project at a time (section 7). | **Decided (2026-10-28).** One at a time. In M2d a project is a folder: opening an empty folder creates one. The project registry, recent list and names come in M3 (US-01.1 AC2, US-01.2). |
+| A7 | Only one open project at a time (section 7). | **Decided (2026-10-28).** One at a time. Since M3c, projects are created with a name and a location and listed in the registry in `app.db` (US-01.1, US-01.2). |
 | A8 | Emails and HTML are shown as safe text, not as styled HTML, in v0.1 (ADR-0011). | **Decided (2026-10-29):** text only (roadmap §4 #9). Styled HTML can come later inside a locked-down frame. |
 
 ---

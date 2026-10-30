@@ -72,7 +72,9 @@ pub fn ingest(opts: &IngestOptions) -> ExitCode {
 }
 
 fn report_ingest(project: &Project, opts: &IngestOptions) -> Result<(), ProjectError> {
-    let IngestSummary { rescan, stage_a } = project.ingest()?;
+    let IngestSummary {
+        rescan, stage_a, ..
+    } = project.ingest()?;
     let counts = project.counts()?;
     let connections = project.connection_count()?;
     let failed = project.failed_files(MAX_FAILED)?;
@@ -83,6 +85,8 @@ fn report_ingest(project: &Project, opts: &IngestOptions) -> Result<(), ProjectE
             "hashed": rescan.hashed,
             "unchanged": rescan.unchanged,
             "skipped": rescan.skipped.len(),
+            "added": rescan.outcome.added,
+            "duplicates": rescan.outcome.duplicates,
             "not_read": rescan.errors.iter()
                 .map(|(_, path, e)| json!({ "path": path, "error": e }))
                 .collect::<Vec<_>>(),
@@ -116,6 +120,10 @@ fn report_ingest(project: &Project, opts: &IngestOptions) -> Result<(), ProjectE
         rescan.hashed,
         rescan.unchanged,
         rescan.skipped.len()
+    );
+    println!(
+        "Added        {} added, {} duplicates",
+        rescan.outcome.added, rescan.outcome.duplicates
     );
     println!(
         "This run     {} done, {} failed",

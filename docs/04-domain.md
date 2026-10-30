@@ -475,6 +475,11 @@ erDiagram
 
 **Cross-scope links.** A project's `ENDPOINT_PERMISSION` names an app-level `ENDPOINT` by ID *and* stores the host and class the user confirmed. If the project is opened on another machine, or the endpoint was edited, the IDs or hosts will not match. Then the permission falls to "Needs reconfirmation" (7.6). A copied project never sends data to a place the user did not confirm on this machine.
 
+**Registry and project names.** ASSUMPTION (M3c):
+- A registry entry's project path is unique too: one entry per folder.
+- A new project's folder is `<location>/<name>`, with characters that file systems refuse replaced by `_`.
+- The project stores its own name and the version of the app that last created or migrated it. A project opened with Open… that is not in the registry is added under its stored name. A newer project's refusal names that version (US-01.2 AC3).
+
 ### 5.3 Aggregates and consistency boundaries
 
 | Aggregate root | Contains | Identity | Why it is one unit |
@@ -510,6 +515,10 @@ erDiagram
 | INV-WS-05 | A project has exactly one settings set. New projects get the defaults: no phone region, OCR = English, standard stop list, no custom patterns, non-local endpoints off. | US-01.6 AC2 |
 | INV-WS-06 | A project always has at least one OCR language. ASSUMPTION. | US-01.6 |
 | INV-WS-07 | Changing a setting re-runs only the steps that depend on it. | US-01.6 AC3, US-04.7 AC3 |
+
+Notes (M3c):
+- Removing a file from the project when it sits inside a source folder records an exclusion for that path. A re-scan skips excluded paths. Adding the file, or a folder holding it, again clears the exclusion. ASSUMPTION (M3c).
+- Of the settings, OCR languages take effect now (INV-WS-07: a change re-runs Stage A only for contents with OCR pages and for those that failed for a missing language, after the user agrees). Phone region and stop list are stored and take effect in M4; custom patterns and endpoints come in M4 and M5.
 
 ### 6.2 Corpus (BC-02)
 
@@ -687,6 +696,8 @@ stateDiagram-v2
     Done --> Removed : user removed the last path
     Failed --> Removed : user removed the last path
     Missing --> Removed : user removed the last path
+    Queued --> Removed : user removed the last path
+    NotProcessed --> Removed : user removed the last path
     Removed --> [*] : data deleted, decisions orphaned
 ```
 
@@ -696,6 +707,7 @@ Rules:
 - Replaced is reached from Queued, Failed and Missing too, not only from Done: a file edited before it was processed, after it failed, or while it was gone. Its data (if any) is deleted in the re-scan transaction, with the derived rebuild of its keys, so old and new evidence are never both visible (INV-CO-06). ASSUMPTION (M2b).
 - "NotProcessed" is a new status, shown as "Not processed" in the documents list. ASSUMPTION. See D10.
 - A document's status in the documents list (US-02.8) is its content's status.
+- A content can be removed while Queued or Not processed too: its waiting work item is Skipped. A content being processed cannot be removed; the user pauses first. ASSUMPTION (M3c).
 
 ### 7.2 Job and work item
 
@@ -705,6 +717,7 @@ Pause is project-wide: "Pause" pauses every active job in the project (ASSUMPTIO
 stateDiagram-v2
     [*] --> Queued : created by add, re-scan, retry, setting change, or model re-run
     Queued --> Running : stage order allows it (Stage A first)
+    Queued --> Paused : user pauses before the job starts
     Running --> Paused : user pauses, current item ends within 5 s
     Paused --> Running : user resumes
     Running --> Blocked : AI job with no allowed destination, or runtime failed
@@ -744,6 +757,8 @@ stateDiagram-v2
 Rules:
 - An AI response that is still invalid after one retry ends the item as **Done** with zero mentions and an "invalid response" count. The batch goes on (INV-AI-03).
 - The progress panel (US-03.1) reads job and item counts. The ETA needs at least 5 finished items.
+- Queued → Paused: a project-wide pause also covers jobs that have not started, and a job created while the queue is paused starts Paused. ASSUMPTION (M3c), D11.
+- On pause, an item in progress gets 4 s to finish. Then its worker is stopped and the item goes back to Pending, so the pause takes effect within 5 s (NFR-REL-05, ADR-0006).
 
 ### 7.3 Column mapping
 

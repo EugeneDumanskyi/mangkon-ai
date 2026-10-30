@@ -53,9 +53,19 @@ describe("event → invalidation", () => {
     expect(staleKeys({ kind: "connectionsChanged" })).toContainEqual(["connections"]);
     expect(staleKeys({ kind: "projectChanged" })).toContainEqual(["project"]);
     expect(staleKeys({ kind: "ingestStarted" })).toEqual([["progress"]]);
-    expect(staleKeys({ kind: "ingestFinished", done: 1, failed: 0, error: null })).toContainEqual([
-      "progress",
-    ]);
+    expect(
+      staleKeys({
+        kind: "ingestFinished",
+        done: 1,
+        failed: 0,
+        error: null,
+        interrupted: null,
+        added: 0,
+        duplicates: 0,
+        skipped: 0,
+        skippedFiles: [],
+      }),
+    ).toContainEqual(["progress"]);
     expect(staleKeys({ kind: "error", message: "x" })).toEqual([]);
   });
 });

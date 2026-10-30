@@ -353,3 +353,91 @@ The whole run, ingestion with OCR included, took 6 s. **Met on Linux.**
 ### TD-1 unchanged (NFR-REL-10, INV-CO-01)
 
 SHA-256 of all 103 files under `testdata/td1/` before the M3b runs and after them (ingestion, kill tests, page views, view sweep): identical.
+
+## 8. M3c checks
+
+### Pause latency (NFR-REL-05, US-03.2 AC1)
+
+Pause asks the lanes to stop. No new file starts; a file in a worker gets 4 s to finish, then its worker is stopped and the item goes back to Pending (ADR-0006 follow-up). `Project::pause` returns once the lanes have stopped and the jobs are Paused, so the time it takes is the time until the pause has taken effect.
+
+| Test (`crates/mk-core/tests/m3c_queue.rs`, debug build) | Case | Pause took | Pass mark |
+|---|---|---|---|
+| `us_03_2_ac1_pause_stops_new_items_and_ac2_resume_no_redo` | Every lane busy with a file that never finishes (`mk-test-fault: endless-loop`) | **4.08 s** | ≤ 5 s ✅ |
+| `nfr_rel_05_pause_fast_items` | Short text files, a new one starting all the time | **8 ms** | ≤ 5 s ✅ |
+
+After Resume, the stopped files run again and no finished file is read again (INV-PR-05).
+
+**Over 20 pauses during a TD-2 ingest**, release build, idle RM-1:
+
+```sh
+cargo test -p mk-core --release --test nfr_rel_05 -- --ignored --nocapture
+```
+
+TD-2 is hashed first, so every pause lands in Stage A. Each round lets the run go for 2–9 s (fixed seed), pauses, checks that the jobs are Paused and resumes. After the 20th pause the rest of TD-2 is read to the end.
+
+| Pauses | Files in workers at the pause | Min | Median | p95 | Max | ≥ 4 s | Pass mark |
+|---|---|---|---|---|---|---|---|
+| 20 | 9 at the first pause, then 1–4 | 34 ms | 166 ms | **279 ms** | 764 ms | 0 | p95 ≤ 5 s ✅ |
+
+The run took 176 s; the last run read the remaining 823 files with 0 failed. The slowest pause was the first one, with 9 files in workers; no file needed the 4 s grace. **Met.**
+
+### Kill test with schema v4 (NFR-REL-02/03/04)
+
+```sh
+target/release/mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1
+```
+
+| Source | Ingestion (shortest reference) | Kill moments | Passed | Orphan workers | Items recovered per kill |
+|---|---|---|---|---|---|
+| TD-1 synthetic (81 files) | 1.48 s, 23 lanes | 20 in Stage A (0.25–1.44 s) | **20 / 20** | 0 | 1–4 |
+
+**Met** with the M3c schema and run control. Every killed project opened again and, after resuming, matched the reference run. The whole test took 39 s.
+
+### Restart with paused jobs (NFR-REL-04, US-03.4)
+
+`us_03_4_ac1_quit_restores_running_paused_queued`: a project stopped for close while a job is Running comes back with that job Running and its item Pending; a Paused one comes back Paused and starts nothing on open; a Queued one stays Queued. **Met** for paused jobs (running and queued were met in M2c).
+
+### Remove, retry and rebuild (US-01.5, US-02.7 AC3, ADR-0005)
+
+With the debug CLI on TD-1 (synthetic and public) + TD-3: 161 files, 130 done, 25 failed, 6 duplicates, 16 connections. `remove` of TD-1's `csv/`, `docx/` and `email/` folders: 22 paths and their data removed; 12 connections lost evidence; 13 connections left. `retry --all-failed`: the 25 failed files ran again, and all 25 failed again. `rebuild`: **same as the incremental rows and consistent with the sources.** A re-scan afterwards walked 139 files and hashed none: the removed paths stay excluded.
+
+### Documents list units
+
+The units column shows pages for PDFs and images, rows for CSV and messages for MBOX, from what was stored. A PDF page with no text stores no segment, so a PDF whose pages are all blank shows no page count. Known limit; a page count stored per document would fix it.
+
+### Scripted run in the release app (M3c)
+
+```sh
+XDG_DATA_HOME=<dir> MK_QUEUE_WALK=1 MK_QUEUE_WALK_LOCATION=<empty dir> \
+  MK_QUEUE_WALK_SOURCES=testdata/td2:testdata/td3 MK_QUEUE_WALK_OUT=walk-1.json \
+  target/release/mangkon
+XDG_DATA_HOME=<same dir> MK_QUEUE_WALK=2 MK_QUEUE_WALK_OUT=walk-2.json target/release/mangkon
+```
+
+With `MK_QUEUE_WALK` set, the UI walks through the project and queue controls (`ui/src/project/queueWalk.ts`): it clicks the real buttons, tabs, filters and confirms, checks the core's state after each step, writes what it saw and exits. Only the native dialogs are not clicked: the walk passes the location and the source folders to the same commands that New project and Add folder… call. For the settings step, `<dir>/mangkon-ai/tessdata/` held `eng.traineddata` and a copy of it named `deu.traineddata`, so this run checks the flow of an OCR language change, not German OCR.
+
+Phase 1 (TD-2 + TD-3, 10,054 contents), 3 min 2 s, peak RSS 1.09 GB:
+
+| Step | What it did | Result |
+|---|---|---|
+| Create | New project "Queue walk" in the location | `<location>/Queue walk`, 88 ms |
+| Add | TD-2 and TD-3 as sources | Stage A under way, 400 of 10,000 files read |
+| Pause | Pause in the progress panel | "Paused" shown after **180 ms**; no file finished in the next 3 s |
+| Resume | Resume | files finishing again |
+| Cancel | Cancel, then Stop reading | 3,326 done, 15 failed, 0 queued, **6,713 not processed** |
+| Not processed in the list | Documents tab, status filter Not processed | 6,713 rows, a "Not processed" row shown |
+| Retry | Retry failed and not processed | run of 171 s: 10,029 done, 25 failed, 0 not processed |
+| Remove | Select one PDF, Remove from project, confirm | "3 connections lose evidence"; 10,060 → 10,059 rows |
+| Settings re-process | Add `deu`, Save, Re-process | "2,182 files will be read again"; a run of 2,182 files started |
+| Pause before quit | Pause, then the app quits | "Paused" shown after **62 ms**; 2,110 queued |
+
+Phase 2, same data folder, 3 min 21 s:
+
+| Step | What it did | Result |
+|---|---|---|
+| Reopen | The project from the recent list | opened **Paused**; nothing started in 3 s; 2,110 queued |
+| Resume to the end | Resume | 10,028 done, 25 failed, 0 queued |
+
+**Met:** create → add → pause/resume → cancel → retry → remove → settings re-process → quit with a paused job → reopen still paused (NFR-REL-04 paused, US-03.4 AC1). 10,028 = 10,029 − the removed file's content.
+
+**Found and fixed by this run.** With a long project path, the path took most of the toolbar line and the progress panel (`flex-1`, no basis) was squeezed to 10 px; its text then wrapped one character per line, and in a 533 px high window it left the tab panel 35 px, so the documents list showed no rows. The panel now has a 20 rem basis and wraps to its own line.
