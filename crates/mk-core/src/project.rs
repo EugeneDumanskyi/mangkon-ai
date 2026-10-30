@@ -126,6 +126,9 @@ pub struct RebuildSummary {
     pub same_as_incremental: bool,
     /// The rebuilt rows equal the reference model over the facts.
     pub consistent: bool,
+    /// The keyword index matched the segment text before it was refilled (FTS5
+    /// 'integrity-check', ADR-0010).
+    pub search_index_in_step: bool,
 }
 
 /// A project's health after a crash or a kill (NFR-REL-02 kill test, ADR-0006).
@@ -137,12 +140,17 @@ pub struct HealthReport {
     pub foreign_key_errors: usize,
     /// The derived tables equal a rebuild from the facts (ADR-0005).
     pub derived_consistent: bool,
+    /// The FTS5 'integrity-check' error, if the keyword index and the segment text differ.
+    pub search_index_error: Option<String>,
     pub progress: Progress,
 }
 
 impl HealthReport {
     pub fn is_healthy(&self) -> bool {
-        self.integrity_errors.is_empty() && self.foreign_key_errors == 0 && self.derived_consistent
+        self.integrity_errors.is_empty()
+            && self.foreign_key_errors == 0
+            && self.derived_consistent
+            && self.search_index_error.is_none()
     }
 }
 
@@ -539,8 +547,11 @@ impl Project {
     }
 
     /// Drops and rebuilds every derived row from machine output and decisions (ADR-0005), then
-    /// checks the result against the rows before and against the reference model.
+    /// checks the result against the rows before and against the reference model. Refills the
+    /// keyword index too, after checking it was in step (ADR-0010).
     pub fn rebuild(&self) -> Result<RebuildSummary, ProjectError> {
+        let search_index_in_step = self.store.check_search_index().is_ok();
+        self.store.rebuild_search_index()?;
         let before = self.store.derived_state()?;
         self.store.rebuild_all()?;
         let after = self.store.derived_state()?;
@@ -553,6 +564,7 @@ impl Project {
             connections: after.connections.len(),
             same_as_incremental: after == before,
             consistent: after == reference,
+            search_index_in_step,
         })
     }
 
@@ -876,7 +888,8 @@ impl Project {
     }
 
     /// Checks the project after a crash or kill: SQLite integrity and foreign keys, derived
-    /// rows against a rebuild from the facts (ADR-0005), and the item and job counts.
+    /// rows against a rebuild from the facts (ADR-0005), the keyword index against the segment
+    /// text (ADR-0010), and the item and job counts.
     pub fn check_health(&self) -> Result<HealthReport, ProjectError> {
         let (integrity_errors, foreign_key_errors) = self.store.read_raw(|c| {
             let mut stmt = c.prepare("PRAGMA integrity_check")?;
@@ -893,6 +906,7 @@ impl Project {
             integrity_errors,
             foreign_key_errors,
             derived_consistent: derived == reference,
+            search_index_error: self.store.check_search_index().err().map(|e| e.to_string()),
             progress: self.store.progress()?,
         })
     }

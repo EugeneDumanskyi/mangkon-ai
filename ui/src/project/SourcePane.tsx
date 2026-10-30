@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { MentionPosition } from "../ipc/bindings/MentionPosition";
 import type { OriginalFile } from "../ipc/bindings/OriginalFile";
+import type { SegmentHit } from "../ipc/bindings/SegmentHit";
 import type { SourceView } from "../ipc/bindings/SourceView";
+import { viewKey } from "../lib/history";
 import { fileName, locationLabel, originalNote } from "../lib/labels";
 import { LinkContext } from "../lib/linkContext";
 import { LinkConfirm } from "./Links";
@@ -11,9 +13,12 @@ import { OriginalBanner } from "./Original";
 import { PageView } from "./PageView";
 import { DocumentButton, SourceBodyView } from "./SourceBody";
 
-/** Where the view is: at a mention, or at a document opened from a link. */
+/** Where the view is: at a mention, at a search result, or at a document opened from a link. */
 function placeLabel(view: SourceView): string {
   if (view.occurrence) return locationLabel(view.occurrence.location);
+  if (view.hit) {
+    return view.body.kind === "page" ? `page ${String(view.body.page)}` : "search result";
+  }
   return view.document.position === "whole" ? "start of file" : view.document.position;
 }
 
@@ -99,14 +104,16 @@ export function OriginalActions({
 }
 
 /**
- * The source around one mention, the hit highlighted and scrolled into view (US-08.1), or a
- * document opened from a link. An attachment links back to its email, and an email to its
- * attachments (AC4). Moving to another mention or document, and back, goes through the project
- * screen's history (US-08.2).
+ * The source around one mention or search result, the hit highlighted and scrolled into view
+ * (US-08.1, US-06.1 AC4), or a document opened from a link. An attachment links back to its
+ * email, and an email to its attachments (AC4). Moving to another mention or document, and
+ * back, goes through the project screen's history (US-08.2).
  */
 export function SourcePane({
   mentionId,
   documentId,
+  hit = null,
+  empty = "Pick a mention to see it in its file.",
   canBack,
   onBack,
   onMention,
@@ -115,6 +122,10 @@ export function SourcePane({
   mentionId: number | null;
   /** A document opened from a link, shown instead of the mention. */
   documentId: number | null;
+  /** A search result, shown instead of the mention. */
+  hit?: SegmentHit | null;
+  /** What the pane says when it has nothing to show. */
+  empty?: string;
   canBack: boolean;
   onBack: () => void;
   onMention: (mentionId: number) => void;
@@ -128,13 +139,18 @@ export function SourcePane({
       setLink(null);
     },
   });
+  const place = { connection: null, mention: mentionId, document: documentId, hit };
+  // Which view is on screen, for Back and the scripted sweeps (`viewSweep.ts`).
+  const shown = viewKey(place);
   const view = useQuery({
-    queryKey: ["source", mentionId, documentId],
+    queryKey: ["source", shown],
     queryFn: () =>
       documentId !== null
         ? commands.sourceDocument(documentId)
-        : commands.sourceContext(mentionId ?? 0),
-    enabled: mentionId !== null || documentId !== null,
+        : hit !== null
+          ? commands.searchContext(hit)
+          : commands.sourceContext(mentionId ?? 0),
+    enabled: shown !== null,
   });
 
   useEffect(() => {
@@ -143,17 +159,15 @@ export function SourcePane({
     else ref.current?.scrollTo({ top: 0 });
   }, [view.data]);
 
-  if (mentionId === null && documentId === null) {
+  if (shown === null) {
     return (
       <section className="p-3 text-sm text-muted" aria-label="Source">
-        Pick a mention to see it in its file.
+        {empty}
       </section>
     );
   }
   const v = view.data;
   const note = v ? originalNote(v.original) : null;
-  // Which view is on screen, for the scripted sweeps (`viewSweep.ts`).
-  const shown = documentId !== null ? `d${String(documentId)}` : `m${String(mentionId)}`;
   const bar =
     "flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-1 text-sm";
   return (
@@ -211,9 +225,10 @@ export function SourcePane({
         <div ref={ref} className="min-h-0 flex-1 overflow-auto p-3" data-scroll="source">
           {v?.body.kind === "page" ? (
             <PageView
-              key={`${String(v.document.documentId)}:${String(v.body.page)}:${String(mentionId)}`}
+              key={`${String(v.document.documentId)}:${String(v.body.page)}:${shown}`}
               documentId={v.document.documentId}
               mentionId={v.occurrence?.mentionId ?? null}
+              hit={v.occurrence ? null : v.hit}
               body={v.body}
               bannerShown={note !== null}
             />

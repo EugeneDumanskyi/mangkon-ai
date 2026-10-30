@@ -3,6 +3,7 @@ import type { DocumentLink } from "./DocumentLink";
 import type { MentionPosition } from "./MentionPosition";
 import type { Occurrence } from "./Occurrence";
 import type { OriginalFile } from "./OriginalFile";
+import type { SegmentHit } from "./SegmentHit";
 import type { SourceBody } from "./SourceBody";
 import type { SourceDocument } from "./SourceDocument";
 
@@ -15,6 +16,11 @@ occurrence: Occurrence | null,
  * Where the mention is among its value's mentions in this document; `null` for a document.
  */
 position: MentionPosition | null, 
+/**
+ * The marked place: the mention's or the search hit's; `null` for a document. The page
+ * view places its boxes from it.
+ */
+hit: SegmentHit | null, 
 /**
  * `null` when no path of the file is known.
  */

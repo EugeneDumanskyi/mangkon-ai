@@ -12,19 +12,19 @@ const at = (n: number): Scrolls => ({
 // US-08.2 AC2: Back returns to the screen I came from, at the same scroll position.
 describe("view history (US-08.2 AC2)", () => {
   it("goes back through mentions and documents with their scroll offsets", () => {
-    let h = go(START, { connection: conn("a"), mention: null, document: null }, at(0));
-    h = go(h, { connection: conn("a"), mention: 7, document: null }, at(100));
-    h = go(h, { connection: conn("a"), mention: 7, document: 3 }, at(200));
-    h = go(h, { connection: conn("a"), mention: 9, document: null }, at(300));
+    let h = go(START, { connection: conn("a"), mention: null, document: null, hit: null }, at(0));
+    h = go(h, { connection: conn("a"), mention: 7, document: null, hit: null }, at(100));
+    h = go(h, { connection: conn("a"), mention: 7, document: 3, hit: null }, at(200));
+    h = go(h, { connection: conn("a"), mention: 9, document: null, hit: null }, at(300));
 
     h = back(h);
-    expect(h.place).toEqual({ connection: conn("a"), mention: 7, document: 3 });
+    expect(h.place).toEqual({ connection: conn("a"), mention: 7, document: 3, hit: null });
     expect(h.restore).toEqual(at(300));
     h = restored(h);
     expect(h.restore).toBeNull();
 
     h = back(h);
-    expect(h.place).toEqual({ connection: conn("a"), mention: 7, document: null });
+    expect(h.place).toEqual({ connection: conn("a"), mention: 7, document: null, hit: null });
     expect(h.restore).toEqual(at(200));
 
     h = back(back(h));
@@ -34,7 +34,7 @@ describe("view history (US-08.2 AC2)", () => {
   });
 
   it("does not stack the place it is already at", () => {
-    const place = { connection: conn("a"), mention: 7, document: null };
+    const place = { connection: conn("a"), mention: 7, document: null, hit: null };
     const h = go(START, place, at(0));
     expect(go(h, { ...place, connection: conn("a") }, at(5))).toBe(h);
   });
@@ -42,7 +42,7 @@ describe("view history (US-08.2 AC2)", () => {
   it(`keeps the last ${String(HISTORY_LIMIT)} places`, () => {
     let h = START;
     for (let i = 0; i < HISTORY_LIMIT + 20; i++) {
-      h = go(h, { connection: null, mention: i, document: null }, at(i));
+      h = go(h, { connection: null, mention: i, document: null, hit: null }, at(i));
     }
     expect(h.back).toHaveLength(HISTORY_LIMIT);
     expect(h.back.at(-1)?.scroll).toEqual(at(HISTORY_LIMIT + 19));

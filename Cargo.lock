@@ -2473,6 +2473,7 @@ dependencies = [
  "mk-jobs",
  "mk-kernel",
  "mk-parsers",
+ "mk-search",
  "mk-store",
  "mk-worker",
  "mk-workspace",
@@ -2559,6 +2560,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mk-search"
+version = "0.0.0"
+dependencies = [
+ "mk-identifiers",
+ "proptest",
+]
+
+[[package]]
 name = "mk-store"
 version = "0.0.0"
 dependencies = [
@@ -2566,6 +2575,7 @@ dependencies = [
  "mk-graph",
  "mk-jobs",
  "mk-kernel",
+ "mk-search",
  "mk-workspace",
  "proptest",
  "rusqlite",

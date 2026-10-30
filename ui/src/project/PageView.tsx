@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import { ocrQualityLabel } from "../lib/labels";
 import type { PageView as Page } from "../ipc/bindings/PageView";
+import type { SegmentHit } from "../ipc/bindings/SegmentHit";
 import { type PageBody, PageLines } from "./SourceBody";
 import { OriginalBanner } from "./Original";
 
@@ -129,25 +130,29 @@ export function PageFigure({
 }
 
 /**
- * One page of a PDF or image at a mention or a document (US-08.1 AC1–AC2, US-08.3). Keyed by
- * the parent on document, page and mention, so the toggle starts on the image each time.
+ * One page of a PDF or image at a mention, a search result or a document (US-08.1 AC1–AC2,
+ * US-08.3, US-06.1 AC4). Keyed by the parent on document, page and place, so the toggle starts
+ * on the image each time.
  */
 export function PageView({
   documentId,
   mentionId,
+  hit = null,
   body,
   bannerShown = false,
 }: {
   documentId: number;
   mentionId: number | null;
+  /** A search hit, when the view was opened at one. */
+  hit?: SegmentHit | null;
   body: PageBody;
   bannerShown?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [showText, setShowText] = useState(false);
   const page = useQuery({
-    queryKey: ["page", documentId, body.page, mentionId],
-    queryFn: () => commands.pageView(documentId, body.page, mentionId),
+    queryKey: ["page", documentId, body.page, mentionId, hit],
+    queryFn: () => commands.pageView(documentId, body.page, mentionId, hit),
   });
   const shown = page.data?.status === "shown";
   const image = useQuery({

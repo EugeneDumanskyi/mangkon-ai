@@ -18,6 +18,7 @@ mod ops;
 mod read;
 mod readers;
 mod schema;
+mod search;
 mod time;
 mod writer;
 
@@ -43,6 +44,7 @@ pub use read::{
     OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow, SegmentWindow, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
+pub use search::{SearchCursor, SearchFilter, SearchRow};
 
 /// Read connections (architecture §7).
 pub const READERS: usize = 4;
@@ -338,6 +340,17 @@ impl Store {
         self.writer.call(|tx| derive::rebuild_all(tx))
     }
 
+    /// Refills the keyword index from the stored segment text (FTS5 'rebuild', ADR-0010).
+    pub fn rebuild_search_index(&self) -> Result<(), StoreError> {
+        self.writer.call(|tx| search::rebuild_index(tx))
+    }
+
+    /// Checks the keyword index against the stored segment text (FTS5 'integrity-check',
+    /// NFR-REL-02). Runs on the writer: FTS5 commands are writes, even this one.
+    pub fn check_search_index(&self) -> Result<(), StoreError> {
+        self.writer.call(|tx| search::check_index(tx))
+    }
+
     /// In-progress items back to Pending, Processing contents back to Queued (ADR-0006).
     pub fn recover_after_restart(&self) -> Result<Recovery, StoreError> {
         self.writer.call(|tx| ops::recover_after_restart(tx))
@@ -528,6 +541,26 @@ impl Store {
 
     pub fn facts(&self) -> Result<Facts, StoreError> {
         self.readers.with(read::facts)
+    }
+
+    /// One page of keyword search results, best first (US-06.1). `fts` is an FTS5 query made
+    /// by `mk-search` (`Query::to_fts5`); `highlight_query` gives the query that marks the hits
+    /// in the page's texts (`Query::highlight_fts5`, or `fts` again).
+    pub fn search_page(
+        &self,
+        fts: &str,
+        highlight_query: impl FnOnce(&[&str]) -> String,
+        filter: &SearchFilter,
+        after: Option<&SearchCursor>,
+        limit: usize,
+    ) -> Result<Vec<SearchRow>, StoreError> {
+        self.readers
+            .with(|c| search::search_page(c, fts, highlight_query, filter, after, limit))
+    }
+
+    /// Rows in the keyword index; equals the segment count while it is in step.
+    pub fn search_index_rows(&self) -> Result<u64, StoreError> {
+        self.readers.with(search::index_rows)
     }
 
     /// Runs `f` on a read connection. For tests.

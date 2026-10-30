@@ -61,7 +61,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 |---|---|---|---|---|
 | NFR-PERF-20 | Text-PDF parsing + identifier extraction | ≥ 20 pages/s | Benchmark on TD-1 PDFs | ASSUMPTION · M3b (RM-1, one thread, `w3b_pdf_throughput`): ≈ 5,700 pages/s on TD-1's 527 text-PDF pages (`11-ingestion.md` §7) |
 | NFR-PERF-21 | OCR speed (A4, 300 DPI) | ≤ 5 s per page per CPU core (decode + OCR + layout, one thread) | Benchmark on TD-1 scans | M0: Tesseract, slowest clean A4 page 0.26 s on RM-1 (ADR-0014) · M3b (RM-1, `w3b_ocr_page_time`, TD-1's 22 OCR pages): p95 0.31 s, slowest 0.42 s (`11-ingestion.md` §7) |
-| NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION · M2c (S2a, RM-1): ~385,000 rows/s end to end in a worker process, including the commit (`10-walking-skeleton.md` §S2a) · M3a (W3a-1, RM-1, streaming path): 452,797 rows/s on the same file (`11-ingestion.md` §2) |
+| NFR-PERF-22 | CSV parsing + identifier extraction | ≥ 50,000 rows/s | Benchmark, 1M-row CSV | ASSUMPTION · M2c (S2a, RM-1): ~385,000 rows/s end to end in a worker process, including the commit (`10-walking-skeleton.md` §S2a) · M3a (W3a-1, RM-1, streaming path): 452,797 rows/s on the same file (`11-ingestion.md` §2) · M4a (with the keyword index in the commit): 230,298 rows/s (`12-layer1.md` §1) |
 | NFR-PERF-23 | Email parsing (MBOX) | ≥ 200 messages/s (without attachments OCR) | Benchmark on public Enron slice | ASSUMPTION · M3a (W3a-2, RM-1): 13,964 messages/s end to end with the commit, ≈ 61,000 in the worker, on a generated 2 GB MBOX (1.29M messages, `11-ingestion.md` §3). The Enron slice is ruled out by NFR-LEG-04 (`07-test-corpus.md`); proposal: measure on the generated MBOX (`corpus-gen mbox-messages`) |
 | NFR-PERF-24 | LLM extraction speed | ≥ 1 segment/s on RM-1 with the minimum-tier model (segment ≤ 2,000 chars) | Benchmark | M1: Qwen3.5-4B 1.39 segments/s with 4 slots, 0.66 with 1; no model reached the earlier 2/s (`09-model-check.md` §5.1). Target lowered 2026-10-24 (gap A3) |
 | NFR-PERF-25 | Parallel workers | Stage A uses up to (CPU cores − 1) workers; Stage B uses up to 4 parallel requests (server slots) per local model | Config check | ASSUMPTION · M1: 4 slots give 2.1× throughput at the same quality (decided 2026-10-24, gap A3) |
@@ -70,7 +70,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-PERF-30 | Keyword search on TD-2 | ≤ 200 ms p95 for first 50 results | 100 queries, mixed | ASSUMPTION |
+| NFR-PERF-30 | Keyword search on TD-2 | ≤ 200 ms p95 for first 50 results | 100 queries, mixed | ASSUMPTION · M4a (S4, RM-1, release, FTS5, 1.11M segments): p95 18.8 ms unfiltered, 11.2 ms with a file-type filter, whole service call; a word in 89% of the segments takes ≈ 280 ms alone (`12-layer1.md` §1) |
 | NFR-PERF-31 | Semantic search on TD-2 (incl. query embedding) | ≤ 1 s p95 for top 20 | 100 queries | ASSUMPTION |
 | NFR-PERF-32 | Re-scan of TD-2 with 0 changes | ≤ 60 s | Timer | ASSUMPTION · M2b (RM-1, warm page cache): app path 0.013–0.025 s (1,089 TXT/MD/CSV stored, other files skipped); walk + diff of all 10,000 files as stored references 0.019 s (`10-walking-skeleton.md` §3). Cold cache and the app path with every format stored: M3 |
 | NFR-PERF-33 | Re-scan skips unchanged files | 0 unchanged files re-processed | Count in job log | Brief (content hash) · M2b: met; unchanged size + modified time means no read and no work item (`nfr_perf_33_rescan_unchanged_creates_no_work`, and on TD-2 in `rescan_td2`). The hash is BLAKE3 (architecture §5.4) |
@@ -86,10 +86,10 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-CAP-02 | Raw data per project | 20 GB | Synthetic large-file test | ASSUMPTION |
 | NFR-CAP-03 | Segments per project | 2,000,000 | Load test | ASSUMPTION |
 | NFR-CAP-04 | Largest single PDF | 2,000 pages | Test file | ASSUMPTION · M3b: TD-3 `pages-2000.pdf` is read, `pages-2001.pdf` fails with "File too large (limit: 2,000 pages)" (`nfr_rel_01_td3_pdf_images_fail_alone`) |
-| NFR-CAP-05 | Largest single CSV | 1,000,000 rows or 500 MB | Test file | ASSUMPTION · M2c: 1M rows (75 MB) met. 500 MB conflicts with NFR-REL-07: a CSV needs ≈ 10 × its size in memory today, so the practical limit is ≈ 175 MB (`10-walking-skeleton.md` §S2a). Decided (2026-10-27): 500 MB stays; M3 builds a streaming CSV parser and a commit that does not hold the whole result. M3a (W3a-1): met, a 479 MiB CSV (6.7M rows) in 16 s with 44 MB peak, core + worker (`11-ingestion.md` §2) |
+| NFR-CAP-05 | Largest single CSV | 1,000,000 rows or 500 MB | Test file | ASSUMPTION · M2c: 1M rows (75 MB) met. 500 MB conflicts with NFR-REL-07: a CSV needs ≈ 10 × its size in memory today, so the practical limit is ≈ 175 MB (`10-walking-skeleton.md` §S2a). Decided (2026-10-27): 500 MB stays; M3 builds a streaming CSV parser and a commit that does not hold the whole result. M3a (W3a-1): met, a 479 MiB CSV (6.7M rows) in 16 s with 44 MB peak, core + worker (`11-ingestion.md` §2) · M4a (with the keyword index): 32 s, 70 MB peak (`12-layer1.md` §1) |
 | NFR-CAP-06 | Largest single MBOX | 2 GB (streamed, not loaded into memory) | Test file + memory check | ASSUMPTION · M3a (W3a-2): met, a 2 GB MBOX in 92 s with 82 MB peak, core + worker (`11-ingestion.md` §3) |
 | NFR-CAP-07 | Over-limit file | Fails with "File too large (limit: X)"; batch continues | TD-3 | ASSUMPTION · M3a: built for CSV (500 MB) and MBOX (2 GB); checked before a worker starts, "File too large (limit: 500 MB)" / "(limit: 2 GB)" (`nfr_cap_07_over_limit_csv_mbox`) |
-| NFR-CAP-08 | Project database size | ≤ 3× extracted text size, plus vectors | Measure on TD-2 | ASSUMPTION |
+| NFR-CAP-08 | Project database size | ≤ 3× extracted text size, plus vectors | Measure on TD-2 | ASSUMPTION · M4a (TD-2, with the FTS5 index, no vectors): `project.db` 2.31× the stored text, of which the index is 0.43× (`12-layer1.md` §1) |
 
 ---
 

@@ -9,6 +9,7 @@ members = [
     "crates/mk-identifiers",
     "crates/mk-jobs",
     "crates/mk-graph",
+    "crates/mk-search",
     "crates/mk-store",
     "crates/mk-worker",
     "crates/mk-core",
@@ -44,9 +45,14 @@ mk-parsers = { path = "crates/mk-parsers" }
 mk-identifiers = { path = "crates/mk-identifiers" }
 mk-jobs = { path = "crates/mk-jobs" }
 mk-graph = { path = "crates/mk-graph" }
+mk-search = { path = "crates/mk-search" }
 mk-store = { path = "crates/mk-store" }
 mk-worker = { path = "crates/mk-worker" }
 mk-core = { path = "crates/mk-core" }
 
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
+debug = false

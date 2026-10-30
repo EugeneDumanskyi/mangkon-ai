@@ -19,6 +19,10 @@ import type { RecentProject } from "./bindings/RecentProject";
 import type { RemoveSummary } from "./bindings/RemoveSummary";
 import type { RowPage } from "./bindings/RowPage";
 import type { RowsRequest } from "./bindings/RowsRequest";
+import type { SearchCursor } from "./bindings/SearchCursor";
+import type { SearchPage } from "./bindings/SearchPage";
+import type { SearchQuery } from "./bindings/SearchQuery";
+import type { SegmentHit } from "./bindings/SegmentHit";
 import type { Settings } from "./bindings/Settings";
 import type { SettingsInfo } from "./bindings/SettingsInfo";
 import type { SettingsSaved } from "./bindings/SettingsSaved";
@@ -92,9 +96,19 @@ export const commands = {
   sourceContext: (mentionId: number) => invoke<SourceView>("source_context", { mentionId }),
   /** A document from its start: an attachment, or the email it came in. */
   sourceDocument: (documentId: number) => invoke<SourceView>("source_document", { documentId }),
-  /** One page of a PDF or image, with the boxes of `mentionId` when it is on that page. */
-  pageView: (documentId: number, page: number, mentionId: number | null) =>
-    invoke<PageView>("page_view", { documentId, page, mentionId }),
+  /** Keyword search, best first (US-06.1); a query with no word fails with a plain message. */
+  search: (query: SearchQuery, cursor: SearchCursor | null, limit: number) =>
+    invoke<SearchPage>("search", { query, cursor, limit }),
+  /** The source at a search result, the matched words marked (US-06.1 AC4). */
+  searchContext: (hit: SegmentHit) =>
+    invoke<SourceView>("search_context", {
+      segmentId: hit.segmentId,
+      start: hit.start,
+      end: hit.end,
+    }),
+  /** One page of a PDF or image, with the boxes of a mention or a search hit on that page. */
+  pageView: (documentId: number, page: number, mentionId: number | null, hit: SegmentHit | null) =>
+    invoke<PageView>("page_view", { documentId, page, mentionId, hit }),
   /** The PNG of a page `pageView` has shown, as raw bytes. */
   pageImage: (documentId: number, page: number) =>
     invoke<ArrayBuffer>("page_image", { documentId, page }),

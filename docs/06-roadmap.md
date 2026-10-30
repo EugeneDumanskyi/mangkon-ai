@@ -61,7 +61,7 @@ flowchart LR
 - **M0 and M1 are pure spikes.** They write throwaway harnesses, measure, and record decisions. Code that survives is the engine adapters and kernel types, not the harness.
 - **M2 is a walking skeleton**: one thin slice through every risky boundary (worker, writer, queue, derived rebuild, IPC, CI on 3 OSes) before any breadth.
 - If M1 says **Cut**, M5 shrinks to the Layer 1 parts of the model manager (brief §5 lists it in Layer 1) and M6–M8 are skipped.
-- **M0, M2 and M7 are split into sub-milestones** (M0a–c, M2a–d, M7a–b). Each sub-milestone carries one risky boundary or one decision, so it can be planned, built and reviewed on its own. The parent ID stays the unit for goals, exit decisions, story tags in `02-requirements.md`, and references in other docs. A parent milestone is done when all its sub-milestones are done. Sub-milestones run in letter order; each one's "Needs" column names its gate.
+- **M0, M2, M3, M4 and M7 are split into sub-milestones** (M0a–c, M2a–d, M3a–d, M4a–d, M7a–b). Each sub-milestone carries one risky boundary or one decision, so it can be planned, built and reviewed on its own. The parent ID stays the unit for goals, exit decisions, story tags in `02-requirements.md`, and references in other docs. A parent milestone is done when all its sub-milestones are done. Sub-milestones run in letter order; each one's "Needs" column names its gate.
 
 ### 1.3 Mapping to brief §10
 
@@ -86,7 +86,7 @@ The brief's first milestone plan (approved 2026-09-22) said its estimates would 
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1.5 | 0.5 | 1.5 | 2 | 1.5 | 1.25 | 1.5 | 1.5 | (1) | 1 | **~12.25** without M8 |
 
-Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M3 = M3a 0.5 + M3b 0.5 + M3c 0.5 + M3d 0.5. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
+Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M3 = M3a 0.5 + M3b 0.5 + M3c 0.5 + M3d 0.5. M4 = M4a 0.25 + M4b 0.5 + M4c 0.5 + M4d 0.25. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
 
 All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. **Re-baselined after M1 (2026-10-24):** M5 1 → 1.25 (the external path moved in from M1); M6 stays 1.5 (it adds the identifier-overlap rule and 4-slot Stage B); M7 and M8 unchanged, with the M8 go/no-go leaning no (`09-model-check.md` §7).
 
@@ -361,6 +361,17 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 **Exit decision.** Layer 1 is shippable on its own. If the schedule is behind here, apply the cut order in §1.4.
 
+**Split** (decided 2026-10-30)
+
+| Sub | Focus | Scope items | Spike | Acceptance criteria | Needs |
+|---|---|---|---|---|---|
+| **M4a** | Keyword search | FTS5 index (schema v5), `mk-search` query syntax, search service, Search tab, card-like digits masked in snippets. | S4 | 1 (US-06.1), 4 (NFR-PERF-30), 5 (search results: one click, keyboard), 6 (search snippets) | M3 exit |
+| **M4b** | Built-in identifiers + benchmark | US-04.1–04.6: phone (region), URL + domain (PSL, stop list applied), IBAN, BTC/EVM/SOL/TRON, card-like flag; `mangkon-cli bench`; CI job that builds TD-1 and gates on a > 2-point drop. | — | 1 (US-04.1–04.6), 2 (identifiers), 6, 7 | M4a |
+| **M4c** | Custom patterns + column mapping | US-04.7 (linear-time regex, custom-pattern step only, INV-ID-07/08); E05 suggestions, confirm/edit/reuse, Needs review, "Name (from table)" entities, record links. | — | 1 (US-04.7, E05), 2 (NFR-QA-13) | M4b |
+| **M4d** | Connections screen + acceptance | E07: filters, find, sort, evidence grouped with snippets, ignore / show ignored, "N new connections" bar, empty states; decision regression test (NFR-REL-09); NFR-QA-10 check; keyboard; NFR-PERF-10/34/02 timings; first demo. | — | 1 (E07), 3, 4 (NFR-PERF-10/34/02), 5, 8; exit | M4c |
+
+**Outcome (M4a, 2026-10-30).** New crate `mk-search` (pure): the query syntax (words, `"phrase"`, `prefix*`, `a OR b`; every term a quoted FTS5 string, so typed text is never FTS5 syntax), the highlight query that replaces a prefix by the words of the page's texts, snippets cut around the first hit, card-like masking (13–19 digits passing Luhn shown as the last four, NFR-SEC-14). `mk-identifiers::luhn`. `mk-store` schema v5 (`0005_search.sql`): an external-content FTS5 table over `segment.text` (`unicode61 remove_diacritics 2`), filled by the migration; new segments indexed in the Stage A commit by one `INSERT … SELECT`, delete and update triggers; `search_page` (bm25, keyset on score and segment id, file-type and document filters, hit spans in characters of the stored text); rebuild and integrity check. `mk-core`: `Project::search` and `Project::segment_context` (a hit opens through the same view path as a mention, every locator kind); `rebuild` refills the index and `check_health` checks it. Desktop `search` and `search_context`. UI: project tabs Connections | Search | Documents | Settings; Search tab with the query box, file-type chips, "Only this document", a virtualized result list with file, place, snippet (text nodes, hits in `<mark>`) and a Missing badge, "No matches"; Enter runs, ↑/↓ move, Enter opens; results join the view history. Criterion 1 (M4a share): US-06.1 AC1–AC5 by the `us_06_1_*` tests in `mk-search`, `mk-store` (with a proptest that any typed text is a valid FTS5 query on a real index) and `mk-core` on TD-1, and `search.test.tsx` (`12-layer1.md` §2). Criterion 4 (M4a share): NFR-PERF-30 met, S4 p95 18.8 ms unfiltered and 11.2 ms filtered on TD-2 (1,113,276 segments); a word in 89% of the segments takes ≈ 280 ms alone, recorded. Criterion 5 (M4a share): one click from a search result (`search.test.tsx`, `us_06_1_ac4_hit_opens_highlighted`). Criterion 6 (M4a share): card-like numbers masked in snippets (`nfr_sec_14_search_snippets_mask_card_like`). The index costs 0.43× the stored text (`project.db` 2.31×, NFR-CAP-08) and 4% of TD-2 Stage A time; NFR-PERF-22 230,298 rows/s and the 500 MB CSV 32 s, both within target but slower than M3. Kill test 20/20 on TD-1 with the index check; rebuild equals the incremental rows on TD-1 + TD-3. Fixed in the spike: prefix highlight per row (`con*` 407 → 40 ms) and the insert trigger per row (500 MB CSV 101 → 32 s). Deviations from the plan: the insert trigger became a bulk insert in the commit; the S4 rare words are TD-2's 2,000 least frequent (no word is in fewer than ≈ 99 segments). Not verified here: macOS and Windows (CI on push). ADR-0010 stays Proposed until S6 (M6).
+
 ---
 
 ### M5 — Model manager + egress gate
@@ -542,7 +553,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | R5 macOS memory limit (K3). **Retired on Linux in M2c:** 20/20 bombs stopped ≤ 160 ms after passing 1 GB (`10-walking-skeleton.md` §S2b); macOS and Windows not verified here. | S2b | M2c (done) | Yes (wording + sampling). |
 | R7 decisions in every commit (K4). **Retired in M2b for identifier decisions:** p95 commit + debounce 1.24 s with 10,000 decisions at 10,000 documents (`10-walking-skeleton.md` §S2c); entity decisions re-run in M7a. | S2c, re-run in M7a | M2b (done), M7a | Yes (batching, indexes). |
 | WebKitGTK scroll (K7). **Retired in M2a:** 60 fps on average over 100,000 rows, p95 18 ms (1 ms clock), ≤ 0.24 % of frames over 25 ms (`10-walking-skeleton.md` §S2d). | S2d | M2a (done) | Yes. |
-| R1 FTS5 at 1M segments (K6) | S4 | M4 | Yes (Tantivy derived index). |
+| R1 FTS5 at 1M segments (K6). **Retired in M4a:** 100 mixed queries on TD-2 (1.11M segments), first 50 results p95 18.8 ms unfiltered, 11.2 ms filtered, against 200 ms (`12-layer1.md` §1). | S4 | M4a (done) | Yes (Tantivy derived index, not needed). |
 | Egress pinning (K8) | S5 | M5 | Yes (contained in `mk-egress`). |
 | Proposal quality (K9) | S7 | M7a | Yes (fewer proposal rules). |
 | Relations/events quality (K10) | M1 probe | M8 | Yes (cut). |

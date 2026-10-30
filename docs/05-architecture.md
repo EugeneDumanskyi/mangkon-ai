@@ -259,7 +259,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-05 Structured mapping | `mk-mapping` | Core |
 | BC-06 AI extraction | `mk-ai` | Core |
 | BC-07 Entity resolution, BC-08 Linking, BC-09 Curation | `mk-graph` (one crate: they rebuild together, ADR-0005) | Core |
-| BC-10 Search | `mk-search` | Core |
+| BC-10 Search | `mk-search` (pure: query syntax to a safe FTS5 query, snippets, card-like masking; the FTS5 table and its reads are in `mk-store`, since M4a) | Core |
 | BC-11 Egress policy | `mk-egress` | Core |
 | BC-12 Model management | `mk-models` | Core |
 | BC-13 Evaluation | `mk-bench` | CLI only |

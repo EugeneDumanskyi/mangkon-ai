@@ -1,6 +1,8 @@
 // The view history of the project screen (US-08.2 AC2): each move to another connection,
-// mention or document pushes where the screen was, with its scroll offsets; "Back" pops it.
+// mention, document or search result pushes where the screen was, with its scroll offsets;
+// "Back" pops it.
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
+import type { SegmentHit } from "../ipc/bindings/SegmentHit";
 
 /** What the connections screen shows. */
 export interface Place {
@@ -8,6 +10,8 @@ export interface Place {
   mention: number | null;
   /** A document opened from a link (an attachment or its email), over the mention. */
   document: number | null;
+  /** A search result opened (US-06.1 AC4), instead of a mention. */
+  hit: SegmentHit | null;
 }
 
 /** Scroll offsets of the three panes, in pixels. */
@@ -27,13 +31,30 @@ export interface History {
 /** Most places kept to go back to. */
 export const HISTORY_LIMIT = 100;
 
-export const EMPTY_PLACE: Place = { connection: null, mention: null, document: null };
+export const EMPTY_PLACE: Place = { connection: null, mention: null, document: null, hit: null };
+
+function sameHit(a: SegmentHit | null, b: SegmentHit | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.segmentId === b.segmentId && a.start === b.start && a.end === b.end;
+}
+
+/** What the source pane shows for `place`, as its `data-view` names it; `null` for nothing. */
+export function viewKey(place: Place): string | null {
+  if (place.document !== null) return `d${String(place.document)}`;
+  if (place.hit !== null) {
+    const h = place.hit;
+    return `h${String(h.segmentId)}:${String(h.start)}-${String(h.end)}`;
+  }
+  if (place.mention !== null) return `m${String(place.mention)}`;
+  return null;
+}
 
 export function samePlace(a: Place, b: Place): boolean {
   return (
     (a.connection?.key ?? null) === (b.connection?.key ?? null) &&
     a.mention === b.mention &&
-    a.document === b.document
+    a.document === b.document &&
+    sameHit(a.hit, b.hit)
   );
 }
 

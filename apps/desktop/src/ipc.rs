@@ -828,6 +828,8 @@ pub enum Location {
         column_name: Option<String>,
         column_index: Option<u32>,
     },
+    /// A whole CSV record (a search result): 0-based, the header is row 0.
+    Row { row: u32 },
     /// 1-based paragraph of a Word file.
     Paragraph { paragraph: u32 },
     /// Character offset of the block in an HTML file's extracted text.
@@ -859,6 +861,7 @@ impl From<&mk_core::Locator> for Location {
                     column_index,
                 }
             }
+            mk_core::Locator::CsvRow { row } => Location::Row { row: count(*row) },
             mk_core::Locator::DocxParagraph { paragraph, .. } => Location::Paragraph {
                 paragraph: paragraph.saturating_add(1),
             },
@@ -878,7 +881,6 @@ impl From<&mk_core::Locator> for Location {
                 page: page.get(),
                 ocr: true,
             },
-            _ => Location::Other,
         }
     }
 }
@@ -1156,6 +1158,9 @@ pub struct SourceView {
     pub occurrence: Option<Occurrence>,
     /// Where the mention is among its value's mentions in this document; `null` for a document.
     pub position: Option<MentionPosition>,
+    /// The marked place: the mention's or the search hit's; `null` for a document. The page
+    /// view places its boxes from it.
+    pub hit: Option<SegmentHit>,
     /// `null` when no path of the file is known.
     pub original: Option<OriginalFile>,
     pub document: SourceDocument,
@@ -1248,6 +1253,7 @@ impl From<mk_core::SourceContext> for SourceView {
                 prev: p.prev,
                 next: p.next,
             }),
+            hit: c.hit.map(Into::into),
             original: c.original.map(Into::into),
             document: SourceDocument {
                 document_id: d.id,
@@ -1258,6 +1264,140 @@ impl From<mk_core::SourceContext> for SourceView {
             },
             parent: c.parent.map(Into::into),
             body,
+        }
+    }
+}
+
+// ---- M4a: keyword search ----
+
+/// A keyword search as typed, with its filters (US-06.1 AC1–AC3).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchQuery {
+    pub text: String,
+    /// File types to keep, such as `pdf`; empty keeps all.
+    pub file_types: Vec<String>,
+    /// One document to search in.
+    #[ts(type = "number | null")]
+    pub document: Option<i64>,
+}
+
+impl SearchQuery {
+    pub fn filter(&self) -> mk_core::SearchFilter {
+        mk_core::SearchFilter {
+            file_types: self.file_types.clone(),
+            document: self.document,
+        }
+    }
+}
+
+/// Where a result list continues: the last row's score and segment.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchCursor {
+    pub score: f64,
+    #[ts(type = "number")]
+    pub segment_id: i64,
+}
+
+impl From<SearchCursor> for mk_core::SearchCursor {
+    fn from(c: SearchCursor) -> Self {
+        Self {
+            score: c.score,
+            segment_id: c.segment_id,
+        }
+    }
+}
+
+impl From<mk_core::SearchCursor> for SearchCursor {
+    fn from(c: mk_core::SearchCursor) -> Self {
+        Self {
+            score: c.score,
+            segment_id: c.segment_id,
+        }
+    }
+}
+
+/// A place in a segment's stored text, in characters (INV-CO-04).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SegmentHit {
+    #[ts(type = "number")]
+    pub segment_id: i64,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl From<mk_core::SegmentHit> for SegmentHit {
+    fn from(h: mk_core::SegmentHit) -> Self {
+        Self {
+            segment_id: h.segment_id,
+            start: count(h.span.start() as u64),
+            end: count(h.span.end() as u64),
+        }
+    }
+}
+
+/// One search result (US-06.1 AC1): what `search_context` opens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchHit {
+    #[ts(type = "number")]
+    pub segment_id: i64,
+    #[ts(type = "number")]
+    pub document_id: i64,
+    pub file_type: String,
+    /// The file's path, or the one last seen when it is missing; `null` when none is known.
+    pub path: Option<String>,
+    /// The file is no longer where it was (domain D4: "Missing" badge).
+    pub missing: bool,
+    pub location: Location,
+    /// Plain text with the matched words marked; card-like numbers masked (NFR-SEC-14).
+    pub snippet: Vec<TextPiece>,
+    /// The first match, where the source view opens; `null` if it could not be placed.
+    pub hit: Option<SegmentHit>,
+}
+
+impl From<mk_core::SearchHit> for SearchHit {
+    fn from(h: mk_core::SearchHit) -> Self {
+        Self {
+            segment_id: h.segment_id,
+            document_id: h.document_id,
+            file_type: h.file_type,
+            path: h.path,
+            missing: h.missing,
+            location: (&h.locator).into(),
+            snippet: h
+                .snippet
+                .into_iter()
+                .map(|r| TextPiece {
+                    text: r.text,
+                    hit: r.hit,
+                })
+                .collect(),
+            hit: h.hit.map(Into::into),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SearchPage {
+    pub hits: Vec<SearchHit>,
+    /// `null` on the last page.
+    pub next: Option<SearchCursor>,
+}
+
+impl From<mk_core::SearchPage> for SearchPage {
+    fn from(p: mk_core::SearchPage) -> Self {
+        Self {
+            hits: p.hits.into_iter().map(Into::into).collect(),
+            next: p.next.map(Into::into),
         }
     }
 }

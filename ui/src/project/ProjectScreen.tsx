@@ -13,19 +13,22 @@ import {
   go,
   readScrolls,
   restored,
+  viewKey,
 } from "../lib/history";
 import { addSummary, skippedLines } from "../lib/progress";
 import { ConnectionsList } from "./ConnectionsList";
 import { DocumentsList } from "./DocumentsList";
 import { OccurrencesPanel } from "./OccurrencesPanel";
 import { ProgressPanel } from "./ProgressPanel";
+import { SearchPanel } from "./SearchPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { SourcePane } from "./SourcePane";
 import { runClickSweep, runViewSweep } from "./viewSweep";
 
-type Tab = "connections" | "documents" | "settings";
+type Tab = "connections" | "search" | "documents" | "settings";
 const TABS: [Tab, string][] = [
   ["connections", "Connections"],
+  ["search", "Search"],
   ["documents", "Documents"],
   ["settings", "Settings"],
 ];
@@ -81,7 +84,7 @@ export function ProjectScreen({
   const client = useQueryClient();
   // Where the connections screen is, and where it was (US-08.2 AC2).
   const [history, setHistory] = useState<History>(START);
-  const { connection: selected, mention, document: openedDocument } = history.place;
+  const { connection: selected, mention, document: openedDocument, hit } = history.place;
   const goTo = useCallback((place: Place) => {
     const scroll = readScrolls();
     setHistory((h) => go(h, place, scroll));
@@ -138,28 +141,23 @@ export function ProjectScreen({
     if (!viewSweep || !finished || swept.current) return;
     swept.current = true;
     void runViewSweep((c, m) => {
-      goTo({ connection: c, mention: m, document: null });
+      goTo({ connection: c, mention: m, document: null, hit: null });
     }).then(commands.recordViewSweep);
   }, [viewSweep, finished, goTo]);
   useEffect(() => {
     if (clickSweep === null || !finished || swept.current) return;
     swept.current = true;
     void runClickSweep(clickSweep, (c) => {
-      goTo({ connection: c, mention: null, document: null });
+      goTo({ connection: c, mention: null, document: null, hit: null });
     }).then(commands.recordViewSweep);
   }, [clickSweep, finished, goTo]);
 
   // Back restores the panes' scroll once they show the place again: the source pane's view,
   // and the list rows, may still be loading.
   const restore = history.restore;
+  const want = viewKey(history.place);
   useEffect(() => {
     if (restore === null) return;
-    const want =
-      openedDocument !== null
-        ? `d${String(openedDocument)}`
-        : mention !== null
-          ? `m${String(mention)}`
-          : null;
     let frame = 0;
     const end = performance.now() + 5_000;
     const tick = () => {
@@ -177,10 +175,10 @@ export function ProjectScreen({
     return () => {
       cancelAnimationFrame(frame);
     };
-  }, [restore, mention, openedDocument]);
+  }, [restore, want]);
   // Alt+← goes back, as in a browser.
   useEffect(() => {
-    if (tab !== "connections") return;
+    if (tab !== "connections" && tab !== "search") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && e.key === "ArrowLeft") {
         e.preventDefault();
@@ -281,6 +279,29 @@ export function ProjectScreen({
       <div role="tabpanel" className="min-h-0 flex-1">
         {tab === "documents" ? (
           <DocumentsList />
+        ) : tab === "search" ? (
+          <div className="grid h-full min-h-0 grid-cols-[minmax(20rem,2fr)_minmax(20rem,3fr)]">
+            <SearchPanel
+              opened={hit}
+              onOpen={(h) => {
+                goTo({ connection: selected, mention: null, document: null, hit: h.hit });
+              }}
+            />
+            <SourcePane
+              mentionId={mention}
+              documentId={openedDocument}
+              hit={hit}
+              empty="Pick a result to see it in its file."
+              canBack={history.back.length > 0}
+              onBack={goBack}
+              onMention={(m) => {
+                goTo({ connection: selected, mention: m, document: null, hit: null });
+              }}
+              onOpenDocument={(d) => {
+                goTo({ ...history.place, document: d });
+              }}
+            />
+          </div>
         ) : tab === "settings" ? (
           <SettingsPanel />
         ) : empty ? (
@@ -293,7 +314,7 @@ export function ProjectScreen({
             <ConnectionsList
               selectedKey={selected?.key ?? null}
               onSelect={(c) => {
-                goTo({ connection: c, mention: null, document: null });
+                goTo({ connection: c, mention: null, document: null, hit: null });
               }}
               uiTiming={uiTiming}
             />
@@ -301,19 +322,20 @@ export function ProjectScreen({
               connection={selected}
               selected={mention}
               onSelect={(m) => {
-                goTo({ connection: selected, mention: m, document: null });
+                goTo({ connection: selected, mention: m, document: null, hit: null });
               }}
             />
             <SourcePane
               mentionId={mention}
               documentId={openedDocument}
+              hit={hit}
               canBack={history.back.length > 0}
               onBack={goBack}
               onMention={(m) => {
-                goTo({ connection: selected, mention: m, document: null });
+                goTo({ connection: selected, mention: m, document: null, hit: null });
               }}
               onOpenDocument={(d) => {
-                goTo({ connection: selected, mention, document: d });
+                goTo({ ...history.place, document: d });
               }}
             />
           </div>

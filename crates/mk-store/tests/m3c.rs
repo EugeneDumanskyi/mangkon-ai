@@ -96,7 +96,7 @@ fn us_01_2_ac3_too_new_names_app_version() {
     assert!(err.to_string().contains("needs Mangkon AI 9.1.0 or newer"));
 }
 
-/// NFR-REL-11, INV-WS-04: an M3b project (v3) migrates to v4 with a backup; its rows stay and
+/// NFR-REL-11, INV-WS-04: an M3b project (v3) migrates to v4 (and on to v5) with a backup; its rows stay and
 /// the new columns and table exist.
 #[test]
 fn nfr_rel_11_migration_v3_to_v4() {
@@ -114,7 +114,7 @@ fn nfr_rel_11_migration_v3_to_v4() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (3, 4));
+    assert_eq!((report.from_version, report.to_version), (3, 5));
     assert!(report.backup.unwrap().exists());
     let (pending, detail, excluded) = store
         .read_raw(|c| {

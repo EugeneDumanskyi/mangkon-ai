@@ -39,6 +39,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "projects_queue",
         sql: include_str!("../migrations/0004_projects_queue.sql"),
     },
+    Migration {
+        version: 5,
+        name: "search",
+        sql: include_str!("../migrations/0005_search.sql"),
+    },
 ];
 
 /// What opening did.

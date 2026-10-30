@@ -16,6 +16,7 @@ use mk_parsers::Format;
 use mk_store::{DocumentInfo, FailedFile, OccurrenceRow, WindowSegment};
 
 use crate::project::{Project, ProjectError};
+use crate::search::SegmentHit;
 
 /// Segments shown before and after the hit in the source view.
 pub const CONTEXT_SEGMENTS: usize = 20;
@@ -306,6 +307,9 @@ pub struct SourceContext {
     pub occurrence: Option<OccurrenceRow>,
     /// Its place among its value's mentions in this document; `None` for a document view.
     pub position: Option<Position>,
+    /// The place marked: the mention's or the search hit's span in its segment; `None` for a
+    /// document view. A page view places its boxes from it.
+    pub hit: Option<SegmentHit>,
     /// The original file's state; `None` when no path is known.
     pub original: Option<Original>,
     pub document: DocumentInfo,
@@ -414,6 +418,7 @@ impl Project {
         Ok(Some(SourceContext {
             parent: self.parent_link(&document)?,
             position: Some(self.position(&occurrence)?),
+            hit: hit.map(|(segment_id, span)| SegmentHit { segment_id, span }),
             occurrence: Some(occurrence),
             original: Original::of(&document),
             document,
@@ -482,6 +487,7 @@ impl Project {
         Ok(Some(SourceContext {
             occurrence: None,
             position: None,
+            hit: None,
             original: Original::of(&document),
             parent: self.parent_link(&document)?,
             document,
@@ -489,7 +495,10 @@ impl Project {
         }))
     }
 
-    fn parent_link(&self, document: &DocumentInfo) -> Result<Option<DocumentLink>, ProjectError> {
+    pub(crate) fn parent_link(
+        &self,
+        document: &DocumentInfo,
+    ) -> Result<Option<DocumentLink>, ProjectError> {
         let Some(parent) = document.parent else {
             return Ok(None);
         };
@@ -544,7 +553,7 @@ impl Project {
         }
     }
 
-    fn body(
+    pub(crate) fn body(
         &self,
         document: &DocumentInfo,
         hit: Option<(i64, Span)>,

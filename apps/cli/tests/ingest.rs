@@ -61,6 +61,7 @@ fn cli_ingest_then_rebuild_keeps_connections() {
     assert_eq!(rebuilt["connections"], 1);
     assert_eq!(rebuilt["same_as_incremental"], true);
     assert_eq!(rebuilt["consistent"], true);
+    assert_eq!(rebuilt["search_index_in_step"], true);
 
     let text = cli(&["rebuild", "--project", p], &[]);
     assert!(text.status.success());

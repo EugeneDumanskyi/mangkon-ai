@@ -213,7 +213,7 @@ fn us_01_2_ac4_backup_then_migrate() {
     let (p, summary, entry) = ws.open_project(&dir).unwrap();
     assert_eq!(
         (summary.schema.from_version, summary.schema.to_version),
-        (3, 4)
+        (3, 5)
     );
     assert!(summary.schema.backup.unwrap().is_file());
     assert_eq!(entry.name, "Old case");

@@ -16,6 +16,8 @@
     "allow-occurrences",
     "allow-source-context",
     "allow-source-document",
+    "allow-search",
+    "allow-search-context",
     "allow-page-view",
     "allow-page-image",
     "allow-open-original",

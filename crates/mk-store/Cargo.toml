@@ -18,6 +18,7 @@ mk-workspace.workspace = true
 rusqlite = { version = "0.41.0", features = ["bundled"] }
 
 [dev-dependencies]
+mk-search.workspace = true
 mk-workspace.workspace = true
 proptest = "1.12.0"
 tempfile = "3.27.0"

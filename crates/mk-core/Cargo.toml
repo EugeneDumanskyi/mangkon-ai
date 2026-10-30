@@ -21,6 +21,7 @@ mk-parsers.workspace = true
 mk-identifiers.workspace = true
 mk-jobs.workspace = true
 mk-graph.workspace = true
+mk-search.workspace = true
 mk-store.workspace = true
 mk-worker.workspace = true
 serde = { version = "1.0.229", features = ["derive"], optional = true }

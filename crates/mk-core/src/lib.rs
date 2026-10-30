@@ -14,6 +14,8 @@
 //! - M3c: [`Workspace`] (the project registry in `app.db`: create, open, recent, locate,
 //!   forget); pause, resume and cancel on [`Project`] ([`Stop`]); the documents list, retry,
 //!   removing files, settings, relocating roots and the progress panel (`manage`).
+//! - M4a: keyword search ([`Project::search`]) and the source view at a hit
+//!   ([`Project::segment_context`]).
 
 mod control;
 mod events;
@@ -21,6 +23,7 @@ mod links;
 mod manage;
 mod page;
 mod project;
+mod search;
 pub mod stage_a;
 mod view;
 mod workers;
@@ -39,9 +42,10 @@ pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
 pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
+pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
     CancelOutcome, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow, FailedFile,
-    KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING,
+    KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING, SearchCursor, SearchFilter,
 };
 pub use mk_workspace::{ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
@@ -49,6 +53,7 @@ pub use project::{
     HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
     StageASummary, file_types, project_exists,
 };
+pub use search::{SEARCH_PAGE, SearchHit, SearchPage, SegmentHit};
 pub use view::{
     CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, DocumentLink,
     EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original, PageKind,

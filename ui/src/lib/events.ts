@@ -15,12 +15,14 @@ export function staleKeys(event: UiEvent): string[][] {
         ["documents"],
         ["roots"],
         ["recent"],
+        ["search"],
       ];
     case "ingestStarted":
     case "progressChanged":
       return [["progress"]];
+    // Search results change only when a run ends, so a list being read does not jump.
     case "ingestFinished":
-      return [["progress"], ["connections"], ["documents"]];
+      return [["progress"], ["connections"], ["documents"], ["search"]];
     case "error":
       return [];
   }

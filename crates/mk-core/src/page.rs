@@ -10,7 +10,7 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use mk_kernel::{ContentHash, Locator, Rect};
+use mk_kernel::{ContentHash, Locator, Rect, Span};
 use mk_parsers::Format;
 use mk_parsers::layout::to_display;
 use mk_parsers::pdf::engine::PageInfo;
@@ -19,6 +19,7 @@ use mk_worker::frame::{FrameReader, FrameWriter};
 use mk_worker::{PageImage, PagePoints, RenderPage};
 
 use crate::project::{Project, ProjectError};
+use crate::search::SegmentHit;
 use crate::view::{CHANGED_NOTE, Original, not_found_note};
 use crate::workers::{RenderError, Stopped, WorkerProcess};
 
@@ -234,6 +235,52 @@ impl Project {
         page: u32,
         mention: Option<i64>,
     ) -> Result<Option<PageView>, ProjectError> {
+        let hit = match mention {
+            Some(m) => self
+                .store()
+                .mention(m)?
+                .filter(|o| o.document_id == document),
+            None => None,
+        };
+        self.page_view_with(document, page, |_| hit.map(|o| o.locator))
+    }
+
+    /// [`page_view`](Self::page_view) with a search hit's boxes (US-06.1 AC4): `hit` is a
+    /// segment and a character span in its stored text, placed when that segment is this
+    /// page's and the span fits its text.
+    pub fn page_view_at(
+        &self,
+        document: i64,
+        page: u32,
+        hit: Option<SegmentHit>,
+    ) -> Result<Option<PageView>, ProjectError> {
+        self.page_view_with(document, page, |segment| {
+            let hit = hit.filter(|h| h.segment_id == segment.id)?;
+            let span = Span::new(
+                hit.span.start(),
+                hit.span.end(),
+                segment.text.chars().count(),
+            )
+            .ok()?;
+            match &segment.locator {
+                Locator::PdfText { page, .. } => Some(Locator::PdfText { page: *page, span }),
+                Locator::OcrText { page, .. } => segment
+                    .ocr
+                    .as_ref()?
+                    .locator(*page, &segment.text, span)
+                    .ok(),
+                _ => None,
+            }
+        })
+    }
+
+    /// The page view, its boxes from `hit`: the hit's locator given the page's text segment.
+    fn page_view_with(
+        &self,
+        document: i64,
+        page: u32,
+        hit: impl FnOnce(&WindowSegment) -> Option<Locator>,
+    ) -> Result<Option<PageView>, ProjectError> {
         let Some(doc) = self.store().document_info(document)? else {
             return Ok(None);
         };
@@ -301,16 +348,10 @@ impl Project {
             boxes: Vec::new(),
             note: None,
         };
-        let hit = match mention {
-            Some(m) => self.store().mention(m)?.filter(|o| {
-                o.document_id == document && o.locator.page().is_some_and(|p| p.get() == page)
-            }),
-            None => None,
-        };
-        if let Some(hit) = hit
-            && let Some(segment) = self.store().page_segment(document, page)?
+        if let Some(segment) = self.store().page_segment(document, page)?
+            && let Some(hit) = hit(&segment).filter(|l| l.page().is_some_and(|p| p.get() == page))
         {
-            match boxes(&image, &segment, &hit.locator) {
+            match boxes(&image, &segment, &hit) {
                 Ok(b) => view.boxes = b,
                 Err(note) => {
                     view.status = PageStatus::Changed;

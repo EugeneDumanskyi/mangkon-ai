@@ -150,8 +150,8 @@ fn report_ingest(project: &Project, opts: &IngestOptions) -> Result<(), ProjectE
     Ok(())
 }
 
-/// Rebuilds every derived row (ADR-0005) and reports whether they equal the incremental state.
-/// Fails when the project does not exist or the rebuilt rows do not match.
+/// Rebuilds every derived row (ADR-0005) and the keyword index (ADR-0010), and reports whether
+/// they equal the incremental state. Fails when the project does not exist or they do not match.
 pub fn rebuild(opts: &RebuildOptions) -> ExitCode {
     if !mk_core::project_exists(&opts.project) {
         return fail(&format!("no project in {}", opts.project.display()));
@@ -168,6 +168,7 @@ pub fn rebuild(opts: &RebuildOptions) -> ExitCode {
             "connections": r.connections,
             "same_as_incremental": r.same_as_incremental,
             "consistent": r.consistent,
+            "search_index_in_step": r.search_index_in_step,
         });
         println!(
             "{}",
@@ -180,8 +181,9 @@ pub fn rebuild(opts: &RebuildOptions) -> ExitCode {
         println!("Connections          {}", r.connections);
         println!("Same as before       {}", yes(r.same_as_incremental));
         println!("Matches the sources  {}", yes(r.consistent));
+        println!("Search index in step {}", yes(r.search_index_in_step));
     }
-    if r.same_as_incremental && r.consistent {
+    if r.same_as_incremental && r.consistent && r.search_index_in_step {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

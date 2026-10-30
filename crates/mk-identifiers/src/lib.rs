@@ -2,7 +2,9 @@
 //! (ADR-0002 rule 1).
 //!
 //! M2b has email ([`find_emails`]). The other identifier types, domains derived from emails
-//! (INV-ID-05) and custom patterns come in M4.
+//! (INV-ID-05) and custom patterns come in M4. [`luhn`] (M4a) backs the card-like checks.
+
+pub mod luhn;
 
 use std::sync::LazyLock;
 

@@ -23,6 +23,7 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [Model check](docs/09-model-check.md) | Local model quality and speed, embeddings with binary vectors, hardware tiers (spike S1) |
 | [Walking skeleton](docs/10-walking-skeleton.md) | Build time, app size, and the 100,000-row scroll test (M2 spikes) |
 | [Ingestion](docs/11-ingestion.md) | Streaming, PDF, OCR and page view measurements (M3) |
+| [Layer 1](docs/12-layer1.md) | Keyword search measurements (M4) |
 | [Install llama.cpp](docs/install-llama-cpp.md) | The `llama-server` prerequisite: minimum build, install options per OS |
 | [Add OCR languages](docs/install-ocr-languages.md) | English is built in; where other Tesseract language files go |
 

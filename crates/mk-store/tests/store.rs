@@ -123,7 +123,7 @@ fn inv_ws_03_newer_schema_is_never_opened() {
             err,
             StoreError::TooNew {
                 found: 99,
-                supported: 4,
+                supported: 5,
                 app_version: None,
             }
         ),
@@ -134,14 +134,14 @@ fn inv_ws_03_newer_schema_is_never_opened() {
     assert!(!dir.path().join("project.db-wal").exists());
 }
 
-const V5: Migration = Migration {
-    version: 5,
+const V6: Migration = Migration {
+    version: 6,
     name: "note",
     sql: "ALTER TABLE content ADD COLUMN note TEXT;",
 };
 
-const V5_BROKEN: Migration = Migration {
-    version: 5,
+const V6_BROKEN: Migration = Migration {
+    version: 6,
     name: "broken",
     sql: "ALTER TABLE content ADD COLUMN note TEXT; ALTER TABLE no_such_table ADD COLUMN x;",
 };
@@ -157,7 +157,7 @@ fn inv_ws_04_backup_before_migration() {
         let (store, report) = Store::open(&db, &backups).unwrap();
         assert_eq!(
             (report.from_version, report.to_version, report.backup),
-            (0, 4, None)
+            (0, 5, None)
         );
         ingest(&store, 1, &["a@x.example"]);
         ingest(&store, 2, &["a@x.example"]);
@@ -170,13 +170,13 @@ fn inv_ws_04_backup_before_migration() {
             )
             .unwrap();
     }
-    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS, &[V5]].concat()).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 5));
+    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS, &[V6]].concat()).unwrap();
+    assert_eq!((report.from_version, report.to_version), (5, 6));
     assert!(report.derived_rebuilt);
     let backup = report.backup.expect("backup written");
     let name = backup.file_name().unwrap().to_string_lossy().into_owned();
     assert!(
-        name.starts_with("project-v4-") && name.ends_with("Z.db"),
+        name.starts_with("project-v5-") && name.ends_with("Z.db"),
         "{name}"
     );
     let b = Connection::open(&backup).unwrap();
@@ -186,7 +186,7 @@ fn inv_ws_04_backup_before_migration() {
     let decisions: i64 = b
         .query_row("SELECT COUNT(*) FROM decision", [], |r| r.get(0))
         .unwrap();
-    assert_eq!((v, decisions), (4, 1));
+    assert_eq!((v, decisions), (5, 1));
     assert_eq!(count(&store, "decision"), 1);
     let derived = store.derived_state().unwrap();
     assert!(derived.connections["email:a@x.example"].ignored);
@@ -212,12 +212,12 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
         let (store, _) = Store::open(&db, &backups).unwrap();
         ingest(&store, 1, &["a@x.example"]);
     }
-    let err = Store::open_with(&db, &backups, &[MIGRATIONS, &[V5_BROKEN]].concat())
+    let err = Store::open_with(&db, &backups, &[MIGRATIONS, &[V6_BROKEN]].concat())
         .err()
         .expect("migration fails");
     let StoreError::MigrationFailed {
-        from: 4,
-        to: 5,
+        from: 5,
+        to: 6,
         backup: Some(backup),
         reason,
     } = &err
@@ -226,7 +226,7 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
     };
     assert!(backup.exists(), "{reason}");
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 4));
+    assert_eq!((report.from_version, report.to_version), (5, 5));
     assert_eq!(count(&store, "identifier_mention"), 1);
     let has_note = store
         .read_raw(|c| Ok(c.prepare("SELECT note FROM content").is_ok()))
@@ -457,10 +457,10 @@ fn segment_window_bounds_at_file_start_and_end() {
 }
 
 /// NFR-REL-11, INV-WS-04: an M2 project (v1) migrates through v2 (`segment.loc_ref`), v3
-/// (`segment.ocr`) and v4 (M3c queue columns) in one step with one backup, and every M2 segment
+/// (`segment.ocr`), v4 (M3c queue columns) and v5 (search index) in one step with one backup, and every M2 segment
 /// and mention stays readable.
 #[test]
-fn nfr_rel_11_migration_v1_to_v4_with_backup() {
+fn nfr_rel_11_migration_v1_to_v5_with_backup() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("project.db");
     let backups = dir.path().join("backups");
@@ -490,7 +490,7 @@ fn nfr_rel_11_migration_v1_to_v4_with_backup() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (1, 4));
+    assert_eq!((report.from_version, report.to_version), (1, 5));
     let backup = report.backup.expect("backup written");
     assert!(
         backup

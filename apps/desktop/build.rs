@@ -15,6 +15,8 @@ const COMMANDS: &[&str] = &[
     "occurrences",
     "source_context",
     "source_document",
+    "search",
+    "search_context",
     "page_view",
     "page_image",
     "open_original",

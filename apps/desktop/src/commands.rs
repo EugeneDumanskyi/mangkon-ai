@@ -389,6 +389,47 @@ pub async fn source_context(
         })
 }
 
+/// One page of keyword search results after `cursor`, best first (US-06.1 AC1–AC3). The
+/// query text is never logged.
+#[tauri::command]
+pub async fn search(
+    state: State<'_, AppState>,
+    query: ipc::SearchQuery,
+    cursor: Option<ipc::SearchCursor>,
+    limit: u32,
+) -> Result<ipc::SearchPage, IpcError> {
+    let after = cursor.map(mk_core::SearchCursor::from);
+    let page = state.current()?.project.search(
+        &query.text,
+        &query.filter(),
+        after.as_ref(),
+        limit.min(MAX_PAGE) as usize,
+    )?;
+    Ok(page.into())
+}
+
+/// The source around a search hit, the matched words marked (US-06.1 AC4).
+#[tauri::command]
+pub async fn search_context(
+    state: State<'_, AppState>,
+    segment_id: i64,
+    start: Option<u32>,
+    end: Option<u32>,
+) -> Result<ipc::SourceView, IpcError> {
+    let span = start.zip(end).map(|(s, e)| (s as usize, e as usize));
+    state
+        .current()?
+        .project
+        .segment_context(segment_id, span)?
+        .map(Into::into)
+        .ok_or_else(|| {
+            IpcError::new(
+                "gone",
+                "This place is no longer in the project. The file may have changed.",
+            )
+        })
+}
+
 /// A document from its start: an attachment, or the email it came in (US-08.1 AC4).
 #[tauri::command]
 pub async fn source_document(
@@ -408,20 +449,26 @@ pub async fn source_document(
         })
 }
 
-/// One page of a PDF or image document, with the boxes of `mention_id` when it is on that
-/// page (US-08.1 AC1–AC2). Renders the page on first view (render worker, page cache).
+/// One page of a PDF or image document, with the boxes of `mention_id` or of a search `hit`
+/// when it is on that page (US-08.1 AC1–AC2, US-06.1 AC4). Renders the page on first view
+/// (render worker, page cache).
 #[tauri::command]
 pub async fn page_view(
     state: State<'_, AppState>,
     document_id: i64,
     page: u32,
     mention_id: Option<i64>,
+    hit: Option<ipc::SegmentHit>,
 ) -> Result<ipc::PageView, IpcError> {
-    state
-        .current()?
-        .project
-        .page_view(document_id, page, mention_id)?
-        .map(Into::into)
+    let current = state.current()?;
+    let view = match (mention_id, hit) {
+        (None, Some(h)) => {
+            let hit = mk_core::SegmentHit::new(h.segment_id, h.start as usize, h.end as usize);
+            current.project.page_view_at(document_id, page, hit)?
+        }
+        _ => current.project.page_view(document_id, page, mention_id)?,
+    };
+    view.map(Into::into)
         .ok_or_else(|| IpcError::new("gone", "This page is no longer in the project."))
 }
 

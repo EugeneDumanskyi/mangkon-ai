@@ -784,6 +784,14 @@ pub(crate) fn commit_stage_a(
             }
         }
     }
+    // The keyword index (ADR-0010), in this transaction: one statement for the content's
+    // segments, not a trigger per row (S4: 1M rows in 2.8 s instead of 13.2 s).
+    conn.prepare_cached(
+        "INSERT INTO segment_fts (rowid, text)
+         SELECT s.id, s.text FROM document d JOIN segment s ON s.document_id = d.id
+         WHERE d.content_id = ?1",
+    )?
+    .execute([content])?;
     conn.prepare_cached(
         "UPDATE content SET warnings = ?2, failure_code = NULL, failure_reason = NULL,
                             failure_detail = NULL

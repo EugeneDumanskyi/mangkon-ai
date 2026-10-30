@@ -8,8 +8,9 @@
 //!    - every worker of the killed target exits by itself within 2 s (no orphans);
 //!    - reopening recovers at most one in-progress item per lane (lost work, NFR-REL-03) and
 //!      keeps every Done item the target had seen committed;
-//!    - the project is healthy: SQLite integrity and foreign keys, derived rows equal a rebuild
-//!      (NFR-REL-02), no item left in progress (NFR-REL-04);
+//!    - the project is healthy: SQLite integrity and foreign keys, derived rows equal a rebuild,
+//!      the keyword index matches the segment text (NFR-REL-02, ADR-0010), no item left in
+//!      progress (NFR-REL-04);
 //!    - ingesting again finishes the project, healthy, with the reference's derived rows and
 //!      Done/Failed counts.
 

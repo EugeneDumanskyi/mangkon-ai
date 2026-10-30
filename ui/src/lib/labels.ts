@@ -2,7 +2,7 @@ import type { Location } from "../ipc/bindings/Location";
 import type { OriginalFile } from "../ipc/bindings/OriginalFile";
 
 /**
- * "line 12", "row 3, column email", "row 3, column 2", "paragraph 4", "$.customers[12].phone",
+ * "line 12", "row 3, column email", "row 3, column 2", "row 3", "paragraph 4", "$.customers[12].phone",
  * "header From", "body part 1.2", "page 3", "page 3 (OCR)" (1-based for people).
  */
 export function locationLabel(location: Location): string {
@@ -15,6 +15,8 @@ export function locationLabel(location: Location): string {
         (location.columnIndex === null ? "?" : String(location.columnIndex + 1));
       return `row ${String(location.row)}, column ${column}`;
     }
+    case "row":
+      return `row ${String(location.row)}`;
     case "paragraph":
       return `paragraph ${String(location.paragraph)}`;
     case "htmlText":
@@ -37,6 +39,12 @@ export function fileName(path: string | null): string {
   if (path === null) return "(file no longer in the project)";
   const parts = path.split(/[\\/]/);
   return parts.at(-1) || path;
+}
+
+/** "12 results", or "50+ results" while there are more pages to load. */
+export function resultCount(loaded: number, more: boolean): string {
+  if (loaded === 1 && !more) return "1 result";
+  return `${loaded.toLocaleString()}${more ? "+" : ""} results`;
 }
 
 /** "1,234 sources" with the right plural. */
