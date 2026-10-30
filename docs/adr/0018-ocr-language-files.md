@@ -1,6 +1,6 @@
 # ADR-0018: OCR language files — English built in, others installed by the user
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-29
 - **Related:** INV-WS-06, US-01.6, US-02.2 AC2/AC4, NFR-SEC-02, NFR-SEC-11, NFR-LEG-05, NFR-RES-07, NFR-USE-01, requirements Q9, architecture §6, §10 gap A1, roadmap §4 #3, ADR-0014 (its M3 follow-up on language files), ADR-0015 (prerequisites over downloads), M3b, M3c
 

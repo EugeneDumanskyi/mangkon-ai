@@ -1,6 +1,6 @@
 # ADR-0017: PDFs and images — deadline per page, 30 s per OCR page
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-29
 - **Related:** NFR-REL-06/07, NFR-CAP-04, NFR-PERF-20/21, NFR-PERF-14, US-02.1, US-02.2, US-08.1 AC1–AC2, INV-PR-04, ADR-0007 (amends its time limit for PDFs and images), ADR-0011, ADR-0014, ADR-0016 (same rule for MBOX), M3b
 

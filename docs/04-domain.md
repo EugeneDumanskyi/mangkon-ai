@@ -997,7 +997,7 @@ After any re-run (re-scan, setting change, model change, app upgrade):
 | # | Question | Assumption in this doc |
 |---|---|---|
 | D1 | User decisions on entities must survive a model change. Entity IDs do not. Is "anchor by name key" OK? | Yes. Anchors are name keys and mention keys (9.5). |
-| D2 | An email and its own attachment are two documents. Does a value in both count as "2 sources"? It is a weak link. | Yes, it counts (follows Q1). Could rank lower later. Please decide. |
+| D2 | An email and its own attachment are two documents. Does a value in both count as "2 sources"? It is a weak link. | **Decided (2026-10-30):** yes, it counts (follows Q1). Could rank lower later. |
 | D3 | "Remove from project" on a path whose content is also at another path: remove the data or keep it? | Keep it. Only the path is removed (INV-CO-08). |
 | D4 | Should Missing documents still show in keyword search? | Yes, with a "Missing" badge. They are hidden only from connections. |
 | D5 | Mapping after headers changed: apply the old mapping to unchanged columns while waiting for review? | Yes, for unchanged headers only (7.3). |

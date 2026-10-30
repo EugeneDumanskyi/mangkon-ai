@@ -455,5 +455,5 @@ Milestones as in `06-roadmap.md`.
 | [0014](adr/0014-pdf-and-ocr-engines.md) | PDF and OCR engines: hayro and Tesseract | Accepted |
 | [0015](adr/0015-user-installed-llama-server.md) | Local model runtime: user-installed `llama-server` | Accepted |
 | [0016](adr/0016-streamed-file-limits.md) | Streamed files: deadline per unit of progress, staged commit | Accepted |
-| [0017](adr/0017-paged-file-deadlines.md) | PDFs and images: deadline per page, 30 s per OCR page | Proposed |
-| [0018](adr/0018-ocr-language-files.md) | OCR language files: English built in, others installed by the user | Proposed |
+| [0017](adr/0017-paged-file-deadlines.md) | PDFs and images: deadline per page, 30 s per OCR page | Accepted |
+| [0018](adr/0018-ocr-language-files.md) | OCR language files: English built in, others installed by the user | Accepted |
