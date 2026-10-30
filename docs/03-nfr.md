@@ -134,10 +134,10 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 |---|---|---|---|---|
 | NFR-QA-01 | Link recall (known links found) | ≥ 80% | Benchmark | Brief · M1: confirmed; name-key estimate 97.4% for every model (`09-model-check.md` §5.2). Measured in M4 (identifiers) and M7 (entities) |
 | NFR-QA-02 | Link precision (shown links correct) | ≥ 90% | Benchmark | Brief · M1: confirmed; name-key estimate 75.5% (4B), 90.2% (35B-A3B), 92.5% (Flash-Next). Measured in M4 and M7 |
-| NFR-QA-03 | Identifier precision, checksum types (IBAN, BTC, EVM checksum, TRON) | ≥ 99% | Benchmark | ASSUMPTION |
-| NFR-QA-04 | Identifier precision, other types (email, phone, domain, Solana) | ≥ 95% | Benchmark | ASSUMPTION |
-| NFR-QA-05 | Identifier recall, text-native files | ≥ 95% | Benchmark | ASSUMPTION |
-| NFR-QA-06 | Identifier recall, OCR'd files (clean 300 DPI scans) | ≥ 85% | Benchmark | ASSUMPTION |
+| NFR-QA-03 | Identifier precision, checksum types (IBAN, BTC, EVM checksum, TRON) | ≥ 99% | Benchmark | ASSUMPTION · M4b (`mangkon-cli bench`, TD-1): 100% on 81 mentions (`12-layer1.md` §3) |
+| NFR-QA-04 | Identifier precision, other types (email, phone, domain, Solana) | ≥ 95% | Benchmark | ASSUMPTION · M4b (TD-1): 99.7% on 475 mentions; the one false positive is a URL cut short by OCR (`12-layer1.md` §3) |
+| NFR-QA-05 | Identifier recall, text-native files | ≥ 95% | Benchmark | ASSUMPTION · M4b (TD-1): 98.6%; the misses are wrapped URLs and emails in the public PDFs (`12-layer1.md` §3) |
+| NFR-QA-06 | Identifier recall, OCR'd files (clean 300 DPI scans) | ≥ 85% | Benchmark | ASSUMPTION · M4b (TD-1): 100% on the clean tier (24 mentions). Not a target, reported: office scans 85.2%, poor scans 25.0%, all OCR'd 73.2% (`12-layer1.md` §3) |
 | NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · M3b (production path, `nfr_qa_07_ocr_accuracy_clean_tier`): 98.46% on 6 clean pages · ASSUMPTION (definition) |
 | NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% (micro, per-segment name keys, `09-model-check.md` §3.1) | Benchmark | M1: confirmed. Qwen3.5-4B 82.9% (minimum tier), 35B-A3B 91.2%, Flash-Next 93.4% → Layer 2 Experimental until M6 re-measures |
 | NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | M1: confirmed. 94.0% / 96.7% / 98.5% on reference text; OCR noise measured in M6 |
@@ -165,7 +165,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-SEC-11 | Downloaded models | SHA-256 checked against the catalog before use. The app downloads no binaries: `llama-server` is user-installed (ADR-0015) | Tamper test | Brief (checksum) · M1: binaries dropped from scope (ADR-0015) |
 | NFR-SEC-12 | Dependency vulnerabilities | 0 known critical/high at release (`cargo audit`, `npm audit`) | CI | ASSUMPTION |
 | NFR-SEC-13 | Data at rest | Not encrypted by the app in v0.1; README tells users to use OS disk encryption | README review | ASSUMPTION (Open question Q8) |
-| NFR-SEC-14 | Card-like numbers | Never shown unmasked in lists; never written to logs | UI + log check | ASSUMPTION |
+| NFR-SEC-14 | Card-like numbers | Never shown unmasked in lists; never written to logs | UI + log check | ASSUMPTION · M4a: masked in search snippets · M4b: stored only as a flag with the last 4 digits (`sensitive_flag`), never as an identifier key; masked in the Documents tab and viewer; the TD-1 benchmark checks no card digits reach a key. No log writer exists yet, so the log half is checked when `tracing` arrives (`12-layer1.md` §3) |
 
 ---
 
@@ -208,7 +208,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-MNT-02 | CI | Build + tests on macOS, Windows, Ubuntu for every PR | CI config | Brief |
 | NFR-MNT-03 | CI duration | ≤ 30 min per PR | CI logs | ASSUMPTION |
 | NFR-MNT-04 | Rust core test coverage | ≥ 70% line coverage | Coverage report in CI | ASSUMPTION |
-| NFR-MNT-05 | Layer 1 quality benchmark | Runs on every PR (no LLM needed); fails CI if recall/precision drop > 2 points | CI | ASSUMPTION |
+| NFR-MNT-05 | Layer 1 quality benchmark | Runs on every PR (no LLM needed); fails CI if recall/precision drop > 2 points | CI | ASSUMPTION · M4b: CI job `bench` builds TD-1 and runs `mangkon-cli bench --baseline crates/mk-bench/baseline/td1.json`; it fails when any metric falls more than 2 points or a negative check fails. Not yet seen running in CI (`12-layer1.md` §3) |
 | NFR-MNT-06 | LLM quality benchmark | Run manually before each release on RM-1 | Release checklist | ASSUMPTION |
 | NFR-MNT-07 | DB migrations | Forward-only, numbered, tested on a copy of TD-2 | CI | ASSUMPTION · M2b: TD-2 is local only (several GB, never committed), so CI tests migrations on generated fixtures and `corpus-gen td2 --copies 1`; the full-TD-2 migration test runs locally before a release and for M7 criterion 2 (ASSUMPTION). The runner (backup with `VACUUM INTO`, one transaction, refusal of a newer schema) is tested with injected migrations in `mk-store` |
 | NFR-MNT-08 | Code style | `rustfmt`, `clippy` (no warnings), ESLint + Prettier, TypeScript strict mode — enforced in CI | CI | ASSUMPTION |

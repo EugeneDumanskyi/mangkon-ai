@@ -9,7 +9,8 @@ export type ConnectionItem = {
  */
 key: string, 
 /**
- * The identifier type, for example `email`.
+ * The identifier type: `email`, `phone`, `phone_unnormalized` (no region, exact digits),
+ * `url`, `domain`, `iban`, `btc`, `evm`, `sol` or `tron`.
  */
 kind: string, value: string, sourceCount: number, fileTypeCount: number, mentionCount: number, 
 /**

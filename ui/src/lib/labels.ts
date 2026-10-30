@@ -34,6 +34,32 @@ export function locationLabel(location: Location): string {
   }
 }
 
+const KIND_LABELS: Record<string, string> = {
+  email: "email",
+  phone: "phone",
+  phone_unnormalized: "phone",
+  url: "URL",
+  domain: "domain",
+  iban: "IBAN",
+  btc: "Bitcoin address",
+  evm: "Ethereum-style address",
+  sol: "Solana address",
+  tron: "TRON address",
+};
+
+/** "IBAN", "Bitcoin address", … for an identifier type (US-04.1 – US-04.5). */
+export function kindLabel(kind: string): string {
+  return KIND_LABELS[kind] ?? kind;
+}
+
+/**
+ * The note on a phone number kept as written digits because the project has no phone region
+ * (US-04.2 AC3): it only connects with the same digits, not with the number in another form.
+ */
+export function kindWarning(kind: string): string | null {
+  return kind === "phone_unnormalized" ? "No region — exact digits only" : null;
+}
+
 /** The last part of a path, for either separator. */
 export function fileName(path: string | null): string {
   if (path === null) return "(file no longer in the project)";

@@ -11,15 +11,17 @@
 pub mod model;
 
 use std::cmp::{Ordering, Reverse};
+use std::collections::BTreeSet;
 use std::fmt;
 
-use mk_kernel::IdentifierKey;
+use mk_kernel::{IdentifierKey, IdentifierKind};
 
 /// Mentions below this confidence are "low confidence" (US-07.1 AC4, domain §9.1).
 pub const LOW_CONFIDENCE: f32 = 0.5;
 
 /// Counted mentions of one identifier (domain §9.1): mentions whose content is not Missing
-/// (INV-CO-07). The stop list and card-like rule come in M4.
+/// (INV-CO-07). The stop list applies to the whole identifier ([`StopList`]); card-like numbers
+/// are never identifiers at all (INV-ID-06), so they need no rule here.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct IdentifierStats {
     /// Distinct documents.
@@ -59,15 +61,41 @@ pub struct ConnectionRow {
     pub ignored: bool,
 }
 
+/// The project's domain stop list (US-04.3 AC3): registrable domains, lower case.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct StopList(BTreeSet<String>);
+
+impl StopList {
+    pub fn new(domains: impl IntoIterator<Item = String>) -> Self {
+        StopList(domains.into_iter().collect())
+    }
+
+    /// Whether `key` is a stop-list domain: stored, never a connection (INV-LK-03).
+    pub fn stops(&self, key: &IdentifierKey) -> bool {
+        key.kind() == IdentifierKind::Domain && self.0.contains(key.value())
+    }
+
+    /// The domain keys (`domain:<d>`) in one list and not the other: what a stop-list edit
+    /// must rebuild.
+    pub fn changed_keys(&self, other: &StopList) -> BTreeSet<String> {
+        self.0
+            .symmetric_difference(&other.0)
+            .map(|d| IdentifierKey::new(IdentifierKind::Domain, d.as_str()).to_string())
+            .collect()
+    }
+}
+
 /// The connection row for an identifier, if it is one (INV-LK-01): counted mentions in two or
-/// more distinct documents. Low confidence when every counted mention is below 0.5 (US-07.1
-/// AC4); ignored when an active ignore decision applies (US-07.4).
+/// more distinct documents, and not a stop-list domain (INV-LK-03). Low confidence when every
+/// counted mention is below 0.5 (US-07.1 AC4); ignored when an active ignore decision applies
+/// (US-07.4).
 pub fn connection_for(
     key: &IdentifierKey,
     stats: &IdentifierStats,
     ignored: bool,
+    stop_list: &StopList,
 ) -> Option<ConnectionRow> {
-    (stats.documents >= 2).then(|| ConnectionRow {
+    (stats.documents >= 2 && !stop_list.stops(key)).then(|| ConnectionRow {
         subject_key: key.to_string(),
         subject_kind: SubjectKind::Identifier,
         source_count: stats.documents,
@@ -247,10 +275,33 @@ mod tests {
     }
 
     /// INV-LK-01: a connection needs counted mentions in two or more documents.
+    /// INV-LK-03, US-04.3 AC3: a stop-list domain is never a connection; other kinds with the
+    /// same text are.
+    #[test]
+    fn inv_lk_03_stop_list_domain_is_not_a_connection() {
+        let stop = StopList::new(["gmail.com".to_string()]);
+        let domain = IdentifierKey::new(IdentifierKind::Domain, "gmail.com");
+        assert_eq!(connection_for(&domain, &stats(5, 1.0), false, &stop), None);
+        let email = IdentifierKey::new(IdentifierKind::Email, "a@gmail.com");
+        assert!(connection_for(&email, &stats(2, 1.0), false, &stop).is_some());
+        let other = IdentifierKey::new(IdentifierKind::Domain, "shell-co.example");
+        assert!(connection_for(&other, &stats(2, 1.0), false, &stop).is_some());
+        assert_eq!(
+            stop.changed_keys(&StopList::new(["shell-co.example".to_string()])),
+            BTreeSet::from([
+                "domain:gmail.com".to_string(),
+                "domain:shell-co.example".to_string()
+            ])
+        );
+    }
+
     #[test]
     fn inv_lk_01_two_documents_make_a_connection() {
-        assert_eq!(connection_for(&key(), &stats(1, 1.0), false), None);
-        let row = connection_for(&key(), &stats(2, 1.0), false).unwrap();
+        assert_eq!(
+            connection_for(&key(), &stats(1, 1.0), false, &StopList::default()),
+            None
+        );
+        let row = connection_for(&key(), &stats(2, 1.0), false, &StopList::default()).unwrap();
         assert_eq!(row.subject_key, "email:a@x.example");
         assert_eq!(
             (row.source_count, row.mention_count, row.low_confidence),
@@ -262,12 +313,12 @@ mod tests {
     #[test]
     fn us_07_1_ac4_low_confidence_when_all_below_half() {
         assert!(
-            connection_for(&key(), &stats(2, 0.49), false)
+            connection_for(&key(), &stats(2, 0.49), false, &StopList::default())
                 .unwrap()
                 .low_confidence
         );
         assert!(
-            !connection_for(&key(), &stats(2, 0.5), false)
+            !connection_for(&key(), &stats(2, 0.5), false, &StopList::default())
                 .unwrap()
                 .low_confidence
         );

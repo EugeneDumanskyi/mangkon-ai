@@ -134,7 +134,7 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `mime_part` | EML, MBOX | IMAP-style `part` number (`1`, `1.2`) and offsets in the decoded body text with line ends turned into `\n`. |
 | `html_source` | HTML | Offsets in the decoded source text. The app stores offsets in the extracted text instead (INV-CO-03, M3a), so tests match HTML mentions, and `mime_part` mentions in HTML-only email parts, by text in the document, not by offset. |
 
-**Identifier keys.** Emails lower-case; phones E.164; IBANs compact upper-case; BTC/SOL/TRON as printed (case matters); EVM lower-case `0x…`; URLs as printed; domains lower-case; custom patterns (`tender_ref`) as printed. Every email and URL mention has a second mention for its **domain**, with the same location and `derived_from` set, because the product derives domains (US-04.3). The domain is the registrable domain (`edis.usitc.gov` → `usitc.gov`), following the US-04.3 ASSUMPTION; the generator uses a short list of two-label suffixes in place of the full Public Suffix List.
+**Identifier keys.** Emails lower-case; phones E.164; IBANs compact upper-case; BTC/SOL/TRON as printed (case matters); EVM lower-case `0x…`; URLs as printed; domains lower-case; custom patterns (`tender_ref`) as printed. Every email and URL mention has a second mention for its **domain**, with the same location and `derived_from` set, because the product derives domains (US-04.3). The domain is the registrable domain (`edis.usitc.gov` → `usitc.gov`), following the US-04.3 ASSUMPTION; the generator uses a short list of two-label suffixes in place of the full Public Suffix List. M4b checked that the app's full list gives the same value for all 185 domain mentions (`12-layer1.md` §3).
 
 **Page text.** `page-text.jsonl` has one JSON object per line (schema: `crates/mk-bench/schema/page-text.schema.json`) for every page of every synthetic PDF and scan: the exact reference text (lines joined with `\n`), page size and unit (`pt` or `px`), `dpi`, `rotate`, `skew_deg`, and every word with its box. NFR-QA-07 (OCR character accuracy) and the M0b locator round trip read it.
 
@@ -232,7 +232,7 @@ No identifier in the corpus should belong to anyone real.
 | Type | Rule |
 |---|---|
 | Email, URL, domain | RFC 2606 / RFC 6761 names only: `*.example`. Message-IDs use `@localhost`. |
-| Phone | Ranges set aside for drama and testing: UK Ofcom `020 7946 0xxx` and `07700 900xxx`, US `555-01xx`, Australian ACMA `0491 570 xxx`. |
+| Phone | Ranges set aside for drama and testing: UK Ofcom `020 7946 0xxx`, `0113 496 0xxx` and `0161 496 0xxx`, US `555-01xx`, Australian ACMA `0491 570 xxx`. Generator v5 (M4b) dropped Ofcom's `07700 900xxx`: libphonenumber rejects that range on purpose, so no phone library reads it as valid. |
 | IBAN | Valid check digits with made-up bank codes starting with `Q` (GB, NL, MT). **ASSUMPTION:** no real bank uses these codes, so no real account matches. |
 | BTC, EVM, TRON, Solana | Encoded from seeded random bytes (ChaCha20, fixed seed). No private key exists for any of them. |
 | Card numbers | Only well-known public test numbers (`4111 1111 1111 1111`, `5555555555554444`). They are negatives: flag only, never identifiers (INV-ID-06). |
@@ -248,6 +248,14 @@ No identifier in the corpus should belong to anyone real.
 Brief §11 suggested public email sets "e.g. Enron" for messy real email. Those name private people, which NFR-LEG-04 rules out, so the public slice has **no email**. Messy email is synthetic only in v1. **Gap:** M3 revisits real-world email edge cases.
 
 **Partial annotation.** For public files the ground truth lists identifiers (emails, URLs, phone numbers, with the derived domains) per page, with `pdf_page` locations and no boxes. They were found with a pattern search on `pdftotext` output and checked by hand. URLs wrapped across two lines are left out, because their printed form is ambiguous. A phone number split over a line break is recorded with a single space. Names are not annotated. Scoring treats extra finds on these files as unknown, not wrong (M4). **ASSUMPTION.**
+
+**Benchmark (M4b).** `mangkon-cli bench` reads `synthetic/` into one project with the phone region GB and `public/` into another with US, and scores them together (US-14.3 AC2):
+
+- **Recall** counts every annotated mention; **precision** only the finds in fully annotated (synthetic) files. Text-native and OCR'd are scored apart. OCR'd recall is also given per scan tier, and NFR-QA-06 is measured on the `clean` tier, as it is defined.
+- **Matching**, per document, each find used once: text places (line, cell, paragraph, JSON value, header, MIME part) match on the same key at the same place and offsets; pages (`pdf_text`, `scan`, `pdf_page`) on the same key on the same page, as a multiset, since the boxes are the page view's business (ASSUMPTION M4b); `html_source` mentions and MIME-part mentions left over match on the same key anywhere in the document, one find standing for several (offsets differ, and an HTML alternative is stored as its plain part). `phone_unnormalized` scores as a phone.
+- **Negatives:** no bad-checksum value is stored; each card-like number is a flag in its document and its digits are in no key; a stop-list domain has no connection.
+- **Gate (NFR-MNT-05):** the run fails when a negative check fails, a stored document maps to no ground-truth document, or a recall or precision falls more than 2 points below `crates/mk-bench/baseline/td1.json`. Refresh the baseline with `--update-baseline` only on purpose, and commit it with the change that moved it.
+- **Known misses,** none of them on clean scans or in synthetic text: wrapped URLs and an email whose printed form drops or keeps a hyphen at a line end in the public PDFs; OCR damage on `office` and `poor` scans (`www_`, `TL` for `77`, letters swapped in crypto addresses); the bare domain `kestrel-advisory.example`, which has no URL or email and is derived only by the ground truth (no bare domains, ASSUMPTION M4b).
 
 | File | Source | Kind | Pages | Identifiers |
 |---|---|---|---|---|
@@ -286,12 +294,13 @@ cargo run -p corpus-gen --release -- generate                  # write td1/synth
 cargo run -p corpus-gen --release -- check                     # regenerate into a temp dir and compare with corpus.sha256
 cargo run -p corpus-gen --release -- td2                       # TD-2 from TD-1 (§11): 99 copies, 3.4 GB, about 1 min
 MK_REQUIRE_TESTDATA=1 cargo test -p mk-bench                   # US-14.3 AC1 and TD-3 manifest checks
+cargo run -p mangkon-cli --release -- bench --baseline crates/mk-bench/baseline/td1.json   # US-14.3 AC2, §8
 cargo run -p corpus-gen --release -- csv-rows --rows 1000000   # testdata/s2a/rows-1m.csv (75 MB) for spike S2a
 ```
 
 `csv-rows` writes one CSV with a header (`date,description,iban,amount,counterparty_email`) and the given number of rows, filled like TD-2's CSV rows (§11): 30 % carry an email. Like TD-2 it has no hash list.
 
-All commands take `--out DIR` (default `testdata`). `generate` needs the public slice, because the ground truth lists it. Without `testdata/`, the corpus tests print a notice and pass; `MK_REQUIRE_TESTDATA=1` makes them fail instead (for CI). After a change to the ground-truth types, `MK_BLESS=1 cargo test -p mk-bench` rewrites the schemas.
+All commands take `--out DIR` (default `testdata`). `generate` needs the public slice, because the ground truth lists it. Without `testdata/`, the corpus tests print a notice and pass; `MK_REQUIRE_TESTDATA=1` makes them fail instead. The CI job `bench` sets it: it caches the public slice by `public-manifest.json`, runs `fetch` on a miss, then `generate`, `check`, the corpus tests and the bench gate. `cargo xtask ci` runs the bench gate when `testdata/td1` is there and says it skipped it otherwise. After a change to the ground-truth types, `MK_BLESS=1 cargo test -p mk-bench` rewrites the schemas.
 
 The generator is deterministic: the same seed and `GENERATOR_VERSION` give the same bytes. It uses ChaCha20 with a fixed seed, `libm` for trigonometry, integer or plain float maths for image work, fixed ZIP timestamps, no clock and sorted output. Change `GENERATOR_VERSION` whenever an output byte changes on purpose, then run `generate` and commit the updated `corpus.sha256` with the code change.
 
@@ -307,6 +316,7 @@ Byte identity has been checked on Linux only (two runs, same bytes). **Cross-OS 
 - The public slice depends on government URLs staying up. `corpus-gen fetch` fails loudly when a file is gone or changed.
 - Real-world email is synthetic only (§8); revisit in M3.
 - Public files are partly annotated; full name annotation of real documents is out of scope for v0.1.
+- Identifier recall on `poor` scans is low (about 25 % in M4b) because of OCR damage; NFR-QA-06 covers clean scans only. Checksum-guided OCR correction for IBANs and crypto addresses is not planned yet.
 - **Gold gap found in M1:** "Port Authority", printed as a short form of Velmora Port Authority, is not annotated as a mention, so extractors get false positives for it (`09-model-check.md` §5.3). Add it to the entity's aliases at the next regeneration.
 
 ---

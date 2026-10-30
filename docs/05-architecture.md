@@ -255,14 +255,14 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | Worker protocol, framing, worker loop (ADR-0007) | `mk-worker` | Workers (the core uses its message types) |
 | BC-02 Corpus (OCR engine build) | `mk-tesseract-sys`: Tesseract + Leptonica from pinned sources, the only crate with `unsafe` (FFI, ADR-0002 rule 6, ADR-0014) | Workers (through `mk-parsers`) |
 | BC-03 Processing | `mk-jobs` | Core |
-| BC-04 Identifier extraction | `mk-identifiers` (pure functions) | Workers (Stage A), core (custom-pattern re-runs), CLI |
+| BC-04 Identifier extraction | `mk-identifiers` (pure functions; since M4b the finders use `phonenumber` and `psl`, whose libphonenumber metadata and Public Suffix List are compiled in, plus `bs58`, `bech32` and `sha3` for the crypto checksums) | Workers (Stage A), core (identifier re-runs after a region change, custom-pattern re-runs), CLI |
 | BC-05 Structured mapping | `mk-mapping` | Core |
 | BC-06 AI extraction | `mk-ai` | Core |
 | BC-07 Entity resolution, BC-08 Linking, BC-09 Curation | `mk-graph` (one crate: they rebuild together, ADR-0005) | Core |
 | BC-10 Search | `mk-search` (pure: query syntax to a safe FTS5 query, snippets, card-like masking; the FTS5 table and its reads are in `mk-store`, since M4a) | Core |
 | BC-11 Egress policy | `mk-egress` | Core |
 | BC-12 Model management | `mk-models` | Core |
-| BC-13 Evaluation | `mk-bench` | CLI only |
+| BC-13 Evaluation | `mk-bench` (ground truth, pure scoring and the baseline gate, since M4b) | CLI only |
 | Storage adapters, migrations | `mk-store` | Core |
 | App entry points | `apps/desktop` (Tauri), `apps/cli` | — |
 | Repo tasks (build, CI gates, layer check, notices) | `tools/xtask` | Developer machine, CI |
@@ -392,14 +392,14 @@ Rules:
 ## 8. Cross-cutting rules
 
 - **Errors.** Every failure has a stable code and a plain-English message (NFR-USE-05). Stack traces go to the log only.
-- **Logging.** `tracing` with a rotating file writer. No document text. Card-like numbers and `Authorization` headers are masked by a log filter (NFR-SEC-08, NFR-SEC-14).
+- **Logging.** `tracing` with a rotating file writer. No document text. Card-like numbers and `Authorization` headers are masked by a log filter (NFR-SEC-08, NFR-SEC-14). No log writer exists yet (M4b); until it does, card-like numbers are kept out of every key, derived row and output string instead.
 - **Migrations.** Forward-only, numbered SQL files. Backup with `VACUUM INTO` first. Derived tables are not migrated; they are dropped and rebuilt (NFR-MNT-07, NFR-REL-11).
 - **Network.** Only two crates may depend on an HTTP client: `mk-egress` (project data) and `mk-models` (downloads). `cargo-deny` enforces this in CI (ADR-0009).
 - **Testing.**
   - Domain crates: unit and property tests.
   - Parsers: golden files from TD-1 and TD-3.
   - Crash safety: an automated kill test that stops the app at random points (NFR-REL-02).
-  - Layer 1 benchmark: `mangkon-cli bench` on every PR, no LLM needed (NFR-MNT-05).
+  - Layer 1 benchmark: `mangkon-cli bench` on every PR, no LLM needed (NFR-MNT-05). Live since M4b: the CI `bench` job builds TD-1 and fails when a metric falls more than 2 points below `crates/mk-bench/baseline/td1.json` (results in `12-layer1.md` §3).
   - LLM benchmark: manual before each release (NFR-MNT-06).
 
 ---

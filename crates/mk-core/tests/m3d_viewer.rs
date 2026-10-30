@@ -53,10 +53,13 @@ fn texts(body: &SourceBody) -> Vec<&Marked> {
 
 /// The highlighted text of a view.
 fn hit(view: &SourceContext) -> String {
+    // A hit that wraps (a PDF line break inside an IBAN) is highlighted on each of its lines.
     texts(&view.body)
         .into_iter()
         .map(|m| m.hit.as_str())
-        .collect()
+        .filter(|h| !h.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// US-08.2 AC1: "Mention 2 of 3" with the mentions before and after, in reading order, counting
@@ -181,9 +184,14 @@ fn us_08_4_ac3_link_runs() {
     let csv = occ.iter().find(|o| o.file_type == "csv").unwrap();
     let v = p.source_context(csv.mention_id).unwrap().unwrap();
     assert!(texts(&v.body).iter().all(|m| m.runs.is_empty()));
-    // No URL identifier was made.
+    // Since M4b the link is a URL identifier too (US-04.3); `mailto:` is not one.
     let derived = p.store().derived_state().unwrap();
-    assert!(derived.identifiers.keys().all(|k| k.starts_with("email:")));
+    assert!(
+        derived
+            .identifiers
+            .contains_key("url:https://example.org/x?y=1")
+    );
+    assert!(!derived.identifiers.keys().any(|k| k.contains("mailto")));
 }
 
 /// US-08.5: a file whose size or modified time is not what was read shows as changed; the view

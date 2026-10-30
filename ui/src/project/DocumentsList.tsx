@@ -44,6 +44,14 @@ export function DocumentRowView({
               same content as {plural(row.otherPaths, "other path")}
             </span>
           )}
+          {row.cardLikeCount > 0 && (
+            <span
+              className="shrink-0 rounded border border-current px-1 text-xs"
+              title={`Card-like numbers: ${row.cardLikeCount.toLocaleString()}. Shown masked; never a connection.`}
+            >
+              Contains card-like number
+            </span>
+          )}
         </div>
         <div className="truncate font-mono text-xs text-muted" title={row.path}>
           {row.path}

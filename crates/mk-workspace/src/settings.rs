@@ -1,35 +1,67 @@
 //! Project settings (US-01.6, INV-WS-05/06/07).
 //!
-//! M3c: OCR languages take effect now; the phone region and the domain stop list are stored now
-//! and used by identifier extraction from M4. Custom patterns and model endpoints come in M4/M5.
+//! M3c: OCR languages. M4b: the phone region (identifier extraction) and the domain stop list
+//! (connections). Custom patterns and model endpoints come in M4c/M5.
 
 use std::fmt;
 
 /// The OCR language of a new project (INV-WS-05).
 pub const DEFAULT_OCR_LANGUAGE: &str = "eng";
 
-/// The standard domain stop list of a new project (INV-WS-05): common webmail domains, whose
-/// shared domain says nothing about a link. ASSUMPTION (M3c): this list; M4 finishes it.
+/// The standard domain stop list of a new project (INV-WS-05, US-04.3 AC3): big free-mail and
+/// platform domains, whose shared domain says nothing about a link. Registrable domains, sorted.
+/// ASSUMPTION (M4b): these 50.
 pub const DEFAULT_STOP_LIST: &[&str] = &[
+    "126.com",
     "163.com",
+    "amazon.com",
     "aol.com",
+    "apple.com",
+    "bing.com",
+    "dropbox.com",
+    "facebook.com",
+    "fastmail.com",
+    "github.com",
     "gmail.com",
     "gmx.com",
     "gmx.de",
+    "gmx.net",
+    "google.com",
     "googlemail.com",
+    "hotmail.co.uk",
     "hotmail.com",
     "icloud.com",
+    "instagram.com",
+    "linkedin.com",
     "live.com",
+    "mac.com",
+    "mail.com",
     "mail.ru",
     "me.com",
+    "microsoft.com",
     "msn.com",
+    "naver.com",
+    "office.com",
     "outlook.com",
+    "pm.me",
     "proton.me",
     "protonmail.com",
     "qq.com",
+    "rambler.ru",
+    "t.me",
+    "tiktok.com",
+    "tutanota.com",
+    "twitter.com",
     "web.de",
+    "whatsapp.com",
+    "x.com",
+    "yahoo.co.uk",
     "yahoo.com",
+    "yandex.com",
     "yandex.ru",
+    "youtube.com",
+    "zoho.com",
+    "zoom.us",
 ];
 
 /// A project's one settings set (INV-WS-05).
@@ -84,11 +116,14 @@ pub struct Reprocess {
     /// Stage A again for contents with OCR'd pages and for contents that failed for a missing
     /// OCR language.
     pub ocr: bool,
+    /// Identifiers found again from the stored text of every content (the phone region
+    /// changed, US-04.2 AC2). No file is read again.
+    pub identifiers: bool,
 }
 
 impl Reprocess {
     pub fn is_empty(&self) -> bool {
-        !self.ocr
+        !self.ocr && !self.identifiers
     }
 }
 
@@ -162,11 +197,13 @@ impl ProjectSettings {
     }
 
     /// What changing from `old` to `new` needs re-done (INV-WS-07). A new OCR language set
-    /// re-reads the files that were OCR'd or failed for a missing language. The phone region and
-    /// the stop list change nothing already read in M3: identifier extraction uses them from M4.
+    /// re-reads the files that were OCR'd or failed for a missing language; a new phone region
+    /// finds identifiers again in the stored text. The stop list needs nothing re-done: it
+    /// applies to connections when they are derived (INV-LK-03), right away.
     pub fn affected_by(old: &ProjectSettings, new: &ProjectSettings) -> Reprocess {
         Reprocess {
             ocr: old.ocr_languages != new.ocr_languages,
+            identifiers: old.phone_region != new.phone_region,
         }
     }
 }
@@ -240,23 +277,47 @@ mod tests {
         assert!(domain("münchen.de").is_ok());
     }
 
-    /// INV-WS-07: only an OCR language change re-runs anything in M3.
+    /// INV-WS-07: OCR languages re-read OCR'd files, the region re-runs identifiers, the stop
+    /// list re-runs nothing.
     #[test]
     fn inv_ws_07_only_dependent_steps() {
         let old = ProjectSettings::default();
-        let region = ProjectSettings {
-            phone_region: Some("DE".into()),
+        let stop = ProjectSettings {
             domain_stop_list: vec![],
             ..old.clone()
         };
-        assert!(ProjectSettings::affected_by(&old, &region).is_empty());
+        assert!(ProjectSettings::affected_by(&old, &stop).is_empty());
+        let region = ProjectSettings {
+            phone_region: Some("DE".into()),
+            ..old.clone()
+        };
+        assert_eq!(
+            ProjectSettings::affected_by(&old, &region),
+            Reprocess {
+                ocr: false,
+                identifiers: true
+            }
+        );
         let ocr = ProjectSettings {
             ocr_languages: vec!["eng".into(), "deu".into()],
             ..old.clone()
         };
         assert_eq!(
             ProjectSettings::affected_by(&old, &ocr),
-            Reprocess { ocr: true }
+            Reprocess {
+                ocr: true,
+                identifiers: false
+            }
         );
+    }
+
+    /// US-04.3 AC3: about 50 domains, in stored form (sorted, lower case, valid).
+    #[test]
+    fn us_04_3_ac3_default_stop_list() {
+        let d = ProjectSettings::default();
+        assert!((45..=60).contains(&d.domain_stop_list.len()));
+        for domain in ["gmail.com", "outlook.com", "yahoo.com", "google.com"] {
+            assert!(d.domain_stop_list.contains(&domain.to_string()), "{domain}");
+        }
     }
 }

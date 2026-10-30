@@ -23,7 +23,8 @@ ingesting: boolean,
  */
 paused: boolean, 
 /**
- * `"A"` while Stage A work is open; `null` when the queue is empty.
+ * `"identifiers"` while identifiers are found again from stored text (a region change,
+ * US-04.2 AC2), `"A"` while Stage A work is open; `null` when the queue is empty.
  */
 stage: string | null, 
 /**

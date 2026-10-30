@@ -1,0 +1,275 @@
+{
+  "rows": {
+    "all/all": {
+      "expected": 556,
+      "recalled": 530,
+      "found": 364,
+      "correct": 363
+    },
+    "all/ocr": {
+      "expected": 71,
+      "recalled": 52,
+      "found": 53,
+      "correct": 52
+    },
+    "all/ocr-clean": {
+      "expected": 24,
+      "recalled": 24,
+      "found": 24,
+      "correct": 24
+    },
+    "all/ocr-office": {
+      "expected": 27,
+      "recalled": 23,
+      "found": 24,
+      "correct": 23
+    },
+    "all/ocr-poor": {
+      "expected": 20,
+      "recalled": 5,
+      "found": 5,
+      "correct": 5
+    },
+    "all/text": {
+      "expected": 485,
+      "recalled": 478,
+      "found": 311,
+      "correct": 311
+    },
+    "btc/all": {
+      "expected": 6,
+      "recalled": 4,
+      "found": 4,
+      "correct": 4
+    },
+    "btc/ocr": {
+      "expected": 2,
+      "recalled": 0,
+      "found": 0,
+      "correct": 0
+    },
+    "btc/text": {
+      "expected": 4,
+      "recalled": 4,
+      "found": 4,
+      "correct": 4
+    },
+    "checksum/all": {
+      "expected": 81,
+      "recalled": 73,
+      "found": 73,
+      "correct": 73
+    },
+    "domain/all": {
+      "expected": 185,
+      "recalled": 181,
+      "found": 117,
+      "correct": 117
+    },
+    "domain/ocr": {
+      "expected": 20,
+      "recalled": 16,
+      "found": 16,
+      "correct": 16
+    },
+    "domain/text": {
+      "expected": 165,
+      "recalled": 165,
+      "found": 101,
+      "correct": 101
+    },
+    "email/all": {
+      "expected": 121,
+      "recalled": 116,
+      "found": 87,
+      "correct": 87
+    },
+    "email/ocr": {
+      "expected": 13,
+      "recalled": 11,
+      "found": 11,
+      "correct": 11
+    },
+    "email/text": {
+      "expected": 108,
+      "recalled": 105,
+      "found": 76,
+      "correct": 76
+    },
+    "evm/all": {
+      "expected": 4,
+      "recalled": 3,
+      "found": 3,
+      "correct": 3
+    },
+    "evm/ocr": {
+      "expected": 1,
+      "recalled": 0,
+      "found": 0,
+      "correct": 0
+    },
+    "evm/text": {
+      "expected": 3,
+      "recalled": 3,
+      "found": 3,
+      "correct": 3
+    },
+    "iban/all": {
+      "expected": 68,
+      "recalled": 64,
+      "found": 64,
+      "correct": 64
+    },
+    "iban/ocr": {
+      "expected": 13,
+      "recalled": 9,
+      "found": 9,
+      "correct": 9
+    },
+    "iban/text": {
+      "expected": 55,
+      "recalled": 55,
+      "found": 55,
+      "correct": 55
+    },
+    "other/all": {
+      "expected": 475,
+      "recalled": 457,
+      "found": 291,
+      "correct": 290
+    },
+    "phone/all": {
+      "expected": 104,
+      "recalled": 103,
+      "found": 56,
+      "correct": 56
+    },
+    "phone/ocr": {
+      "expected": 13,
+      "recalled": 12,
+      "found": 12,
+      "correct": 12
+    },
+    "phone/text": {
+      "expected": 91,
+      "recalled": 91,
+      "found": 44,
+      "correct": 44
+    },
+    "sol/all": {
+      "expected": 2,
+      "recalled": 1,
+      "found": 1,
+      "correct": 1
+    },
+    "sol/ocr": {
+      "expected": 1,
+      "recalled": 0,
+      "found": 0,
+      "correct": 0
+    },
+    "sol/text": {
+      "expected": 1,
+      "recalled": 1,
+      "found": 1,
+      "correct": 1
+    },
+    "tron/all": {
+      "expected": 3,
+      "recalled": 2,
+      "found": 2,
+      "correct": 2
+    },
+    "tron/ocr": {
+      "expected": 1,
+      "recalled": 0,
+      "found": 0,
+      "correct": 0
+    },
+    "tron/text": {
+      "expected": 2,
+      "recalled": 2,
+      "found": 2,
+      "correct": 2
+    },
+    "url/all": {
+      "expected": 63,
+      "recalled": 56,
+      "found": 30,
+      "correct": 29
+    },
+    "url/ocr": {
+      "expected": 7,
+      "recalled": 4,
+      "found": 5,
+      "correct": 4
+    },
+    "url/text": {
+      "expected": 56,
+      "recalled": 52,
+      "found": 25,
+      "correct": 25
+    }
+  },
+  "targets": [
+    {
+      "id": "NFR-QA-03",
+      "what": "precision, checksum types",
+      "goal": 99.0,
+      "value": 100.0,
+      "met": true
+    },
+    {
+      "id": "NFR-QA-04",
+      "what": "precision, other types",
+      "goal": 95.0,
+      "value": 99.65635738831615,
+      "met": true
+    },
+    {
+      "id": "NFR-QA-05",
+      "what": "recall, text-native",
+      "goal": 95.0,
+      "value": 98.55670103092784,
+      "met": true
+    },
+    {
+      "id": "NFR-QA-06",
+      "what": "recall, OCR'd clean scans",
+      "goal": 85.0,
+      "value": 100.0,
+      "met": true
+    }
+  ],
+  "negative_failures": [],
+  "negatives_checked": 8,
+  "unmapped": [],
+  "missed": [
+    "m0440",
+    "m0336",
+    "m0337",
+    "m0338",
+    "m0364",
+    "m0344",
+    "m0345",
+    "m0310",
+    "m0311",
+    "m0312",
+    "m0313",
+    "m0314",
+    "m0319",
+    "m0339",
+    "m0340",
+    "m0417",
+    "m0418",
+    "m0423",
+    "m0388",
+    "m0939",
+    "m0953",
+    "m0965",
+    "m0977",
+    "m0995",
+    "m1018",
+    "m1020"
+  ]
+}

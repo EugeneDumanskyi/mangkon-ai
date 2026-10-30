@@ -8,4 +8,9 @@ export type SettingsSaved = {
 /**
  * Files with OCR'd pages, or that failed for a missing OCR language.
  */
-reprocessOcr: boolean, };
+reprocessOcr: boolean, 
+/**
+ * The phone region changed: identifiers can be found again from the stored text
+ * (US-04.2 AC2). No file is read again.
+ */
+rerunIdentifiers: boolean, };

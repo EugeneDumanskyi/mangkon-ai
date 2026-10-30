@@ -280,13 +280,16 @@ impl Story {
             add(id, key(IdType::Email, v), forms);
         }
 
-        // Phones: Ofcom drama ranges (020 7946 0xxx, 07700 900xxx), US 555-01xx, ACMA 0491 570 xxx.
+        // Phones: Ofcom drama ranges (020 7946 0xxx, 0113 496 0xxx, 0161 496 0xxx), US 555-01xx,
+        // ACMA 0491 570 xxx. v5: no 07700 900xxx (libphonenumber rejects that range on purpose),
+        // and the US numbers' second form is international, as every TD-1 file with one is read
+        // under region GB (docs/07-test-corpus.md §8).
         for (id, e164, intl, national) in [
             (
                 "ph_daniel_mob",
-                "+447700900461",
-                "+44 7700 900461",
-                "07700 900461",
+                "+441134960461",
+                "+44 113 496 0461",
+                "0113 496 0461",
             ),
             (
                 "ph_bwl_office",
@@ -310,13 +313,13 @@ impl Story {
                 "ph_kestrel",
                 "+12025550147",
                 "+1 202-555-0147",
-                "(202) 555-0147",
+                "+1 (202) 555-0147",
             ),
             (
                 "ph_gregor",
                 "+12125550183",
                 "+1 212-555-0183",
-                "(212) 555-0183",
+                "+1 (212) 555-0183",
             ),
             (
                 "ph_saltmarsh",
@@ -326,9 +329,9 @@ impl Story {
             ),
             (
                 "ph_lena",
-                "+447700900877",
-                "+44 7700 900877",
-                "07700 900877",
+                "+441614960877",
+                "+44 161 496 0877",
+                "0161 496 0877",
             ),
         ] {
             add(

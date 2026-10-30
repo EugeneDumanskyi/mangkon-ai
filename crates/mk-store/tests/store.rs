@@ -62,6 +62,7 @@ fn output(emails: &[&str]) -> StageAOutput {
     StageAOutput {
         documents: vec![doc],
         mentions,
+        card_flags: Vec::new(),
         warnings: Vec::new(),
     }
 }
@@ -123,7 +124,7 @@ fn inv_ws_03_newer_schema_is_never_opened() {
             err,
             StoreError::TooNew {
                 found: 99,
-                supported: 5,
+                supported: 6,
                 app_version: None,
             }
         ),
@@ -134,14 +135,14 @@ fn inv_ws_03_newer_schema_is_never_opened() {
     assert!(!dir.path().join("project.db-wal").exists());
 }
 
-const V6: Migration = Migration {
-    version: 6,
+const V7: Migration = Migration {
+    version: 7,
     name: "note",
     sql: "ALTER TABLE content ADD COLUMN note TEXT;",
 };
 
-const V6_BROKEN: Migration = Migration {
-    version: 6,
+const V7_BROKEN: Migration = Migration {
+    version: 7,
     name: "broken",
     sql: "ALTER TABLE content ADD COLUMN note TEXT; ALTER TABLE no_such_table ADD COLUMN x;",
 };
@@ -157,7 +158,7 @@ fn inv_ws_04_backup_before_migration() {
         let (store, report) = Store::open(&db, &backups).unwrap();
         assert_eq!(
             (report.from_version, report.to_version, report.backup),
-            (0, 5, None)
+            (0, 6, None)
         );
         ingest(&store, 1, &["a@x.example"]);
         ingest(&store, 2, &["a@x.example"]);
@@ -170,13 +171,13 @@ fn inv_ws_04_backup_before_migration() {
             )
             .unwrap();
     }
-    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS, &[V6]].concat()).unwrap();
-    assert_eq!((report.from_version, report.to_version), (5, 6));
+    let (store, report) = Store::open_with(&db, &backups, &[MIGRATIONS, &[V7]].concat()).unwrap();
+    assert_eq!((report.from_version, report.to_version), (6, 7));
     assert!(report.derived_rebuilt);
     let backup = report.backup.expect("backup written");
     let name = backup.file_name().unwrap().to_string_lossy().into_owned();
     assert!(
-        name.starts_with("project-v5-") && name.ends_with("Z.db"),
+        name.starts_with("project-v6-") && name.ends_with("Z.db"),
         "{name}"
     );
     let b = Connection::open(&backup).unwrap();
@@ -186,7 +187,7 @@ fn inv_ws_04_backup_before_migration() {
     let decisions: i64 = b
         .query_row("SELECT COUNT(*) FROM decision", [], |r| r.get(0))
         .unwrap();
-    assert_eq!((v, decisions), (5, 1));
+    assert_eq!((v, decisions), (6, 1));
     assert_eq!(count(&store, "decision"), 1);
     let derived = store.derived_state().unwrap();
     assert!(derived.connections["email:a@x.example"].ignored);
@@ -212,12 +213,12 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
         let (store, _) = Store::open(&db, &backups).unwrap();
         ingest(&store, 1, &["a@x.example"]);
     }
-    let err = Store::open_with(&db, &backups, &[MIGRATIONS, &[V6_BROKEN]].concat())
+    let err = Store::open_with(&db, &backups, &[MIGRATIONS, &[V7_BROKEN]].concat())
         .err()
         .expect("migration fails");
     let StoreError::MigrationFailed {
-        from: 5,
-        to: 6,
+        from: 6,
+        to: 7,
         backup: Some(backup),
         reason,
     } = &err
@@ -226,7 +227,7 @@ fn inv_ws_04_failed_migration_keeps_backup_and_old_version() {
     };
     assert!(backup.exists(), "{reason}");
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (5, 5));
+    assert_eq!((report.from_version, report.to_version), (6, 6));
     assert_eq!(count(&store, "identifier_mention"), 1);
     let has_note = store
         .read_raw(|c| Ok(c.prepare("SELECT note FROM content").is_ok()))
@@ -457,10 +458,10 @@ fn segment_window_bounds_at_file_start_and_end() {
 }
 
 /// NFR-REL-11, INV-WS-04: an M2 project (v1) migrates through v2 (`segment.loc_ref`), v3
-/// (`segment.ocr`), v4 (M3c queue columns) and v5 (search index) in one step with one backup, and every M2 segment
-/// and mention stays readable.
+/// (`segment.ocr`), v4 (M3c queue columns), v5 (search index) and v6 (card-like flags) in one
+/// step with one backup, and every M2 segment and mention stays readable.
 #[test]
-fn nfr_rel_11_migration_v1_to_v5_with_backup() {
+fn nfr_rel_11_migration_v1_to_v6_with_backup() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("project.db");
     let backups = dir.path().join("backups");
@@ -490,7 +491,7 @@ fn nfr_rel_11_migration_v1_to_v5_with_backup() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (1, 5));
+    assert_eq!((report.from_version, report.to_version), (1, 6));
     let backup = report.backup.expect("backup written");
     assert!(
         backup
@@ -695,4 +696,63 @@ fn us_02_2_ac4_ocr_languages_setting() {
     }
     let (store, _) = Store::open(&db, &backups).unwrap();
     assert_eq!(store.ocr_languages().unwrap(), "eng+fra");
+}
+
+/// M4b, INV-PR-04/05: the identifier re-run replaces one content's mentions per transaction and
+/// moves its cursor in the same one; a re-run started again since the caller read the cursor
+/// (a second region change) does nothing, and the old run cannot mark it finished.
+#[test]
+fn identifier_rerun_is_cursor_checked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = open(tmp.path());
+    ingest(&store, 1, &["a@x.example"]);
+    ingest(&store, 2, &["a@x.example", "b@x.example"]);
+    let contents = store.rerun_contents(0, 10).unwrap();
+    assert_eq!(contents.len(), 2);
+    // Nothing started: no cursor to match.
+    assert_eq!(
+        store
+            .rerun_identifiers(0, contents[0], |_| Default::default())
+            .unwrap(),
+        None
+    );
+    store.begin_identifier_rerun().unwrap();
+    assert_eq!(store.identifier_state().unwrap().1, Some(0));
+    // Each segment found again as `<name>-new@x.example`.
+    let find = |s: &mk_store::StoredSegment| mk_store::SegmentFinds {
+        mentions: vec![mk_store::FoundMention {
+            locator: s.locator.clone(),
+            raw: s.text.clone(),
+            key: key(&s.text.replace('@', "-new@")),
+            confidence: 1.0,
+        }],
+        card_flags: Vec::new(),
+    };
+    let out = store
+        .rerun_identifiers(0, contents[0], find)
+        .unwrap()
+        .unwrap();
+    assert_eq!(out.mentions, 1);
+    assert_eq!(store.identifier_state().unwrap().1, Some(contents[0]));
+    // Started again before the second content: the old cursor is refused.
+    store.begin_identifier_rerun().unwrap();
+    assert_eq!(
+        store
+            .rerun_identifiers(contents[0], contents[1], find)
+            .unwrap(),
+        None
+    );
+    assert!(!store.finish_identifier_rerun(Some(contents[0]), 1).unwrap());
+    for (after, c) in [(0, contents[0]), (contents[0], contents[1])] {
+        store.rerun_identifiers(after, c, find).unwrap().unwrap();
+    }
+    assert!(store.finish_identifier_rerun(Some(contents[1]), 1).unwrap());
+    assert_eq!(store.identifier_state().unwrap(), (Some(1), None));
+    let derived = store.derived_state().unwrap();
+    assert_eq!(
+        derived.connections.keys().collect::<Vec<_>>(),
+        ["email:a-new@x.example"]
+    );
+    assert!(!derived.identifiers.contains_key("email:a@x.example"));
+    assert_eq!(derived, mk_graph::model::reference(&store.facts().unwrap()));
 }

@@ -1,4 +1,5 @@
-# CI for every pull request and push to main (NFR-MNT-02/03/08/09, M2 acceptance criteria 5 and 6).
+# CI for every pull request and push to main (NFR-MNT-02/03/05/08/09, M2 acceptance criteria 5 and 6,
+# M4 acceptance criterion 7).
 # The same gates run locally with `cargo xtask ci`.
 name: CI
 
@@ -106,3 +107,41 @@ jobs:
         run: cargo xtask check-bindings
       - name: THIRD_PARTY_NOTICES is current (NFR-LEG-05)
         run: cargo xtask notices --check
+
+  bench:
+    name: TD-1 benchmark gate
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned native sources
+        uses: actions/cache@v6
+        with:
+          path: target/mk-native-cache
+          key: native-${{ hashFiles('crates/mk-tesseract-sys/native/sources.toml') }}
+      # The public slice is downloaded once per manifest; the synthetic files are generated on
+      # every run and checked against corpus.sha256 (docs/07-test-corpus.md §9).
+      - name: Cache the TD-1 public slice
+        id: public
+        uses: actions/cache@v6
+        with:
+          path: testdata/td1/public
+          key: td1-public-${{ hashFiles('tools/corpus-gen/public-manifest.json') }}
+      - name: Fetch the TD-1 public slice
+        if: steps.public.outputs.cache-hit != 'true'
+        run: cargo run --locked --release -p corpus-gen -- fetch
+      - name: Generate and check TD-1 and TD-3
+        run: |
+          cargo run --locked --release -p corpus-gen -- generate
+          cargo run --locked --release -p corpus-gen -- check
+      - name: Tests on the corpus
+        env:
+          MK_REQUIRE_TESTDATA: "1"
+        run: cargo test --locked -p mk-bench -p mk-identifiers -p mk-core -p mangkon-cli
+      # US-14.3 AC2, NFR-MNT-05: fails when a metric falls more than 2 points below the baseline
+      # or a negative check fails.
+      - name: Identifier benchmark against the baseline
+        run: cargo run --locked --release -p mangkon-cli -- bench --baseline crates/mk-bench/baseline/td1.json

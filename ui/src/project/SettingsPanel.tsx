@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { Settings } from "../ipc/bindings/Settings";
+import type { SettingsSaved } from "../ipc/bindings/SettingsSaved";
 import type { SourceRoot } from "../ipc/bindings/SourceRoot";
-import { ocrChoices, parseDomains } from "../lib/forms";
+import { ocrChoices, parseDomains, reprocessQuestion } from "../lib/forms";
 import { plural } from "../lib/labels";
 
 const button = "rounded border border-border px-2 py-0.5 text-sm disabled:opacity-50";
@@ -61,8 +62,8 @@ export function SettingsForm({
       <label className="flex flex-col gap-1">
         <span className="font-semibold">Phone region</span>
         <span className="text-sm text-muted">
-          Two letters, such as DE, for phone numbers written without a country code. Saved now;
-          phone numbers are found in a later version.
+          Two letters, such as DE, for phone numbers written without a country code. Left empty,
+          such numbers are kept as written digits and only match the same digits.
         </span>
         <input
           className={`${input} w-24 uppercase`}
@@ -77,7 +78,7 @@ export function SettingsForm({
         <span className="font-semibold">Domains that are not connections</span>
         <span className="text-sm text-muted">
           One per line. A domain on this list, such as a webmail domain, is never shown as a
-          connection. Saved now; used once domains are found, in a later version.
+          connection. Changes apply at once.
         </span>
         <textarea
           className={`${input} h-32 font-mono`}
@@ -158,26 +159,66 @@ export function SourceRootRow({
   );
 }
 
+/** "Re-process affected files now?" after a settings change (US-01.6 AC3, US-04.2 AC2). */
+export function ReprocessPrompt({
+  saved,
+  busy,
+  onReprocess,
+  onLater,
+}: {
+  saved: SettingsSaved;
+  busy: boolean;
+  onReprocess: () => void;
+  onLater: () => void;
+}) {
+  const question = reprocessQuestion(saved);
+  if (question === null) return null;
+  return (
+    <div role="alertdialog" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+      {question}
+      {saved.rerunIdentifiers && (
+        <span className="text-muted">
+          Phone numbers are found again from the stored text; no file is read again.
+        </span>
+      )}
+      <button type="button" className={button} disabled={busy} onClick={onReprocess}>
+        Re-process
+      </button>
+      <button type="button" className={button} onClick={onLater}>
+        Later
+      </button>
+    </div>
+  );
+}
+
 /** Project settings and sources (US-01.6, D12). */
 export function SettingsPanel() {
   const client = useQueryClient();
   const info = useQuery({ queryKey: ["settings"], queryFn: commands.projectSettings });
   const roots = useQuery({ queryKey: ["roots"], queryFn: commands.sourceRoots });
-  const [askReprocess, setAskReprocess] = useState(false);
+  const [askReprocess, setAskReprocess] = useState<SettingsSaved | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const save = useMutation({
     mutationFn: commands.saveSettings,
     onSuccess: (r) => {
-      setAskReprocess(r.reprocessOcr);
-      setSaved(r.reprocessOcr ? null : "Saved.");
+      const ask = reprocessQuestion(r) !== null;
+      setAskReprocess(ask ? r : null);
+      setSaved(ask ? null : "Saved.");
       void client.invalidateQueries({ queryKey: ["settings"] });
+      // A stop-list change applies at once.
+      void client.invalidateQueries({ queryKey: ["connections"] });
     },
   });
   const reprocess = useMutation({
-    mutationFn: commands.reprocess,
-    onSuccess: (n) => {
-      setAskReprocess(false);
-      setSaved(`Saved. ${plural(n, "file")} will be read again.`);
+    mutationFn: (r: SettingsSaved) =>
+      commands.reprocess({ ocr: r.reprocessOcr, identifiers: r.rerunIdentifiers }),
+    onSuccess: (n, r) => {
+      setAskReprocess(null);
+      const parts = [
+        r.reprocessOcr ? `${plural(n, "file")} will be read again` : null,
+        r.rerunIdentifiers ? "phone numbers will be found again" : null,
+      ].filter((p) => p !== null);
+      setSaved(`Saved. ${parts.join("; ")}.`);
       void client.invalidateQueries({ queryKey: ["progress"] });
     },
   });
@@ -223,30 +264,18 @@ export function SettingsPanel() {
           }}
         />
       )}
-      {askReprocess && (
-        <div role="alertdialog" className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-          Saved. The OCR languages changed: re-process the affected files now?
-          <button
-            type="button"
-            className={button}
-            disabled={reprocess.isPending}
-            onClick={() => {
-              reprocess.mutate();
-            }}
-          >
-            Re-process
-          </button>
-          <button
-            type="button"
-            className={button}
-            onClick={() => {
-              setAskReprocess(false);
-              setSaved("Saved. New files use the new languages.");
-            }}
-          >
-            Later
-          </button>
-        </div>
+      {askReprocess !== null && (
+        <ReprocessPrompt
+          saved={askReprocess}
+          busy={reprocess.isPending}
+          onReprocess={() => {
+            reprocess.mutate(askReprocess);
+          }}
+          onLater={() => {
+            setAskReprocess(null);
+            setSaved("Saved. Files read from now on use the new settings.");
+          }}
+        />
       )}
       {saved !== null && (
         <p role="status" className="mt-3 text-sm">

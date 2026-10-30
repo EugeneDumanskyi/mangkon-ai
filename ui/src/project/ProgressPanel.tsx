@@ -15,7 +15,12 @@ export function ProgressSummary({ progress: p }: { progress: Progress }) {
   const working = p.stage !== null && (p.ingesting || p.paused);
   return (
     <div role="status" className="flex min-w-0 flex-col text-sm">
-      {working ? (
+      {working && p.stage === "identifiers" ? (
+        <span>
+          {p.paused ? "Paused" : "Finding identifiers again in stored text"} ·{" "}
+          {p.runDone.toLocaleString()} of {plural(p.runTotal, "file")}
+        </span>
+      ) : working ? (
         <span>
           {p.paused ? "Paused" : "Reading files"} · Stage {p.stage} · {p.runDone.toLocaleString()}{" "}
           of {plural(p.runTotal, "file")}

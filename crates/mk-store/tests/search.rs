@@ -42,6 +42,7 @@ fn output(kind: &str, lines: &[&str]) -> StageAOutput {
             segments,
         }],
         mentions: Vec::new(),
+        card_flags: Vec::new(),
         warnings: Vec::new(),
     }
 }
@@ -274,22 +275,23 @@ fn migration_v4_to_v5_fills_the_index() {
     let db = dir.path().join("project.db");
     let backups = dir.path().join("backups");
     {
-        // A v4 project with segments: a commit writes the index, so build at v5 and take the
-        // index back out.
+        // A v4 project with segments: a commit writes the index, so build at the latest
+        // version and take the index (and the v6 objects) back out.
         let store = open(dir.path());
         ingest(&store, 1, "txt", &["before search existed", "second line"]);
         store
             .write_raw(|c| {
                 c.execute_batch(
                     "DROP TRIGGER segment_fts_delete; DROP TRIGGER segment_fts_update;
-                     DROP TABLE segment_fts; PRAGMA user_version = 4;",
+                     DROP TABLE segment_fts; DROP TABLE sensitive_flag;
+                     DROP INDEX identifier_mention_content; PRAGMA user_version = 4;",
                 )?;
                 Ok(())
             })
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 5));
+    assert_eq!((report.from_version, report.to_version), (4, 6));
     assert!(report.backup.unwrap().exists());
     assert_eq!(store.search_index_rows().unwrap(), 2);
     assert_eq!(

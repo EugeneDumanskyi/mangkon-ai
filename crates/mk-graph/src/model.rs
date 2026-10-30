@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use mk_kernel::IdentifierKey;
 
 use crate::{
-    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, IdentifierStats, connection_for,
-    resolve,
+    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, IdentifierStats, StopList,
+    connection_for, resolve,
 };
 
 /// A stored content as the derived rules see it.
@@ -38,12 +38,14 @@ pub struct DecisionRecord {
     pub anchor: String,
 }
 
-/// Everything derived data is built from: machine output and decisions.
+/// Everything derived data is built from: machine output, decisions and the stop list
+/// (a project setting, INV-LK-03).
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct Facts {
     pub contents: Vec<ContentFact>,
     pub mentions: Vec<MentionFact>,
     pub decisions: Vec<DecisionRecord>,
+    pub stop_list: StopList,
 }
 
 /// A derived identifier row (domain §5.1 `IDENTIFIER`): present while any mention of the key is
@@ -125,7 +127,7 @@ pub fn reference(facts: &Facts) -> DerivedState {
             mentions: counted.len() as u64,
             max_confidence: counted.iter().map(|m| m.confidence).fold(0.0, f32::max),
         };
-        if let Some(row) = connection_for(key, &stats, resolution.ignored) {
+        if let Some(row) = connection_for(key, &stats, resolution.ignored, &facts.stop_list) {
             out.connections.insert(anchor.to_string(), row);
         }
     }
@@ -187,6 +189,7 @@ mod tests {
                     anchor: "email:gone@x.example".into(),
                 },
             ],
+            stop_list: StopList::default(),
         };
         let d = reference(&facts);
         assert_eq!(d.identifiers.len(), 2);

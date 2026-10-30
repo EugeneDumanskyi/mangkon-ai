@@ -1,7 +1,8 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
-//! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c) and the `--worker`
-//! entry; `bench` comes in M4.
+//! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b) and
+//! the `--worker` entry.
 
+mod bench;
 mod ingest;
 mod kill_test;
 mod manage;
@@ -22,6 +23,8 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli remove --project DIR [--json] PATH...
        mangkon-cli relocate --project DIR --root OLD --to NEW [--tessdata DIR] [--json]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
+       mangkon-cli bench [--testdata DIR] [--baseline FILE [--update-baseline]] [--json FILE]
+                         [--tessdata DIR] [--work DIR]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -58,8 +61,18 @@ Commands:
               --work   keep the projects in DIR (default: a temporary folder, removed when
                        every run passes)
               --json   print one JSON summary instead of a table
-
-bench comes in a later milestone.";
+  bench       Read the TD-1 test corpus into new projects (synthetic/ with the phone region
+              GB, public/ with US), score the identifiers found against its ground truth
+              per type, text-native and OCR'd, and run the negative checks. Prints no
+              identifier value. Exits 1 if a negative check fails, a stored document matches
+              no ground-truth document, or a metric fell more than 2 points below the
+              baseline.
+              --testdata         the corpus folder (default testdata/td1)
+              --baseline         the report to compare with
+              --update-baseline  write this run's report to the --baseline file instead
+              --json             also write this run's report to FILE
+              --tessdata         the OCR language folder, as for ingest
+              --work             keep the projects in DIR (default: a temporary folder)";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -109,6 +122,10 @@ fn main() -> ExitCode {
             Ok(opts) => kill_test::run(&opts),
             Err(e) => usage_error(&e),
         },
+        Some("bench") => match bench_options(&args[1..]) {
+            Ok(opts) => bench::run(&opts),
+            Err(e) => usage_error(&e),
+        },
         // The process the kill test kills. Not in the help.
         Some("kill-test-target") => match &args[1..] {
             [project, source] => kill_test::target(&PathBuf::from(project), &PathBuf::from(source)),
@@ -145,6 +162,34 @@ fn kill_test_options(args: &[String]) -> Result<kill_test::Options, String> {
         }
     }
     opts.source = source.ok_or("kill-test needs --source DIR")?;
+    Ok(opts)
+}
+
+fn bench_options(args: &[String]) -> Result<bench::Options, String> {
+    let mut opts = bench::Options {
+        testdata: PathBuf::from("testdata/td1"),
+        baseline: None,
+        update_baseline: false,
+        json: None,
+        tessdata: None,
+        work: None,
+    };
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--testdata" => opts.testdata = PathBuf::from(value()?),
+            "--baseline" => opts.baseline = Some(PathBuf::from(value()?)),
+            "--update-baseline" => opts.update_baseline = true,
+            "--json" => opts.json = Some(PathBuf::from(value()?)),
+            "--tessdata" => opts.tessdata = Some(PathBuf::from(value()?)),
+            "--work" => opts.work = Some(PathBuf::from(value()?)),
+            other => return Err(format!("unknown bench argument {other:?}")),
+        }
+    }
+    if opts.update_baseline && opts.baseline.is_none() {
+        return Err("--update-baseline needs --baseline FILE".into());
+    }
     Ok(opts)
 }
 

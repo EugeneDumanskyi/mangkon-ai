@@ -119,7 +119,9 @@ fn us_01_3_ac2_add_folder_builds_connections() {
     assert_eq!(
         connections(&f.project),
         vec![
+            ("domain:x.example".into(), 3),
             ("email:ann@x.example".into(), 3),
+            ("domain:y.example".into(), 2),
             ("email:bob@y.example".into(), 2)
         ]
     );
@@ -140,7 +142,10 @@ fn us_01_4_ac3_modified_file_is_reparsed() {
     // Old evidence of a.txt is gone already; bob is now in one document only.
     assert_eq!(
         connections(&f.project),
-        vec![("email:ann@x.example".into(), 2)]
+        vec![
+            ("domain:x.example".into(), 2),
+            ("email:ann@x.example".into(), 2)
+        ]
     );
     assert_eq!(state_of(&f.project, "a.txt"), IngestionState::Queued);
     f.project.run_stage_a().unwrap();
@@ -171,7 +176,10 @@ fn us_01_4_ac4_missing_then_found_again() {
     assert_eq!(state_of(&f.project, "c.csv"), IngestionState::Missing);
     assert_eq!(
         connections(&f.project),
-        vec![("email:ann@x.example".into(), 2)]
+        vec![
+            ("domain:x.example".into(), 2),
+            ("email:ann@x.example".into(), 2)
+        ]
     );
     let derived = f.project.store().derived_state().unwrap();
     assert_eq!(
@@ -190,7 +198,11 @@ fn us_01_4_ac4_missing_then_found_again() {
         (0, 1, 0)
     );
     assert_eq!(state_of(&f.project, "c.csv"), IngestionState::Done);
-    assert_eq!(connections(&f.project).len(), 2);
+    assert_eq!(
+        connections(&f.project).len(),
+        4,
+        "two emails and their domains"
+    );
 }
 
 /// INV-CO-02, US-01.3 AC4: a copy of a file at a second path is one content, processed once.
@@ -275,5 +287,5 @@ fn connections_changed_is_raised() {
     f.project.set_ignored("email:bob@y.example", true).unwrap();
     assert!(events.recv_timeout(Duration::from_secs(2)).is_ok());
     let rows = f.project.store().connections_page(None, 10, false).unwrap();
-    assert_eq!(rows.len(), 1);
+    assert_eq!(rows.len(), 3, "ann and the two domains");
 }

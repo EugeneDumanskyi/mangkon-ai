@@ -41,7 +41,8 @@ fn cli_ingest_then_rebuild_keeps_connections() {
     assert_eq!(first["walked"], 3);
     assert_eq!(first["run"]["done"], 2);
     assert_eq!(first["run"]["failed"], 1);
-    assert_eq!(first["connections"], 1);
+    // The shared email and its domain (US-04.3 AC2).
+    assert_eq!(first["connections"], 2);
     // NFR-USE-05: the failed file is listed with a plain reason.
     let failed = first["failed_files"].as_array().unwrap();
     assert_eq!(failed.len(), 1);
@@ -55,10 +56,10 @@ fn cli_ingest_then_rebuild_keeps_connections() {
         (Some(0), Some(0))
     );
     assert_eq!(again["files"]["total"], 3);
-    assert_eq!(again["connections"], 1);
+    assert_eq!(again["connections"], 2);
 
     let rebuilt = json(&cli(&["rebuild", "--json", "--project", p], &[]));
-    assert_eq!(rebuilt["connections"], 1);
+    assert_eq!(rebuilt["connections"], 2);
     assert_eq!(rebuilt["same_as_incremental"], true);
     assert_eq!(rebuilt["consistent"], true);
     assert_eq!(rebuilt["search_index_in_step"], true);

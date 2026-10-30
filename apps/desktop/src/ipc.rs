@@ -454,7 +454,8 @@ pub struct Progress {
     pub ingesting: bool,
     /// The queue is paused (US-03.2); it stays paused when the project is reopened.
     pub paused: bool,
-    /// `"A"` while Stage A work is open; `null` when the queue is empty.
+    /// `"identifiers"` while identifiers are found again from stored text (a region change,
+    /// US-04.2 AC2), `"A"` while Stage A work is open; `null` when the queue is empty.
     pub stage: Option<String>,
     /// Files finished in this run, and those plus the files still to do.
     pub run_done: u32,
@@ -559,6 +560,8 @@ pub struct DocumentItem {
     pub failure_detail: Option<String>,
     /// Other paths with the same content (US-01.3 AC4).
     pub other_paths: u32,
+    /// Card-like numbers in the file: "Contains card-like number" (US-04.6 AC1).
+    pub card_like_count: u32,
 }
 
 impl From<mk_core::DocumentRow> for DocumentItem {
@@ -584,6 +587,7 @@ impl From<mk_core::DocumentRow> for DocumentItem {
             failure_reason: r.failure_reason,
             failure_detail: r.failure_detail,
             other_paths: count(r.other_paths),
+            card_like_count: count(r.card_like_count),
         }
     }
 }
@@ -684,6 +688,9 @@ pub struct SettingsInfo {
 pub struct SettingsSaved {
     /// Files with OCR'd pages, or that failed for a missing OCR language.
     pub reprocess_ocr: bool,
+    /// The phone region changed: identifiers can be found again from the stored text
+    /// (US-04.2 AC2). No file is read again.
+    pub rerun_identifiers: bool,
 }
 
 /// A source folder or file of the project.
@@ -766,7 +773,8 @@ impl From<ConnectionCursor> for mk_core::RankKey {
 pub struct ConnectionItem {
     /// The identifier key, `type:value`; what `occurrences` takes.
     pub key: String,
-    /// The identifier type, for example `email`.
+    /// The identifier type: `email`, `phone`, `phone_unnormalized` (no region, exact digits),
+    /// `url`, `domain`, `iban`, `btc`, `evm`, `sol` or `tron`.
     pub kind: String,
     pub value: String,
     pub source_count: u32,
@@ -1148,6 +1156,27 @@ pub struct SourceDocument {
     pub position: String,
     /// `null` when the file is no longer in any source folder.
     pub path: Option<String>,
+    /// Card-like numbers in the document, masked, in reading order (US-04.6 AC1).
+    pub card_flags: Vec<CardFlag>,
+}
+
+/// A card-like number: never shown or stored in full (US-04.6, NFR-SEC-14).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CardFlag {
+    /// `**** **** **** 1234`.
+    pub masked: String,
+    pub location: Location,
+}
+
+impl From<&mk_core::CardFlagRow> for CardFlag {
+    fn from(f: &mk_core::CardFlagRow) -> Self {
+        Self {
+            masked: f.masked(),
+            location: (&f.locator).into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1261,6 +1290,7 @@ impl From<mk_core::SourceContext> for SourceView {
                 kind: d.kind,
                 position: d.position,
                 path: d.path,
+                card_flags: Vec::new(),
             },
             parent: c.parent.map(Into::into),
             body,

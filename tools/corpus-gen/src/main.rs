@@ -32,7 +32,7 @@ use std::process::ExitCode;
 use mk_bench::Generator;
 
 /// Bump when any output byte changes for the same seed.
-pub const GENERATOR_VERSION: u32 = 4;
+pub const GENERATOR_VERSION: u32 = 5;
 pub const SEED: u64 = 20261022;
 
 /// SHA-256 of every generated file, committed so that drift shows up without committing data.

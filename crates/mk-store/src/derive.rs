@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use mk_corpus::IngestionState;
 use mk_graph::{
-    ConnectionRow, DecisionFact, DecisionKind, IdentifierStats, SubjectKind, connection_for,
-    resolve,
+    ConnectionRow, DecisionFact, DecisionKind, IdentifierStats, StopList, SubjectKind,
+    connection_for, resolve,
 };
 use mk_kernel::IdentifierKey;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -17,7 +17,15 @@ use crate::StoreError;
 
 pub(crate) const DERIVED_SQL: &str = include_str!("../migrations/derived.sql");
 /// Bump when `derived.sql` or the derived rules change: the derived tables are rebuilt on open.
-pub(crate) const DERIVED_VERSION: u32 = 1;
+/// 2 (M4b): stop-list domains are not connections (INV-LK-03).
+pub(crate) const DERIVED_VERSION: u32 = 2;
+
+/// The project's domain stop list (US-04.3 AC3): the stored setting, or the default list.
+pub(crate) fn stop_list(conn: &Connection) -> Result<StopList, StoreError> {
+    Ok(StopList::new(
+        crate::documents::settings(conn)?.domain_stop_list,
+    ))
+}
 
 /// Drops and recreates the derived tables, then rebuilds every key that has a mention or a
 /// decision (ADR-0005 "full rebuild", ADR-0004 after a migration).
@@ -48,14 +56,18 @@ pub(crate) fn rebuild_all(conn: &Connection) -> Result<(), StoreError> {
 /// Rebuilds the derived rows of `keys`. Returns true if any connection row was added, removed or
 /// changed (the `ConnectionsChanged` event, ADR-0005 step 5).
 pub(crate) fn rebuild_keys(conn: &Connection, keys: &BTreeSet<String>) -> Result<bool, StoreError> {
+    if keys.is_empty() {
+        return Ok(false);
+    }
+    let stop = stop_list(conn)?;
     let mut changed = false;
     for key in keys {
-        changed |= rebuild_key(conn, key)?;
+        changed |= rebuild_key(conn, key, &stop)?;
     }
     Ok(changed)
 }
 
-fn rebuild_key(conn: &Connection, key: &str) -> Result<bool, StoreError> {
+fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, StoreError> {
     let before = connection_row(conn, key)?;
 
     // Every mention of the key, and the counted ones: content not Missing (INV-CO-07).
@@ -130,7 +142,7 @@ fn rebuild_key(conn: &Connection, key: &str) -> Result<bool, StoreError> {
             mentions: mentions as u64,
             max_confidence: max_confidence.unwrap_or(0.0) as f32,
         };
-        connection_for(&parsed, &stats, resolution.ignored)
+        connection_for(&parsed, &stats, resolution.ignored, stop)
     } else {
         conn.prepare_cached("DELETE FROM identifier WHERE key = ?1")?
             .execute([key])?;

@@ -5,11 +5,40 @@ import type { ConnectionCursor } from "../ipc/bindings/ConnectionCursor";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import { onCoreEvent } from "../lib/coreEvents";
 import { PAGE_SIZE } from "../lib/keyset";
-import { plural } from "../lib/labels";
+import { kindLabel, kindWarning, plural } from "../lib/labels";
 import { percentile } from "../lib/stats";
 import { useKeysetList } from "../lib/useKeysetList";
 
 const ROW_HEIGHT = 56;
+
+/** One connection's value and counts, with a note on a phone kept as digits (US-04.2 AC3). */
+export function ConnectionSummary({ row, selected }: { row: ConnectionItem; selected: boolean }) {
+  const warning = kindWarning(row.kind);
+  return (
+    <>
+      <div className="flex items-baseline gap-2">
+        <span className="truncate font-mono">{row.value}</span>
+        {row.lowConfidence && (
+          <span className="shrink-0 rounded border border-current px-1 text-xs">
+            low confidence
+          </span>
+        )}
+        {warning !== null && (
+          <span
+            className="shrink-0 rounded border border-current px-1 text-xs"
+            title="Set the phone region in Settings to match it with the same number in other forms."
+          >
+            {warning}
+          </span>
+        )}
+      </div>
+      <div className={selected ? "text-xs" : "text-xs text-muted"}>
+        {kindLabel(row.kind)} · {plural(row.sourceCount, "source")} ·{" "}
+        {plural(row.mentionCount, "mention")} · {plural(row.fileTypeCount, "file type")}
+      </div>
+    </>
+  );
+}
 
 /**
  * NFR-PERF-34 screen side (`MK_UI_TIMING=1`): from a `connectionsChanged` event to the frame
@@ -152,21 +181,7 @@ export function ConnectionsList({
                 }}
               >
                 {row ? (
-                  <>
-                    <div className="flex items-baseline gap-2">
-                      <span className="truncate font-mono">{row.value}</span>
-                      {row.lowConfidence && (
-                        <span className="shrink-0 rounded border border-current px-1 text-xs">
-                          low confidence
-                        </span>
-                      )}
-                    </div>
-                    <div className={isSelected ? "text-xs" : "text-xs text-muted"}>
-                      {row.kind} · {plural(row.sourceCount, "source")} ·{" "}
-                      {plural(row.mentionCount, "mention")} ·{" "}
-                      {plural(row.fileTypeCount, "file type")}
-                    </div>
-                  </>
+                  <ConnectionSummary row={row} selected={isSelected} />
                 ) : (
                   <span className="text-muted">…</span>
                 )}

@@ -1,13 +1,13 @@
 //! Worker protocol messages (ADR-0007). Version 3 (M3b) adds the page view's `RenderPage` and
 //! `PageImage` (ADR-0011), the OCR stage and settings (ADR-0017, ADR-0018), and OCR word
-//! geometry on segments.
+//! geometry on segments. Version 4 (M4b) adds the phone region and card-like flags.
 
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry, PageGeometry};
 use serde::{Deserialize, Serialize};
 
 /// Protocol version. A worker says it in [`FromWorker::Hello`]; the core refuses any other.
 /// Bump on any change to these messages.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// Core → worker.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -68,6 +68,9 @@ pub struct Settings {
     /// The folder with the `.traineddata` files (ADR-0018). `None`: no OCR, and a page that
     /// needs it fails its file.
     pub tessdata: Option<String>,
+    /// The project's phone region, such as `GB` (US-04.2 AC2); `None` keeps national numbers
+    /// as digits (AC3).
+    pub phone_region: Option<String>,
 }
 
 /// Worker → core.
@@ -149,6 +152,8 @@ pub enum Chunk {
     Segments(Vec<Segment>),
     /// Mentions in the [`Chunk::Segments`] batch just before (only that batch).
     Mentions(Vec<Mention>),
+    /// Card-like numbers in the [`Chunk::Segments`] batch just before (US-04.6, INV-ID-06).
+    CardFlags(Vec<CardFlag>),
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -169,4 +174,13 @@ pub struct Mention {
     pub raw: String,
     pub key: IdentifierKey,
     pub confidence: f32,
+}
+
+/// A card-like number: where it is and its last four digits, never the number (NFR-SEC-14).
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+pub struct CardFlag {
+    /// Index of the segment in its document.
+    pub segment: u32,
+    pub locator: Locator,
+    pub last4: String,
 }

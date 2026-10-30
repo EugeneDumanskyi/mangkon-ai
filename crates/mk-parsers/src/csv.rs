@@ -36,18 +36,7 @@ pub(crate) fn parse(
         _ => mode(sample.iter().map(Vec::len)).unwrap_or(0),
     };
     let columns = if header {
-        let first = &sample[0];
-        let mut seen: HashMap<&str, usize> = HashMap::new();
-        for name in first {
-            *seen.entry(name.trim()).or_default() += 1;
-        }
-        first
-            .iter()
-            .map(|n| {
-                let n = n.trim();
-                (!n.is_empty() && seen[n] == 1).then(|| n.to_string())
-            })
-            .collect()
+        names(&sample[0])
     } else {
         vec![None; expected]
     };
@@ -157,6 +146,32 @@ fn mode(values: impl Iterator<Item = usize>) -> Option<usize> {
 
 /// A first row is a header when every cell has a letter and none looks like a number or date.
 /// ASSUMPTION: good enough for exports; the column mapping screen (M4) lets the user correct it.
+/// Column names from a header row: each trimmed name, `None` for an empty or repeated one.
+fn names(first: &[String]) -> Vec<Option<String>> {
+    let mut seen: HashMap<&str, usize> = HashMap::new();
+    for name in first {
+        *seen.entry(name.trim()).or_default() += 1;
+    }
+    first
+        .iter()
+        .map(|n| {
+            let n = n.trim();
+            (!n.is_empty() && seen[n] == 1).then(|| n.to_string())
+        })
+        .collect()
+}
+
+/// The column names a CSV document's first record (row 0) gives, by the rule the parser uses:
+/// its names if it looks like a header, else none (every column by index). Lets a stored
+/// document get its columns back for an identifier re-run (M4b).
+pub fn columns(first_row: &[String]) -> Vec<Option<String>> {
+    if looks_like_header(first_row) {
+        names(first_row)
+    } else {
+        Vec::new()
+    }
+}
+
 fn looks_like_header(row: &[String]) -> bool {
     !row.is_empty()
         && row.iter().all(|c| {

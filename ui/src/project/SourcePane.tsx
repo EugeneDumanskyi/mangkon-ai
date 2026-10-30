@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
+import type { CardFlag } from "../ipc/bindings/CardFlag";
 import type { MentionPosition } from "../ipc/bindings/MentionPosition";
 import type { OriginalFile } from "../ipc/bindings/OriginalFile";
 import type { SegmentHit } from "../ipc/bindings/SegmentHit";
@@ -109,6 +110,26 @@ export function OriginalActions({
  * email, and an email to its attachments (AC4). Moving to another mention or document, and
  * back, goes through the project screen's history (US-08.2).
  */
+/**
+ * The document's card-like numbers, masked, with their places (US-04.6 AC1). Nothing when it
+ * has none.
+ */
+export function CardFlags({ flags }: { flags: CardFlag[] }) {
+  if (flags.length === 0) return null;
+  return (
+    <p className="border-b border-border px-3 py-1 text-sm" data-card-flags>
+      <span className="font-semibold">Contains card-like number:</span>{" "}
+      {flags.map((f, i) => (
+        <span key={i}>
+          {i > 0 && ", "}
+          <span className="font-mono">{f.masked}</span>{" "}
+          <span className="text-muted">({locationLabel(f.location)})</span>
+        </span>
+      ))}
+    </p>
+  );
+}
+
 export function SourcePane({
   mentionId,
   documentId,
@@ -206,6 +227,7 @@ export function SourcePane({
           <OriginalActions documentId={v.document.documentId} original={v.original} />
         </div>
       )}
+      {v && <CardFlags flags={v.document.cardFlags} />}
       {note !== null && (
         <div className="border-b border-border px-3 py-1">
           <OriginalBanner note={note} />

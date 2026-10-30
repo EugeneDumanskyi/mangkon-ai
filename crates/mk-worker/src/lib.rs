@@ -6,8 +6,8 @@
 //!
 //! - [`frame`]: `u32` little-endian length + `postcard` payload, with a size guard.
 //! - [`protocol`]: the messages, versioned by [`PROTOCOL`].
-//! - [`extract`]: the parser sink that sends a content as chunks of segments and mentions while
-//!   it is parsed (US-04.1).
+//! - [`extract`]: the parser sink that sends a content as chunks of segments, mentions and
+//!   card-like flags while it is parsed (US-04.1 – US-04.6).
 //! - [`serve`] / [`run_stdio`]: the worker loop, with heartbeats; the stdio entry also sets the
 //!   Linux address-space cap.
 //! - [`fault`]: test faults (memory bomb, endless loop, crash, slow units, a stuck OCR page),
@@ -26,7 +26,7 @@ pub mod protocol;
 mod serve;
 
 pub use protocol::{
-    Chunk, FromWorker, Limits, Mention, PROTOCOL, PageImage, PagePoints, ProcessContent,
+    CardFlag, Chunk, FromWorker, Limits, Mention, PROTOCOL, PageImage, PagePoints, ProcessContent,
     RenderPage, Segment, Settings, ToWorker, WorkStage,
 };
 pub use serve::{HEARTBEAT, ServeOptions, run_stdio, serve};

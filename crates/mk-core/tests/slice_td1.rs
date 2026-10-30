@@ -1,6 +1,6 @@
 //! TD-1 end to end through the real pipeline (re-scan → Stage A in worker processes → one staged
 //! commit per file → derived rows): US-01.3 AC2, US-02.1–US-02.6, US-04.1 AC1, US-07.1 AC1,
-//! US-08.1 AC1–AC2, NFR-COMP-06. One ingest is shared by the tests below.
+//! US-04.6, US-08.1 AC1–AC2, NFR-COMP-06, NFR-SEC-14. One ingest is shared by the tests below.
 //!
 //! The `inv_co_04_roundtrip_<kind>` tests check, for every ground-truth mention of that kind,
 //! that the stored segment at its place holds its raw text at its offsets (INV-CO-03/04); for
@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 use mk_bench::{DocPart, GroundTruth, Location, Mention, Subject};
 use mk_corpus::IngestionState;
-use mk_kernel::{Column, Locator};
+use mk_kernel::{Column, IdentifierKind, Locator};
 use mk_parsers::Format;
 use mk_store::{MentionRow, SegmentRow};
 
@@ -355,8 +355,9 @@ fn gt_place(m: &Mention) -> Option<String> {
 }
 
 /// US-04.1 AC1, US-07.1 AC1: every text file is read; the stored email mentions are exactly the
-/// ground truth's, at the same places; the connections are the emails in two or more of these
-/// documents and equal a rebuild from the facts (INV-LK-01, ADR-0005).
+/// ground truth's, at the same places; the email connections are the emails in two or more of
+/// these documents, and all connections equal a rebuild from the facts (INV-LK-01, ADR-0005).
+/// The other identifier types are scored by `mangkon-cli bench` (M4b).
 #[test]
 fn slice_td1_text_formats_end_to_end() {
     let Some(f) = fixture() else { return };
@@ -367,7 +368,7 @@ fn slice_td1_text_formats_end_to_end() {
         let got: BTreeSet<(String, String)> = f
             .mentions
             .iter()
-            .filter(|m| m.document_id == *doc)
+            .filter(|m| m.document_id == *doc && m.key.kind() == IdentifierKind::Email)
             .map(|m| {
                 // INV-CO-04: the span lies in the stored segment text.
                 let span = m.locator.span().unwrap();
@@ -397,7 +398,11 @@ fn slice_td1_text_formats_end_to_end() {
         .filter(|(_, docs)| docs.len() >= 2)
         .map(|(k, _)| k)
         .collect();
-    let got: BTreeSet<&String> = derived.connections.keys().collect();
+    let got: BTreeSet<&String> = derived
+        .connections
+        .keys()
+        .filter(|k| k.starts_with("email:"))
+        .collect();
     assert_eq!(got, want);
     assert_eq!(
         mk_graph::model::reference(&f.project.store().facts().unwrap()),
@@ -446,15 +451,19 @@ fn page_pairs(
             if matches!(m.locator, Locator::OcrText { .. }) != ocr {
                 continue;
             }
-            let Some(g) = f.gt.mentions.iter().find(|g| {
+            // Paired by raw text on the page; a raw written more than once there has no one
+            // pair and is left out.
+            let mut same = f.gt.mentions.iter().filter(|g| {
                 &g.document == gt_doc
                     && g.raw == m.raw
+                    && g.derived_from.is_none()
                     && match &g.location {
                         Location::PdfText { page: p, .. } => !ocr && *p == page,
                         Location::Scan { page: p, .. } => ocr && *p == page,
                         _ => false,
                     }
-            }) else {
+            });
+            let (Some(g), None) = (same.next(), same.next()) else {
                 continue;
             };
             let id = f
@@ -758,4 +767,62 @@ fn nfr_qa_12_highlight_lands_on_right_text() {
         f.mentions.len()
     );
     assert!(right >= 198, "{wrong:#?}");
+}
+
+/// US-04.6, INV-ID-06, NFR-SEC-14 on TD-1: every card-like number in the ground truth is a flag
+/// on its document with its last four digits, and its digits are in no identifier key, stored
+/// mention, connection or flag row.
+#[test]
+fn nfr_sec_14_td1_card_like_is_only_a_flag() {
+    let Some(f) = fixture() else { return };
+    let flags = f.project.store().all_card_flags().unwrap();
+    let mut cards = Vec::new();
+    for n in &f.gt.negatives {
+        let mk_bench::Negative::CardLike {
+            id,
+            raw,
+            last4,
+            document,
+            ..
+        } = n
+        else {
+            continue;
+        };
+        let doc = f.docs[document];
+        let expected =
+            f.gt.negatives
+                .iter()
+                .filter(|m| {
+                    matches!(m, mk_bench::Negative::CardLike { document: d, last4: l, .. }
+                    if d == document && l == last4)
+                })
+                .count();
+        let found = flags
+            .iter()
+            .filter(|(_, d, l)| *d == doc && l == last4)
+            .count();
+        assert_eq!(found, expected, "{id}");
+        cards.push(raw.chars().filter(char::is_ascii_digit).collect::<String>());
+    }
+    assert!(!cards.is_empty());
+    let stored: Vec<String> = f
+        .project
+        .store()
+        .read_raw(|c| {
+            let mut stmt = c.prepare(
+                "SELECT identifier_key || ' ' || raw FROM identifier_mention
+                 UNION ALL SELECT key FROM identifier
+                 UNION ALL SELECT subject_key FROM connection
+                 UNION ALL SELECT last4 FROM sensitive_flag",
+            )?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .unwrap();
+    for s in &stored {
+        let digits: String = s.chars().filter(char::is_ascii_digit).collect();
+        for card in &cards {
+            assert!(!digits.contains(&card[..12]), "{s}");
+        }
+    }
 }

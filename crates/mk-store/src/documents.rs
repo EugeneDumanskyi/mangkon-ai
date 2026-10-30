@@ -51,6 +51,8 @@ pub struct DocumentRow {
     pub failure_detail: Option<String>,
     /// Other paths with the same content (US-01.3 AC4).
     pub other_paths: u64,
+    /// Card-like numbers in the content (US-04.6 AC1): "Contains card-like number".
+    pub card_like_count: u64,
 }
 
 impl DocumentRow {
@@ -110,7 +112,8 @@ pub(crate) fn documents_page(
     let sql = format!(
         "SELECT f.id, c.id, r.id, r.path, f.rel_path, c.file_type, c.size, {STATUS_SQL},
                 c.warnings, c.failure_code, c.failure_reason, c.failure_detail,
-                (SELECT COUNT(*) - 1 FROM file_ref o WHERE o.content_id = c.id)
+                (SELECT COUNT(*) - 1 FROM file_ref o WHERE o.content_id = c.id),
+                (SELECT COUNT(*) FROM sensitive_flag k WHERE k.content_id = c.id)
          {DOCUMENT_FROM}
            AND (?3 IS NULL OR (r.path, f.rel_path) > (?3, ?4))
          ORDER BY r.path, f.rel_path
@@ -146,6 +149,7 @@ pub(crate) fn documents_page(
                 failure_reason: r.get(10)?,
                 failure_detail: r.get(11)?,
                 other_paths: r.get::<_, i64>(12)?.max(0) as u64,
+                card_like_count: r.get::<_, i64>(13)? as u64,
             })
         },
     )?;

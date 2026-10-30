@@ -107,6 +107,7 @@ fn chunks_match_the_parse_and_items_fail_alone() {
     mk_worker::extract::chunks::<()>(
         parsed,
         3,
+        &mk_identifiers::Rules::default(),
         |c| {
             want.push(FromWorker::Chunk(c));
             Ok(())
@@ -284,6 +285,7 @@ fn us_02_2_ac4_ocr_languages_reach_the_worker() {
                 test_faults: false,
                 ocr_languages: languages.into(),
                 tessdata: tessdata.map(|t| t.to_str().unwrap().into()),
+                phone_region: None,
             },
         })
     };

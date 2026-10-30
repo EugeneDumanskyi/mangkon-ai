@@ -25,7 +25,11 @@ const OPEN_JOBS: [JobState; 4] = [
     JobState::Blocked,
 ];
 
-fn set_meta(conn: &Connection, key: &str, value: Option<&str>) -> Result<(), StoreError> {
+pub(crate) fn set_meta(
+    conn: &Connection,
+    key: &str,
+    value: Option<&str>,
+) -> Result<(), StoreError> {
     match value {
         Some(v) => conn
             .prepare_cached(
@@ -398,10 +402,13 @@ pub(crate) fn clear_exclusions(
 }
 
 /// Stores the settings (US-01.6). The caller checked them ([`ProjectSettings::normalized`]).
-pub(crate) fn set_settings(conn: &Connection, s: &ProjectSettings) -> Result<(), StoreError> {
+/// Stores settings. A stop-list edit rebuilds the domains added to or taken off the list in the
+/// same transaction (INV-LK-03, ADR-0005). Returns whether a connection row changed.
+pub(crate) fn set_settings(conn: &Connection, s: &ProjectSettings) -> Result<bool, StoreError> {
     if s.ocr_languages.is_empty() {
         return Err(invalid("a project needs at least one OCR language"));
     }
+    let before = crate::derive::stop_list(conn)?;
     set_meta(conn, "ocr_languages", Some(&s.ocr_languages_joined()))?;
     set_meta(conn, "phone_region", s.phone_region.as_deref())?;
     set_meta(
@@ -409,7 +416,8 @@ pub(crate) fn set_settings(conn: &Connection, s: &ProjectSettings) -> Result<(),
         "domain_stop_list",
         Some(&s.domain_stop_list.join("\n")),
     )?;
-    Ok(())
+    let after = crate::derive::stop_list(conn)?;
+    crate::derive::rebuild_keys(conn, &before.changed_keys(&after))
 }
 
 /// Writes the project name and the app version on create and after a migration (US-01.2 AC3).

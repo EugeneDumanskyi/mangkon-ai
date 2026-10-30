@@ -28,6 +28,7 @@ pub use content::{
     Collector, DocumentStart, Format, ParseError, ParsedContent, ParsedDocument, ParsedSegment,
     RowState, Sink, Source, mention_locator, parse, parse_stream, parse_with,
 };
+pub use csv::columns as csv_columns;
 pub use encoding::TextEncoding;
 pub use ocr::TesseractOcr;
 pub use paged::{

@@ -213,7 +213,7 @@ fn us_01_2_ac4_backup_then_migrate() {
     let (p, summary, entry) = ws.open_project(&dir).unwrap();
     assert_eq!(
         (summary.schema.from_version, summary.schema.to_version),
-        (3, 5)
+        (3, 6)
     );
     assert!(summary.schema.backup.unwrap().is_file());
     assert_eq!(entry.name, "Old case");
@@ -270,10 +270,10 @@ fn us_01_5_ac1_remove_deletes_data_rebuilds_keeps_original() {
     );
     let before = hash(&src.join("a.txt"));
     let p = ingested(&tmp.path().join("p"), &src);
-    assert_eq!(p.connection_count().unwrap(), 1);
+    assert_eq!(p.connection_count().unwrap(), 2, "the email and its domain");
 
     let a = ref_id(&p, "a.txt");
-    assert_eq!(p.removal_impact(&[a]).unwrap(), 1);
+    assert_eq!(p.removal_impact(&[a]).unwrap(), 2);
     let out = p.remove_files(&[a]).unwrap();
     assert_eq!((out.refs, out.contents), (1, 1));
     assert!(out.connections_changed);
@@ -301,7 +301,7 @@ fn us_01_5_ac1_remove_deletes_data_rebuilds_keeps_original() {
     p.add_source_root(&src.join("a.txt")).unwrap();
     let back = p.ingest().unwrap();
     assert_eq!(back.rescan.outcome.added, 1);
-    assert_eq!(p.connection_count().unwrap(), 1);
+    assert_eq!(p.connection_count().unwrap(), 2);
     assert_eq!(p.source_roots().unwrap().len(), 1, "no second root");
 }
 
@@ -323,7 +323,7 @@ fn us_01_5_shared_content_kept() {
     assert_eq!(p.removal_impact(&[dup]).unwrap(), 0);
     let out = p.remove_files(&[dup]).unwrap();
     assert_eq!((out.refs, out.contents), (1, 0));
-    assert_eq!(p.connection_count().unwrap(), 1);
+    assert_eq!(p.connection_count().unwrap(), 2, "the email and its domain");
     let c = p
         .store()
         .content(&hash(&src.join("a.txt")))
@@ -346,10 +346,14 @@ fn us_01_5_ac2_impact_counts_connections() {
         ],
     );
     let p = ingested(&tmp.path().join("p"), &src);
-    assert_eq!(p.connection_count().unwrap(), 2);
+    assert_eq!(
+        p.connection_count().unwrap(),
+        3,
+        "two emails and their domain"
+    );
     let (a, b) = (ref_id(&p, "a.txt"), ref_id(&p, "b.txt"));
-    assert_eq!(p.removal_impact(&[a]).unwrap(), 2);
-    assert_eq!(p.removal_impact(&[b]).unwrap(), 1);
+    assert_eq!(p.removal_impact(&[a]).unwrap(), 3);
+    assert_eq!(p.removal_impact(&[b]).unwrap(), 2);
     assert_eq!(p.removal_impact(&[]).unwrap(), 0);
 }
 
@@ -365,7 +369,14 @@ fn us_01_6_ac2_defaults() {
         phone_region: Some("de".into()),
         ..ProjectSettings::default()
     };
-    assert!(p.save_settings(saved).unwrap().is_empty());
+    // US-04.2 AC2: a new region can be applied to what is already read.
+    assert_eq!(
+        p.save_settings(saved).unwrap(),
+        Reprocess {
+            ocr: false,
+            identifiers: true
+        }
+    );
     assert_eq!(p.settings().unwrap().phone_region.as_deref(), Some("DE"));
     assert!(
         p.save_settings(ProjectSettings {
@@ -421,7 +432,13 @@ fn us_01_6_ac3_ocr_change_reprocesses_only_ocr_contents() {
         ..p.settings().unwrap()
     };
     let what = p.save_settings(new).unwrap();
-    assert_eq!(what, Reprocess { ocr: true });
+    assert_eq!(
+        what,
+        Reprocess {
+            ocr: true,
+            identifiers: false
+        }
+    );
     assert_eq!(p.ocr_languages().unwrap(), "eng+deu");
     assert_eq!(p.reprocess(what).unwrap(), 2);
     let state = |n: &str| {
@@ -458,5 +475,5 @@ fn d12_relocate_root_redoes_nothing() {
     let s = p.ingest().unwrap();
     assert_eq!((s.rescan.hashed, s.stage_a.done), (0, 0));
     assert_eq!(s.rescan.unchanged, 2);
-    assert_eq!(p.connection_count().unwrap(), 1);
+    assert_eq!(p.connection_count().unwrap(), 2, "the email and its domain");
 }

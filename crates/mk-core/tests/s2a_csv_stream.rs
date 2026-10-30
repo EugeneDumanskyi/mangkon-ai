@@ -25,6 +25,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use mk_core::{Project, WorkerConfig};
+use mk_identifiers::Rules;
 use mk_kernel::ContentHash;
 use mk_parsers::Format;
 use mk_store::NewContent;
@@ -107,6 +108,7 @@ fn breakdown(csv: &Path) -> Value {
     mk_worker::extract::chunks::<()>(
         copy,
         4096,
+        &Rules::default(),
         |_| {
             n += 1;
             Ok(())
@@ -118,7 +120,14 @@ fn breakdown(csv: &Path) -> Value {
 
     let t = Instant::now();
     let mut w = FrameWriter::new(Vec::new());
-    mk_worker::extract::chunks(parsed, 4096, |c| w.send(&FromWorker::Chunk(c)), |_| {}).unwrap();
+    mk_worker::extract::chunks(
+        parsed,
+        4096,
+        &Rules::default(),
+        |c| w.send(&FromWorker::Chunk(c)),
+        |_| {},
+    )
+    .unwrap();
     let extract_encode = t.elapsed();
     let frames = w.into_inner();
 

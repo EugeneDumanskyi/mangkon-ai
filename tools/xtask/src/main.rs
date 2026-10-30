@@ -1,7 +1,8 @@
 //! Repo tasks, run as `cargo xtask <task>` (alias in `.cargo/config.toml`).
 //!
 //! - `build [--release] [-- <cargo args>]`: the one-command build (US-14.1 AC1/AC2, NFR-MNT-01).
-//! - `ci`: every local gate, in the same order as `.github/workflows/ci.yml`.
+//! - `ci`: every local gate, in the same order as `.github/workflows/ci.yml`; the TD-1 bench gate
+//!   only when `testdata/td1` is there (it is not in git).
 //! - `check-layers`: the dependency rules (ADR-0002, ADR-0009).
 //! - `check-bindings`: the committed IPC bindings match the Rust types (ADR-0003).
 //! - `notices [--check]`: writes or checks `THIRD_PARTY_NOTICES` (NFR-LEG-05).
@@ -189,8 +190,35 @@ fn ci() -> Result {
         ["build", "--locked", "-p", "mangkon-desktop"],
         &root,
     )?;
+    bench(&root)?;
     println!("\nAll CI gates passed.");
     Ok(())
+}
+
+/// The TD-1 identifier benchmark against the committed baseline (US-14.3 AC2, NFR-MNT-05), when
+/// the corpus has been fetched and generated (`docs/07-test-corpus.md` §9).
+fn bench(root: &Path) -> Result {
+    if !root.join("testdata/td1/ground-truth.json").exists() {
+        println!(
+            "\n==> TD-1 bench gate skipped: testdata/td1 is missing (corpus-gen fetch, generate)"
+        );
+        return Ok(());
+    }
+    run(
+        &cargo(),
+        [
+            "run",
+            "--locked",
+            "--release",
+            "-p",
+            "mangkon-cli",
+            "--",
+            "bench",
+            "--baseline",
+            "crates/mk-bench/baseline/td1.json",
+        ],
+        root,
+    )
 }
 
 /// Exports the IPC bindings into a scratch folder and compares them with `ui/src/ipc/bindings`.

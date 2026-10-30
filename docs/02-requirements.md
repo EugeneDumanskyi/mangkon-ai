@@ -559,9 +559,10 @@ As a researcher, I want identifier results before slow AI work, so that I see va
 #### US-04.3 — URLs and domains
 *Layer 1 · M4*
 **AC1 — Domain from URL**
-- **Given** a segment contains `https://www.shell-co.example.org/invoice?id=5`
-- **Then** a URL identifier is stored, and a domain identifier `shell-co.example.org` is stored
+- **Given** a segment contains `https://www.shell-co.example/invoice?id=5`
+- **Then** a URL identifier is stored, and a domain identifier `shell-co.example` is stored
 - ASSUMPTION: domains are reduced to the registrable domain using the Public Suffix List; `www.` is removed.
+- Changed 2026-10-30 (M4b): the example was `https://www.shell-co.example.org/…` → `shell-co.example.org`, which the Public Suffix List does not give (`example.org` is registrable, so the domain is `example.org`). The list wins; the example now uses an unlisted top-level label, which counts as one label.
 
 **AC2 — Domain from email**
 - **Given** an email `a@shell-co.com`

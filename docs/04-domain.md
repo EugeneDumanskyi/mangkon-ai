@@ -520,6 +520,9 @@ Notes (M3c):
 - Removing a file from the project when it sits inside a source folder records an exclusion for that path. A re-scan skips excluded paths. Adding the file, or a folder holding it, again clears the exclusion. ASSUMPTION (M3c).
 - Of the settings, OCR languages take effect now (INV-WS-07: a change re-runs Stage A only for contents with OCR pages and for those that failed for a missing language, after the user agrees). Phone region and stop list are stored and take effect in M4; custom patterns and endpoints come in M4 and M5.
 
+Notes (M4b):
+- The phone region and the stop list take effect (INV-WS-07). A region change asks to re-process; accepted, the built-in identifiers are found again in the **stored** segments of every content. No file is read again and no page is OCR'd again. A stop-list edit needs no re-process: the derived rows of the domains added to or removed from the list are rebuilt at once.
+
 ### 6.2 Corpus (BC-02)
 
 | ID | Rule | Source |
@@ -563,6 +566,15 @@ Notes (M3c):
 | INV-ID-06 | Card-like numbers are never identifiers. They only create a sensitive flag on the document. The flag stores the locator and the last 4 digits only. ASSUMPTION. See D8. | US-04.6, NFR-SEC-14 |
 | INV-ID-07 | A custom pattern's name is unique in the project. Its expression must compile with the supported syntax. Its matches get the identifier type named after the pattern. | US-04.7 |
 | INV-ID-08 | Changing custom patterns re-runs only the custom-pattern step. | US-04.7 AC3 |
+
+Notes (M4b):
+- The built-in finders run in a fixed order and never claim a span twice: email (+ domain) → URL (+ domain) → IBAN → BTC/EVM/SOL/TRON → card-like → phone. One shared function finds them in a segment, used by the parser worker and by the re-run below, so the two cannot drift.
+- `phone_unnormalized` is its own identifier type (INV-ID-04). Without a region only a formatted national number becomes one (a leading 0 or a bracketed area code, and a separator), so plain digit runs stay out. ASSUMPTION (M4b).
+- Domains come only from emails and URLs. A bare domain in running text (`kestrel-advisory.example`) is not read. ASSUMPTION (M4b).
+- A wrapped line in stored page text is read as one value where the break cannot end it: a phone wrapped after its bracketed area code or a dash, an IBAN between groups, an email domain after a `-`.
+- The sensitive flag of INV-ID-06 is the table `sensitive_flag` (document, segment, locator, last 4 digits), deleted with its content (INV-CO-06). Lists show it masked (`**** **** **** 1234`).
+- The stop list is applied when connections are derived, not when mentions are stored (INV-LK-03): a stop-list domain keeps its identifier and mentions and has no connection.
+- The project stores the identifier rules version it was read with (`identifier_version`). A project read with older rules (M3) or with a region change pending has its identifiers found again on its next run, one content per transaction, with a stored cursor so a stop or a crash resumes where it left off (INV-PR-04/05). A paused queue holds it (INV-PR-06). It does not use the job queue: it reads no file.
 
 ### 6.5 Structured mapping (BC-05)
 

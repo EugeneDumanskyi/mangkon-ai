@@ -16,9 +16,12 @@
 //!   removing files, settings, relocating roots and the progress panel (`manage`).
 //! - M4a: keyword search ([`Project::search`]) and the source view at a hit
 //!   ([`Project::segment_context`]).
+//! - M4b: the identifier re-run after a region change or older rules
+//!   ([`Project::rerun_identifiers`]), card-like flags in the viewer.
 
 mod control;
 mod events;
+mod identifiers;
 mod links;
 mod manage;
 mod page;
@@ -37,6 +40,7 @@ use std::process::ExitCode;
 
 pub use control::{PAUSE_GRACE, Stop};
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use identifiers::RerunSummary;
 pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
@@ -44,8 +48,9 @@ pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
-    CancelOutcome, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow, FailedFile,
-    KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING, SearchCursor, SearchFilter,
+    CancelOutcome, CardFlagRow, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow,
+    FailedFile, KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING, SearchCursor,
+    SearchFilter,
 };
 pub use mk_workspace::{ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};

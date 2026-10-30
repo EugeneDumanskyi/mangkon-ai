@@ -55,6 +55,7 @@ pub struct NewContent {
 pub struct StageAOutput {
     pub documents: Vec<DocumentOut>,
     pub mentions: Vec<MentionOut>,
+    pub card_flags: Vec<CardFlagOut>,
     pub warnings: Vec<String>,
 }
 
@@ -90,8 +91,21 @@ pub struct MentionOut {
     pub confidence: f32,
 }
 
-/// One piece of a staged Stage A result, in the order the worker sent it (protocol v2): a
-/// document, then batches of its segments, each followed by the mentions in that batch.
+/// A card-like number at `locator` of a segment (US-04.6): a flag on its document with the last
+/// four digits, never an identifier (INV-ID-06).
+#[derive(Clone, PartialEq, Debug)]
+pub struct CardFlagOut {
+    /// Index into [`StageAOutput::documents`].
+    pub document: usize,
+    /// Index into that document's segments.
+    pub segment: usize,
+    pub locator: Locator,
+    pub last4: String,
+}
+
+/// One piece of a staged Stage A result, in the order the worker sent it (protocol v4): a
+/// document, then batches of its segments, each followed by the mentions and card-like flags
+/// in that batch.
 #[derive(Clone, PartialEq, Debug)]
 pub enum StagedPart {
     /// Documents are numbered 0, 1, 2, … in order; `parent` is an earlier one.
@@ -104,11 +118,22 @@ pub enum StagedPart {
     /// Mentions in the `Segments` batch just before. `document` is the current document's
     /// number and `segment` the index in it.
     Mentions(Vec<MentionOut>),
+    /// Card-like flags in the `Segments` batch just before, numbered as mentions are.
+    CardFlags(Vec<CardFlagOut>),
 }
 
 impl StageAOutput {
-    /// The output as staged parts: each document, all its segments, then its mentions.
+    /// The output as staged parts: each document, all its segments, then its mentions and
+    /// card-like flags.
     pub fn into_parts(self) -> impl Iterator<Item = StagedPart> {
+        let mut flags: Vec<Vec<CardFlagOut>> = vec![Vec::new(); self.documents.len()];
+        for f in self.card_flags {
+            // Points at no document: kept so the commit rejects it.
+            let i = f.document.min(flags.len().saturating_sub(1));
+            if let Some(v) = flags.get_mut(i) {
+                v.push(f);
+            }
+        }
         let mut by_doc: Vec<Vec<MentionOut>> = vec![Vec::new(); self.documents.len()];
         for m in self.mentions {
             if let Some(v) = by_doc.get_mut(m.document) {
@@ -123,7 +148,8 @@ impl StageAOutput {
         self.documents
             .into_iter()
             .zip(by_doc)
-            .flat_map(|(doc, mentions)| {
+            .zip(flags)
+            .flat_map(|((doc, mentions), flags)| {
                 let mut parts = vec![StagedPart::Document {
                     kind: doc.kind,
                     position: doc.position,
@@ -135,6 +161,9 @@ impl StageAOutput {
                 if !mentions.is_empty() {
                     parts.push(StagedPart::Mentions(mentions));
                 }
+                if !flags.is_empty() {
+                    parts.push(StagedPart::CardFlags(flags));
+                }
                 parts
             })
     }
@@ -145,6 +174,7 @@ impl StageAOutput {
 pub struct CommitOutcome {
     pub segments: usize,
     pub mentions: usize,
+    pub card_flags: usize,
     pub touched_keys: usize,
     pub connections_changed: bool,
 }
@@ -634,6 +664,104 @@ pub(crate) fn start_item(conn: &Connection, item: i64) -> Result<Option<StartedI
     }))
 }
 
+const INSERT_MENTION: &str = "INSERT INTO identifier_mention (segment_id, document_id, content_id,
+         identifier_key, span_start, span_end, column_index, column_name, raw, confidence,
+         found_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'builtin')";
+const INSERT_FLAG: &str = "INSERT INTO sensitive_flag (segment_id, document_id, content_id,
+         span_start, span_end, column_index, column_name, last4)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+
+/// The checked place of a mention or flag in its segment: span and CSV column.
+struct Place {
+    start: i64,
+    end: i64,
+    column_index: Option<i64>,
+    column_name: Option<String>,
+}
+
+impl Place {
+    /// Checks that `locator`'s span lies in a segment of `len` characters (INV-CO-04) and finds
+    /// its cell among `cells`.
+    fn check(locator: &Locator, len: usize, cells: &[u32]) -> Result<Place, StoreError> {
+        let span = locator
+            .span()
+            .ok_or_else(|| invalid("mention locator has no span"))?;
+        if span.end() > len {
+            return Err(invalid("mention span is past its segment text"));
+        }
+        let cell = (!cells.is_empty()).then(|| {
+            cells
+                .partition_point(|s| *s as usize <= span.start())
+                .saturating_sub(1)
+        });
+        let (column_index, column_name) = codec::column(locator, cell);
+        Ok(Place {
+            start: span.start() as i64,
+            end: span.end() as i64,
+            column_index,
+            column_name,
+        })
+    }
+}
+
+/// Inserts one built-in mention; returns its key as stored.
+#[allow(clippy::too_many_arguments)]
+fn insert_mention(
+    stmt: &mut rusqlite::CachedStatement<'_>,
+    segment: i64,
+    document: i64,
+    content: i64,
+    place: &Place,
+    raw: &str,
+    key: &IdentifierKey,
+    confidence: f32,
+) -> Result<String, StoreError> {
+    if !(0.0..=1.0).contains(&confidence) {
+        return Err(invalid("confidence outside 0..1"));
+    }
+    let key = key.to_string();
+    stmt.execute(params![
+        segment,
+        document,
+        content,
+        key,
+        place.start,
+        place.end,
+        place.column_index,
+        place.column_name,
+        raw,
+        f64::from(confidence)
+    ])?;
+    Ok(key)
+}
+
+fn insert_flag(
+    stmt: &mut rusqlite::CachedStatement<'_>,
+    segment: i64,
+    document: i64,
+    content: i64,
+    place: &Place,
+    last4: &str,
+) -> Result<(), StoreError> {
+    if last4.len() != 4 || !last4.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(invalid(
+            "a card-like flag keeps exactly its last four digits",
+        ));
+    }
+    stmt.execute(params![
+        segment,
+        document,
+        content,
+        place.start,
+        place.end,
+        place.column_index,
+        place.column_name,
+        last4
+    ])?;
+    Ok(())
+}
+
 /// Commits a Stage A result (INV-PR-04, INV-CO-06, ADR-0005): the content's old documents,
 /// segments and mentions are replaced by the new ones, the touched keys are rebuilt, and the
 /// item and content become Done, all in this one transaction.
@@ -670,11 +798,8 @@ pub(crate) fn commit_stage_a(
                               cell_starts, ocr)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )?;
-    let mut insert_mention = conn.prepare_cached(
-        "INSERT INTO identifier_mention (segment_id, document_id, content_id, identifier_key,
-             span_start, span_end, column_index, column_name, raw, confidence, found_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'builtin')",
-    )?;
+    let mut insert_mention_stmt = conn.prepare_cached(INSERT_MENTION)?;
+    let mut insert_flag_stmt = conn.prepare_cached(INSERT_FLAG)?;
     for part in parts {
         match part? {
             StagedPart::Document {
@@ -743,43 +868,46 @@ pub(crate) fn commit_stage_a(
                     if m.document + 1 != doc_ids.len() {
                         return Err(invalid("mention points to no segment"));
                     }
-                    let (seg_id, len, cells) = m
+                    let seg = m
                         .segment
                         .checked_sub(batch_start)
                         .and_then(|i| batch.get(i))
                         .ok_or_else(|| invalid("mention points to no segment"))?;
-                    let span = m
-                        .locator
-                        .span()
-                        .ok_or_else(|| invalid("mention locator has no span"))?;
-                    // INV-CO-04: the span lies in the segment's stored text.
-                    if span.end() > *len {
-                        return Err(invalid("mention span is past its segment text"));
-                    }
-                    let cell = (!cells.is_empty()).then(|| {
-                        cells
-                            .partition_point(|s| *s as usize <= span.start())
-                            .saturating_sub(1)
-                    });
-                    let (column_index, column_name) = codec::column(&m.locator, cell);
-                    if !(0.0..=1.0).contains(&m.confidence) {
-                        return Err(invalid("confidence outside 0..1"));
-                    }
-                    let key = m.key.to_string();
-                    insert_mention.execute(params![
-                        seg_id,
+                    let place = Place::check(&m.locator, seg.1, &seg.2)?;
+                    let key = insert_mention(
+                        &mut insert_mention_stmt,
+                        seg.0,
                         doc_ids[m.document],
                         content,
-                        key,
-                        span.start() as i64,
-                        span.end() as i64,
-                        column_index,
-                        column_name,
-                        m.raw,
-                        f64::from(m.confidence)
-                    ])?;
+                        &place,
+                        &m.raw,
+                        &m.key,
+                        m.confidence,
+                    )?;
                     touched.insert(key);
                     out.mentions += 1;
+                }
+            }
+            StagedPart::CardFlags(flags) => {
+                for f in flags {
+                    if f.document + 1 != doc_ids.len() {
+                        return Err(invalid("card-like flag points to no segment"));
+                    }
+                    let seg = f
+                        .segment
+                        .checked_sub(batch_start)
+                        .and_then(|i| batch.get(i))
+                        .ok_or_else(|| invalid("card-like flag points to no segment"))?;
+                    let place = Place::check(&f.locator, seg.1, &seg.2)?;
+                    insert_flag(
+                        &mut insert_flag_stmt,
+                        seg.0,
+                        doc_ids[f.document],
+                        content,
+                        &place,
+                        &f.last4,
+                    )?;
+                    out.card_flags += 1;
                 }
             }
         }
@@ -882,4 +1010,166 @@ pub(crate) fn recover_after_restart(conn: &Connection) -> Result<Recovery, Store
         ],
     )?;
     Ok(Recovery { items, contents })
+}
+
+/// A stored segment as an identifier re-run sees it (M4b): enough to find identifiers in it
+/// and build their locators, as the worker did.
+#[derive(Clone, PartialEq, Debug)]
+pub struct StoredSegment {
+    pub document_id: i64,
+    pub locator: Locator,
+    pub text: String,
+    pub malformed: bool,
+    pub cell_starts: Vec<u32>,
+    pub ocr: Option<OcrGeometry>,
+}
+
+/// A mention found again in a stored segment.
+#[derive(Clone, PartialEq, Debug)]
+pub struct FoundMention {
+    pub locator: Locator,
+    pub raw: String,
+    pub key: IdentifierKey,
+    pub confidence: f32,
+}
+
+/// A card-like number found again in a stored segment.
+#[derive(Clone, PartialEq, Debug)]
+pub struct FoundFlag {
+    pub locator: Locator,
+    pub last4: String,
+}
+
+/// What a re-run found in one segment.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct SegmentFinds {
+    pub mentions: Vec<FoundMention>,
+    pub card_flags: Vec<FoundFlag>,
+}
+
+/// What re-running one content's identifiers did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct RerunOutcome {
+    pub mentions: usize,
+    pub card_flags: usize,
+    pub connections_changed: bool,
+}
+
+/// The `project_meta` key of an unfinished identifier re-run: the last content it committed.
+pub(crate) const RERUN_AFTER: &str = "identifier_rerun_after";
+pub(crate) const IDENTIFIER_VERSION: &str = "identifier_version";
+
+/// Finds a content's identifiers again from its stored segments (M4b): its built-in mentions
+/// and card-like flags are replaced by what `find` gives for each segment, in document and
+/// segment order, and the keys of the old and new mentions are rebuilt (ADR-0005), all in this
+/// one transaction; the re-run's cursor moves past the content in it too, so a kill loses at
+/// most this content's work (INV-PR-04/05). The segments are read one at a time: memory stays
+/// O(segment) whatever the content's size. Segments, the keyword index and decisions are not
+/// touched. A content with no documents (gone, failed, not read yet) changes nothing.
+///
+/// `after` is the cursor the caller read; if the re-run was started again since (another region
+/// change), nothing is done and `None` comes back, so the caller starts over with the new rules.
+pub(crate) fn rerun_identifiers(
+    conn: &Connection,
+    after: i64,
+    content: i64,
+    find: &mut dyn FnMut(&StoredSegment) -> SegmentFinds,
+) -> Result<Option<RerunOutcome>, StoreError> {
+    if rerun_cursor(conn)? != Some(after) {
+        return Ok(None);
+    }
+    let mut out = RerunOutcome::default();
+    let mut touched = BTreeSet::new();
+    content_keys(conn, content, &mut touched)?;
+    conn.prepare_cached(
+        "DELETE FROM identifier_mention WHERE content_id = ?1 AND found_by = 'builtin'",
+    )?
+    .execute([content])?;
+    conn.prepare_cached("DELETE FROM sensitive_flag WHERE content_id = ?1")?
+        .execute([content])?;
+    let mut insert_mention_stmt = conn.prepare_cached(INSERT_MENTION)?;
+    let mut insert_flag_stmt = conn.prepare_cached(INSERT_FLAG)?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT s.id, s.document_id, s.loc_kind, s.loc_pos, s.loc_ref, s.text, s.malformed,
+                s.cell_starts, s.ocr
+         FROM document d JOIN segment s ON s.document_id = d.id
+         WHERE d.content_id = ?1 ORDER BY d.id, s.ordinal",
+    )?;
+    let mut rows = stmt.query([content])?;
+    while let Some(r) = rows.next()? {
+        let id: i64 = r.get(0)?;
+        let text: String = r.get(5)?;
+        let ocr: Option<Vec<u8>> = r.get(8)?;
+        let seg = StoredSegment {
+            document_id: r.get(1)?,
+            locator: codec::segment_from(
+                &r.get::<_, String>(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                &text,
+                ocr.as_deref(),
+            )?,
+            malformed: r.get(6)?,
+            cell_starts: codec::cells_from_blob(r.get(7)?),
+            ocr: ocr.map(|b| codec::ocr_from_blob(&b, &text)).transpose()?,
+            text,
+        };
+        let finds = find(&seg);
+        let len = seg.text.chars().count();
+        for m in finds.mentions {
+            let place = Place::check(&m.locator, len, &seg.cell_starts)?;
+            let key = insert_mention(
+                &mut insert_mention_stmt,
+                id,
+                seg.document_id,
+                content,
+                &place,
+                &m.raw,
+                &m.key,
+                m.confidence,
+            )?;
+            touched.insert(key);
+            out.mentions += 1;
+        }
+        for f in finds.card_flags {
+            let place = Place::check(&f.locator, len, &seg.cell_starts)?;
+            insert_flag(
+                &mut insert_flag_stmt,
+                id,
+                seg.document_id,
+                content,
+                &place,
+                &f.last4,
+            )?;
+            out.card_flags += 1;
+        }
+    }
+    crate::manage::set_meta(conn, RERUN_AFTER, Some(&content.to_string()))?;
+    out.connections_changed = rebuild_keys(conn, &touched)?;
+    Ok(Some(out))
+}
+
+fn rerun_cursor(conn: &Connection) -> Result<Option<i64>, StoreError> {
+    Ok(crate::documents::meta(conn, RERUN_AFTER)?.and_then(|v| v.parse().ok()))
+}
+
+/// Starts an identifier re-run of every content from the first (a region change, US-04.2 AC2).
+pub(crate) fn begin_identifier_rerun(conn: &Connection) -> Result<(), StoreError> {
+    crate::manage::set_meta(conn, RERUN_AFTER, Some("0"))
+}
+
+/// Ends an identifier re-run whose cursor is still `after` (`None`: no re-run was started, an
+/// empty project): the stored mentions now follow rules `version`. `false` if the re-run was
+/// started again since, which then stays to do.
+pub(crate) fn finish_identifier_rerun(
+    conn: &Connection,
+    after: Option<i64>,
+    version: u32,
+) -> Result<bool, StoreError> {
+    if rerun_cursor(conn)? != after {
+        return Ok(false);
+    }
+    crate::manage::set_meta(conn, RERUN_AFTER, None)?;
+    crate::manage::set_meta(conn, IDENTIFIER_VERSION, Some(&version.to_string()))?;
+    Ok(true)
 }

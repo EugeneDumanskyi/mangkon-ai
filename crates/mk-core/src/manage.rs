@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use mk_store::{DocumentCursor, DocumentFilter, DocumentRow, RemoveOutcome};
+use mk_store::{CardFlagRow, DocumentCursor, DocumentFilter, DocumentRow, RemoveOutcome};
 use mk_workspace::{ProjectSettings, Reprocess, RootKind};
 
 use crate::project::{Project, ProjectError};
@@ -39,12 +39,15 @@ pub enum Eta {
     None,
 }
 
-/// The progress panel (US-03.1 AC1). Stage A only: Stages B and C come in M6.
+/// The progress panel (US-03.1 AC1). Stage A and the identifier re-run: Stages B and C come
+/// in M6.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ProgressView {
-    /// `"A"` while Stage A work is open; `None` when the queue is empty.
+    /// `"identifiers"` while identifiers are found again from stored text (M4b), `"A"` while
+    /// Stage A work is open; `None` when the queue is empty.
     pub stage: Option<&'static str>,
-    /// Files finished (done or failed) in this run, and those plus the files still to do.
+    /// Files finished (done or failed) in this run, and those plus the files still to do. In
+    /// the identifier re-run: contents done and to do.
     pub files_done: u64,
     pub files_total: u64,
     /// The files in a worker now.
@@ -195,28 +198,50 @@ impl Project {
         Ok(self.store().settings()?)
     }
 
-    /// Checks and saves settings (US-01.6). New OCR languages apply to files read from now on;
-    /// the returned [`Reprocess`] says what already read would change, for "Re-process affected
-    /// files now?" ([`Project::reprocess`], INV-WS-07).
+    /// Checks and saves settings (US-01.6). New OCR languages and a new phone region apply to
+    /// files read from now on; the returned [`Reprocess`] says what already read would change,
+    /// for "Re-process affected files now?" ([`Project::reprocess`], INV-WS-07). A stop-list
+    /// change applies at once: the domains added or dropped get their connections rebuilt in
+    /// the same transaction (US-04.3 AC3, INV-LK-03).
     pub fn save_settings(&self, settings: ProjectSettings) -> Result<Reprocess, ProjectError> {
         let new = settings
             .normalized()
             .map_err(|e| ProjectError::Invalid(e.to_string()))?;
+        if let Some(r) = &new.phone_region
+            && mk_identifiers::Region::parse(r).is_none()
+        {
+            return Err(ProjectError::Invalid(format!(
+                "Not a known phone region: {r} (use a country code, such as DE)"
+            )));
+        }
         let old = self.settings()?;
         let reprocess = ProjectSettings::affected_by(&old, &new);
-        self.store().set_settings(new)?;
+        if self.store().set_settings(new)? {
+            self.changed();
+        }
         Ok(reprocess)
     }
 
-    /// Queues the files a settings change affects (US-01.6 AC3, INV-WS-07): with `ocr`, files
-    /// with OCR'd pages and files that failed for a missing OCR language. Returns how many. The
-    /// caller starts [`Project::ingest`].
+    /// Re-does what a settings change affects (US-01.6 AC3, INV-WS-07): with `ocr`, queues the
+    /// files with OCR'd pages and the files that failed for a missing OCR language; with
+    /// `identifiers`, starts finding every content's identifiers again from its stored text
+    /// (US-04.2 AC2). Returns how many files were queued. The caller starts
+    /// [`Project::ingest`], which runs both.
     pub fn reprocess(&self, what: Reprocess) -> Result<usize, ProjectError> {
         let mut n = 0;
         if what.ocr {
             n += self.store().requeue_for_ocr()?;
         }
+        if what.identifiers {
+            self.store().begin_identifier_rerun()?;
+        }
         Ok(n)
+    }
+
+    /// A document's card-like numbers as masked text with their places, in reading order
+    /// (US-04.6 AC1). Only the last four digits are stored (NFR-SEC-14).
+    pub fn card_flags(&self, document: i64) -> Result<Vec<CardFlagRow>, ProjectError> {
+        Ok(self.store().card_flags(document)?)
     }
 
     /// The progress panel (US-03.1): files done and total in this run, the files in a worker
@@ -225,6 +250,21 @@ impl Project {
         let started = self.run_started();
         let d = self.store().progress_detail(started.map(|(_, ms)| ms))?;
         let running = self.is_running();
+        let rerun = *self
+            .rerun_progress()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((done, total)) = rerun {
+            return Ok(ProgressView {
+                stage: Some("identifiers"),
+                files_done: done,
+                files_total: total,
+                current_files: Vec::new(),
+                eta: Eta::None,
+                paused: d.paused,
+                running,
+            });
+        }
         let eta = match started {
             Some((at, _)) if running && !d.paused && d.open > 0 => {
                 match mk_jobs::estimate(d.finished, d.finished_bytes, d.open_bytes, at.elapsed()) {

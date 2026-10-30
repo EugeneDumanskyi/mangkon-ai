@@ -92,7 +92,8 @@ fn us_01_5_cli_remove_retry_relocate() {
 
     let first = json(&cli(&["ingest", "--json", "--project", p, s(&src)]));
     assert_eq!(first["added"], 3);
-    assert_eq!(first["connections"], 1);
+    // The shared email and its domain (US-04.3 AC2).
+    assert_eq!(first["connections"], 2);
 
     // US-02.7 AC3: only that file runs again (and fails again).
     let retried = json(&cli(&[
@@ -115,7 +116,7 @@ fn us_01_5_cli_remove_retry_relocate() {
         s(&src.join("b.csv")),
     ]));
     assert_eq!(removed["removed"], 1);
-    assert_eq!(removed["connections_losing_evidence"], 1);
+    assert_eq!(removed["connections_losing_evidence"], 2);
     assert_eq!(removed["connections"], 0);
     assert!(src.join("b.csv").is_file());
 

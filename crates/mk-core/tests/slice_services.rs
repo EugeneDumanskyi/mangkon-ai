@@ -44,19 +44,28 @@ fn us_07_3_ac2_occurrence_opens_its_line_and_cell() {
         (2, 2, 0, 0)
     );
 
-    // US-07.1 AC1: one connection, the shared address; keyset paging ends.
-    assert_eq!(project.connection_count().unwrap(), 1);
-    let page = project.connections_page(None, 1).unwrap();
-    assert_eq!(page.rows.len(), 1);
-    let row = &page.rows[0];
-    assert!(
-        row.subject_key.ends_with("shared@x.example"),
-        "{}",
-        row.subject_key
-    );
+    // US-07.1 AC1: two connections, the shared address and its domain (US-04.3); keyset
+    // paging gives each once and ends.
+    assert_eq!(project.connection_count().unwrap(), 2);
+    let mut rows = Vec::new();
+    let mut next = None;
+    loop {
+        let page = project.connections_page(next.as_ref(), 1).unwrap();
+        assert!(page.rows.len() <= 1);
+        rows.extend(page.rows);
+        match page.next {
+            Some(n) => next = Some(n),
+            None => break,
+        }
+    }
+    let mut keys: Vec<_> = rows.iter().map(|r| r.subject_key.as_str()).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["domain:x.example", "email:shared@x.example"]);
+    let row = rows
+        .iter()
+        .find(|r| r.subject_key == "email:shared@x.example")
+        .unwrap();
     assert_eq!((row.source_count, row.file_type_count), (2, 2));
-    let rest = project.connections_page(page.next.as_ref(), 1).unwrap();
-    assert!(rest.rows.is_empty() && rest.next.is_none());
 
     let occurrences = project.occurrences(&row.subject_key).unwrap();
     assert_eq!(occurrences.len(), 2);
@@ -116,7 +125,7 @@ fn rebuild_equals_incremental_state() {
     project.set_ignored("email:ann@x.example", true).unwrap();
     let r = project.rebuild().unwrap();
     assert!(r.same_as_incremental && r.consistent, "{r:?}");
-    assert_eq!(r.connections, 1);
+    assert_eq!(r.connections, 2, "the shared address and its domain");
     let again = project.ingest().unwrap();
     assert_eq!((again.rescan.hashed, again.stage_a.done), (0, 0));
 }

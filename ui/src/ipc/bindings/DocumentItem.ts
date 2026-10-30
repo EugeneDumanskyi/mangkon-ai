@@ -35,4 +35,8 @@ failureDetail: string | null,
 /**
  * Other paths with the same content (US-01.3 AC4).
  */
-otherPaths: number, };
+otherPaths: number, 
+/**
+ * Card-like numbers in the file: "Contains card-like number" (US-04.6 AC1).
+ */
+cardLikeCount: number, };

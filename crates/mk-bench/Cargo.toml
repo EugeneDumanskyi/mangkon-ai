@@ -1,6 +1,6 @@
 [package]
 name = "mk-bench"
-description = "BC-13: ground-truth model, load and validate (scoring comes in M4)."
+description = "BC-13: ground-truth model, load, validate and score."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -9,7 +9,9 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use mk_parsers::ParsedContent;
-use mk_store::{DocumentOut, MentionOut, SegmentOut, StageAOutput, StagedPart, StoreError};
+use mk_store::{
+    CardFlagOut, DocumentOut, MentionOut, SegmentOut, StageAOutput, StagedPart, StoreError,
+};
 use mk_worker::Chunk;
 use mk_worker::frame::{FrameReader, FrameWriter};
 
@@ -46,8 +48,8 @@ impl Failure {
     }
 }
 
-/// The worker broke the chunk order (a mention before its document or outside the segment
-/// batch just before it, or a parent that is not an earlier document).
+/// The worker broke the chunk order (a mention or card-like flag before its document or outside
+/// the segment batch just before it, or a parent that is not an earlier document).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ChunkOrderError;
 
@@ -123,6 +125,15 @@ impl Staging {
                     || ms
                         .iter()
                         .any(|m| m.segment < self.batch_start || m.segment >= self.segments)
+                {
+                    return Err(ChunkOrderError);
+                }
+            }
+            Chunk::CardFlags(fs) => {
+                if self.documents == 0
+                    || fs
+                        .iter()
+                        .any(|f| f.segment < self.batch_start || f.segment >= self.segments)
                 {
                     return Err(ChunkOrderError);
                 }
@@ -211,6 +222,7 @@ impl Staging {
                     }
                 }
                 StagedPart::Mentions(m) => out.mentions.extend(m),
+                StagedPart::CardFlags(f) => out.card_flags.extend(f),
             }
         }
         Ok(out)
@@ -301,6 +313,19 @@ impl Parts {
                         .collect(),
                 )
             }
+            Chunk::CardFlags(fs) => {
+                let document = self.documents.saturating_sub(1);
+                StagedPart::CardFlags(
+                    fs.into_iter()
+                        .map(|f| CardFlagOut {
+                            document,
+                            segment: f.segment as usize,
+                            locator: f.locator,
+                            last4: f.last4,
+                        })
+                        .collect(),
+                )
+            }
         }
     }
 }
@@ -318,6 +343,7 @@ fn estimate(chunk: &Chunk) -> u64 {
             })
             .sum(),
         Chunk::Mentions(m) => m.iter().map(|m| 128 + 2 * m.raw.len() as u64).sum(),
+        Chunk::CardFlags(f) => 64 * f.len() as u64,
     }
 }
 
@@ -330,13 +356,14 @@ pub fn clear_staging(cache: &Path) -> io::Result<()> {
 }
 
 /// Segments and identifier mentions of an already parsed content, in process, through the same
-/// steps a worker runs. For benchmarks and tests that fill a project through the store (spike
-/// S2c); untrusted files go through workers.
+/// steps a worker runs, with no phone region. For benchmarks and tests that fill a project
+/// through the store (spike S2c); untrusted files go through workers.
 pub fn extract(parsed: &ParsedContent) -> StageAOutput {
     let mut staging = Staging::in_memory();
     mk_worker::extract::chunks::<ChunkOrderError>(
         parsed.clone(),
         usize::MAX,
+        &mk_identifiers::Rules::default(),
         |c| staging.push(c).map_err(|_| ChunkOrderError),
         |_| {},
     )
@@ -358,6 +385,7 @@ mod tests {
         mk_worker::extract::chunks::<()>(
             parsed,
             n,
+            &mk_identifiers::Rules::default(),
             |c| {
                 out.push(c);
                 Ok(())

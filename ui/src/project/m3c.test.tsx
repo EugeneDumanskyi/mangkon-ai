@@ -121,6 +121,7 @@ const doc = (over: Partial<DocumentItem>): DocumentItem => ({
   failureReason: null,
   failureDetail: null,
   otherPaths: 0,
+  cardLikeCount: 0,
   ...over,
 });
 

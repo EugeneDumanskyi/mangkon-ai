@@ -3,6 +3,7 @@
 //! - the Rust crates in the shipped binaries (`cargo metadata`, normal dependencies of
 //!   `mangkon-desktop` and `mangkon-cli` on every desktop target),
 //! - the native sources compiled in (`crates/mk-tesseract-sys/native/sources.toml`),
+//! - data that a shipped crate embeds under its own license ([`EMBEDDED_DATA`]),
 //! - the npm packages bundled into the UI (`ui/package-lock.json`, non-dev entries).
 //!
 //! `--check` fails if the committed file differs, so CI catches a dependency change without a
@@ -17,6 +18,23 @@ use serde::Deserialize;
 use crate::layers::{Kinds, Metadata};
 
 pub const SHIPPED: &[&str] = &["mangkon-desktop", "mangkon-cli"];
+
+/// Data compiled into a crate, licensed apart from the crate's code: (crate, name, license,
+/// where from). Listed while that crate ships.
+const EMBEDDED_DATA: &[(&str, &str, &str, &str)] = &[
+    (
+        "psl",
+        "Public Suffix List (in psl)",
+        "MPL-2.0",
+        "https://publicsuffix.org",
+    ),
+    (
+        "phonenumber",
+        "libphonenumber metadata (in phonenumber)",
+        "Apache-2.0",
+        "https://github.com/google/libphonenumber",
+    ),
+];
 
 #[derive(Deserialize)]
 struct Sources {
@@ -49,6 +67,7 @@ type Section = BTreeMap<String, (String, String)>;
 
 pub fn render(root: &Path, metas: &[Metadata]) -> Result<String, String> {
     let mut rust = Section::new();
+    let mut data = Section::new();
     for meta in metas {
         for member in &meta.workspace_members {
             if !SHIPPED.contains(&meta.name(member)) {
@@ -62,6 +81,12 @@ pub fn render(root: &Path, metas: &[Metadata]) -> Result<String, String> {
                 let license = p.license.clone().unwrap_or_else(|| "see crate".into());
                 let repo = p.repository.clone().unwrap_or_default();
                 rust.insert(format!("{} {}", p.name, p.version), (license, repo));
+                for (_, name, license, link) in EMBEDDED_DATA.iter().filter(|d| d.0 == p.name) {
+                    data.insert(
+                        format!("{name} {}", p.version),
+                        (license.to_string(), link.to_string()),
+                    );
+                }
             }
         }
     }
@@ -102,6 +127,7 @@ pub fn render(root: &Path, metas: &[Metadata]) -> Result<String, String> {
          third-party components below, each under its own license.\n",
     );
     section(&mut out, "Native code compiled into the app", &native);
+    section(&mut out, "Data compiled into the app", &data);
     section(&mut out, "Rust crates", &rust);
     section(&mut out, "npm packages bundled into the UI", &npm);
     Ok(out)

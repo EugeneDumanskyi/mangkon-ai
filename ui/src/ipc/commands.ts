@@ -84,8 +84,12 @@ export const commands = {
   removeFiles: (refIds: number[]) => invoke<RemoveSummary>("remove_files", { refIds }),
   projectSettings: () => invoke<SettingsInfo>("project_settings"),
   saveSettings: (settings: Settings) => invoke<SettingsSaved>("save_settings", { settings }),
-  /** Reads again the files the OCR languages change; returns how many. */
-  reprocess: () => invoke<number>("reprocess"),
+  /**
+   * Re-does what a settings change affects: reads again the files the OCR languages change
+   * (`ocr`), finds identifiers again from the stored text after a region change
+   * (`identifiers`). Returns how many files are read again.
+   */
+  reprocess: (what: { ocr: boolean; identifiers: boolean }) => invoke<number>("reprocess", what),
   sourceRoots: () => invoke<SourceRoot[]>("source_roots"),
   relocateRoot: (root: number, path: string) => invoke<null>("relocate_root", { root, path }),
   removeRoot: (root: number) => invoke<RemoveSummary>("remove_root", { root }),

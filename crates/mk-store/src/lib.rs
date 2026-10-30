@@ -36,12 +36,14 @@ pub use app_store::{APP_MIGRATIONS, AppStore};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use manage::{CancelOutcome, RemoveOutcome};
 pub use ops::{
-    CommitOutcome, DocumentOut, MentionOut, NewContent, Recovery, RescanChange, RescanOutcome,
-    SegmentOut, StageAOutput, StagedPart, StartedItem,
+    CardFlagOut, CommitOutcome, DocumentOut, FoundFlag, FoundMention, MentionOut, NewContent,
+    Recovery, RerunOutcome, RescanChange, RescanOutcome, SegmentFinds, SegmentOut, StageAOutput,
+    StagedPart, StartedItem, StoredSegment,
 };
 pub use read::{
-    ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, KnownFile, MentionRow,
-    OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow, SegmentWindow, WindowSegment,
+    CardFlagRow, ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, KnownFile,
+    MentionRow, OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow, SegmentWindow,
+    WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 pub use search::{SearchCursor, SearchFilter, SearchRow};
@@ -306,8 +308,9 @@ impl Store {
             .call(move |tx| manage::clear_exclusions(tx, root, &rel_path))
     }
 
-    /// Stores checked settings (US-01.6).
-    pub fn set_settings(&self, settings: ProjectSettings) -> Result<(), StoreError> {
+    /// Stores checked settings (US-01.6); a stop-list edit rebuilds the domains it adds or
+    /// drops (INV-LK-03). Returns whether a connection row changed.
+    pub fn set_settings(&self, settings: ProjectSettings) -> Result<bool, StoreError> {
         self.writer
             .call(move |tx| manage::set_settings(tx, &settings))
     }
@@ -333,6 +336,38 @@ impl Store {
         self.writer.call(move |tx| {
             ops::append_decision(tx, kind, &anchor, before.as_deref(), after.as_deref())
         })
+    }
+
+    /// Finds one content's identifiers again from its stored segments with `find`, replacing
+    /// its built-in mentions and card-like flags and rebuilding their keys in one transaction
+    /// (M4b, see `ops::rerun_identifiers`). Runs on the writer thread.
+    pub fn rerun_identifiers<F>(
+        &self,
+        after: i64,
+        content: i64,
+        mut find: F,
+    ) -> Result<Option<RerunOutcome>, StoreError>
+    where
+        F: FnMut(&StoredSegment) -> SegmentFinds + Send + 'static,
+    {
+        self.writer
+            .call(move |tx| ops::rerun_identifiers(tx, after, content, &mut find))
+    }
+
+    /// Marks an identifier re-run of every content as started (a region change).
+    pub fn begin_identifier_rerun(&self) -> Result<(), StoreError> {
+        self.writer.call(|tx| ops::begin_identifier_rerun(tx))
+    }
+
+    /// Marks the identifier re-run at cursor `after` done: the mentions follow rules `version`.
+    /// `false` if it was started again since.
+    pub fn finish_identifier_rerun(
+        &self,
+        after: Option<i64>,
+        version: u32,
+    ) -> Result<bool, StoreError> {
+        self.writer
+            .call(move |tx| ops::finish_identifier_rerun(tx, after, version))
     }
 
     /// Drops and rebuilds every derived table (ADR-0005 "full rebuild").
@@ -385,6 +420,27 @@ impl Store {
     /// A project-meta value, such as `name` or `app_version`.
     pub fn meta(&self, key: &str) -> Result<Option<String>, StoreError> {
         self.readers.with(|c| documents::meta(c, key))
+    }
+
+    /// The rules version of the stored identifiers (`None` before M4b) and, during a re-run,
+    /// the last content it committed.
+    pub fn identifier_state(&self) -> Result<(Option<u32>, Option<i64>), StoreError> {
+        self.readers.with(read::identifier_state)
+    }
+
+    /// Contents with documents after `after`, in id order, at most `limit`.
+    pub fn rerun_contents(&self, after: i64, limit: usize) -> Result<Vec<i64>, StoreError> {
+        self.readers.with(|c| read::rerun_contents(c, after, limit))
+    }
+
+    /// A document's card-like flags in reading order (US-04.6 AC1).
+    pub fn card_flags(&self, document: i64) -> Result<Vec<CardFlagRow>, StoreError> {
+        self.readers.with(|c| read::card_flags(c, document))
+    }
+
+    /// Every card-like flag as `(content, document, last4)`.
+    pub fn all_card_flags(&self) -> Result<Vec<(i64, i64, String)>, StoreError> {
+        self.readers.with(read::all_card_flags)
     }
 
     /// Paths removed from `root` (US-01.5).

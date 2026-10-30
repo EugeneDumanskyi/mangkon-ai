@@ -204,11 +204,19 @@ fn process<W: Write>(
     progress.set(WorkStage::Parsing);
     engines.set_ocr(ocr_config(&req.settings));
     let mut input = io::BufReader::with_capacity(1 << 16, file);
+    let rules = mk_identifiers::Rules {
+        phone_region: req
+            .settings
+            .phone_region
+            .as_deref()
+            .and_then(mk_identifiers::Region::parse),
+    };
     let mut sink = ChunkSink::new(
         req.limits.chunk_segments as usize,
         |c| send(out, &FromWorker::Chunk(c)),
         |n| progress.units.store(n, Ordering::Relaxed),
-    );
+    )
+    .with_rules(rules);
     if format == Format::Mbox || format.is_paged() {
         let p = progress.clone();
         sink = sink.in_units().on_ocr(move |active| p.ocr(active));

@@ -408,6 +408,7 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
             });
         }
     }
+    out.stop_list = crate::derive::stop_list(conn)?;
     Ok(out)
 }
 
@@ -825,4 +826,87 @@ pub(crate) fn failed_files(conn: &Connection, limit: usize) -> Result<Vec<Failed
         },
     )?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// A card-like flag on a document (US-04.6 AC1): where the number is and its last four digits.
+#[derive(Clone, PartialEq, Debug)]
+pub struct CardFlagRow {
+    pub segment_id: i64,
+    pub locator: Locator,
+    pub last4: String,
+}
+
+impl CardFlagRow {
+    /// `**** **** **** 1234` (US-04.6 AC1, NFR-SEC-14).
+    pub fn masked(&self) -> String {
+        format!("**** **** **** {}", self.last4)
+    }
+}
+
+/// The card-like flags of a document, in reading order.
+pub(crate) fn card_flags(conn: &Connection, document: i64) -> Result<Vec<CardFlagRow>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT k.segment_id, s.loc_kind, s.loc_pos, s.loc_ref, s.text, s.ocr, k.span_start,
+                k.span_end, k.column_index, k.column_name, k.last4
+         FROM sensitive_flag k JOIN segment s ON s.id = k.segment_id
+         WHERE k.document_id = ?1 ORDER BY s.ordinal, k.span_start",
+    )?;
+    let mut rows = stmt.query([document])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        let text: String = r.get(4)?;
+        let ocr: Option<Vec<u8>> = r.get(5)?;
+        out.push(CardFlagRow {
+            segment_id: r.get(0)?,
+            locator: codec::mention_from(
+                &r.get::<_, String>(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                &text,
+                ocr.as_deref(),
+                codec::MentionCols {
+                    start: r.get(6)?,
+                    end: r.get(7)?,
+                    column_index: r.get(8)?,
+                    column_name: r.get(9)?,
+                },
+            )?,
+            last4: r.get(10)?,
+        });
+    }
+    Ok(out)
+}
+
+/// Every card-like flag's last four digits with its content (tests and the bench).
+pub(crate) fn all_card_flags(conn: &Connection) -> Result<Vec<(i64, i64, String)>, StoreError> {
+    let mut stmt = conn.prepare("SELECT content_id, document_id, last4 FROM sensitive_flag")?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Contents with stored documents and an id after `after`, at most `limit`, in id order: what
+/// an identifier re-run walks (M4b).
+pub(crate) fn rerun_contents(
+    conn: &Connection,
+    after: i64,
+    limit: usize,
+) -> Result<Vec<i64>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT c.id FROM content c
+         WHERE c.id > ?1 AND EXISTS (SELECT 1 FROM document d WHERE d.content_id = c.id)
+         ORDER BY c.id LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![after, limit as i64], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Where the stored identifiers stand: the rules version they were made with (`None` before
+/// M4b) and, while a re-run is unfinished, the last content it committed.
+pub(crate) fn identifier_state(
+    conn: &Connection,
+) -> Result<(Option<u32>, Option<i64>), StoreError> {
+    let version =
+        crate::documents::meta(conn, crate::ops::IDENTIFIER_VERSION)?.and_then(|v| v.parse().ok());
+    let after = crate::documents::meta(conn, crate::ops::RERUN_AFTER)?.and_then(|v| v.parse().ok());
+    Ok((version, after))
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mk-identifiers"
-description = "BC-04: identifier validators and extractors, pure functions (email in M2b)."
+description = "BC-04: identifier validators and extractors, pure functions."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,9 +10,15 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+bech32 = "0.12.0"
+bs58 = { version = "0.5.1", features = ["check"] }
 mk-kernel.workspace = true
+phonenumber = "0.3.10"
+psl = "2.1.245"
 regex = "1.13.1"
+sha3 = "0.12.0"
 
 [dev-dependencies]
 mk-bench.workspace = true
+serde_json = "1.0.154"
 proptest = "1.12.0"

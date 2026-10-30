@@ -1,26 +1,69 @@
-//! A content as protocol chunks while it is parsed: its segments and identifier mentions
-//! (US-04.1). This is the Stage A step after parsing, run in the worker because it is cheap and
-//! needs the fresh segments (ADR-0007).
+//! A content as protocol chunks while it is parsed: its segments, identifier mentions and
+//! card-like flags (US-04.1 – US-04.6). This is the Stage A step after parsing, run in the
+//! worker because it is cheap and needs the fresh segments (ADR-0007). The core runs the same
+//! [`segment_identifiers`] over stored segments when only the identifier rules change (M4b), so
+//! the two cannot drift.
 
+use mk_identifiers::Rules;
 use mk_parsers::{DocumentStart, ParseError, ParsedContent, ParsedSegment, RowState, Sink};
 
-use crate::protocol::{Chunk, Mention, Segment};
+use crate::protocol::{CardFlag, Chunk, Mention, Segment};
+
+/// The mentions and card-like flags in one segment (segment `segment` of its document), each
+/// with its locator (INV-CO-03/04). A hit that would cross a CSV cell edge is dropped: every
+/// mention lies in one cell; Message-ID headers are not scanned. A mention in OCR text gets the
+/// lowest of its own confidence and its words' OCR confidence (INV-ID-03).
+pub fn segment_identifiers(
+    seg: &ParsedSegment,
+    segment: u32,
+    columns: &[Option<String>],
+    rules: &Rules,
+) -> (Vec<Mention>, Vec<CardFlag>) {
+    let found = mk_identifiers::find_all(&seg.text, rules);
+    let mentions = found
+        .hits
+        .into_iter()
+        .filter_map(|hit| {
+            let locator = mk_parsers::mention_locator(seg, columns, hit.span)?;
+            let confidence = seg
+                .ocr_confidence(hit.span)
+                .map_or(hit.confidence, |c| c.min(hit.confidence));
+            Some(Mention {
+                segment,
+                locator,
+                raw: hit.raw,
+                key: hit.key,
+                confidence,
+            })
+        })
+        .collect();
+    let cards = found
+        .cards
+        .into_iter()
+        .filter_map(|card| {
+            Some(CardFlag {
+                segment,
+                locator: mk_parsers::mention_locator(seg, columns, card.span)?,
+                last4: card.last4,
+            })
+        })
+        .collect();
+    (mentions, cards)
+}
 
 /// A parser [`Sink`] that turns what it gets into chunks: [`Chunk::Document`] for each
 /// document, then its segments `chunk_segments` at a time, each batch followed by the mentions
-/// in it. Only one batch is held. A mention that would cross a CSV cell edge is dropped: every
-/// mention lies in one cell (INV-CO-03/04); Message-ID headers are not scanned.
+/// and card-like flags in it ([`segment_identifiers`] with [`ChunkSink::with_rules`]). Only one
+/// batch is held.
 ///
 /// `emit` errors stop the parse: the sink keeps the first one for [`ChunkSink::finish`] and
 /// hands the parser a stand-in. `report` gets the running segment count, or, after
 /// [`ChunkSink::in_units`], only the units the parser reports (MBOX messages, ADR-0016; PDF and
 /// image pages, ADR-0017). `on_ocr` hears when a page's OCR starts and ends.
-///
-/// A mention in OCR text gets the lowest of its own confidence and its words' OCR confidence
-/// (INV-ID-03).
 pub struct ChunkSink<E, F, R> {
     emit: F,
     report: R,
+    rules: Rules,
     on_ocr: Option<Box<dyn FnMut(bool)>>,
     n: usize,
     columns: Vec<Option<String>>,
@@ -43,6 +86,7 @@ where
         ChunkSink {
             emit,
             report,
+            rules: Rules::default(),
             on_ocr: None,
             n: chunk_segments.max(1),
             columns: Vec::new(),
@@ -54,6 +98,12 @@ where
             error: None,
             warnings: Vec::new(),
         }
+    }
+
+    /// The project's identifier rules (the phone region); none by default.
+    pub fn with_rules(mut self, rules: Rules) -> Self {
+        self.rules = rules;
+        self
     }
 
     /// Reports the parser's units of progress instead of segments.
@@ -84,22 +134,12 @@ where
         }
         let batch = std::mem::take(&mut self.batch);
         let mut mentions = Vec::new();
+        let mut cards = Vec::new();
         for (i, seg) in batch.iter().enumerate() {
-            let segment = self.before + i as u32;
-            for hit in mk_identifiers::find_all(&seg.text) {
-                if let Some(locator) = mk_parsers::mention_locator(seg, &self.columns, hit.span) {
-                    let confidence = seg
-                        .ocr_confidence(hit.span)
-                        .map_or(hit.confidence, |c| c.min(hit.confidence));
-                    mentions.push(Mention {
-                        segment,
-                        locator,
-                        raw: hit.raw,
-                        key: hit.key,
-                        confidence,
-                    });
-                }
-            }
+            let (m, c) =
+                segment_identifiers(seg, self.before + i as u32, &self.columns, &self.rules);
+            mentions.extend(m);
+            cards.extend(c);
         }
         let len = batch.len();
         let segments = batch
@@ -115,6 +155,9 @@ where
         self.send(Chunk::Segments(segments))?;
         if !mentions.is_empty() {
             self.send(Chunk::Mentions(mentions))?;
+        }
+        if !cards.is_empty() {
+            self.send(Chunk::CardFlags(cards))?;
         }
         self.before += len as u32;
         self.total += len as u64;
@@ -194,10 +237,11 @@ where
 pub fn chunks<E>(
     parsed: ParsedContent,
     chunk_segments: usize,
+    rules: &Rules,
     emit: impl FnMut(Chunk) -> Result<(), E>,
     sent: impl FnMut(u64),
 ) -> Result<(), E> {
-    let mut sink = ChunkSink::new(chunk_segments, emit, sent);
+    let mut sink = ChunkSink::new(chunk_segments, emit, sent).with_rules(rules.clone());
     for doc in parsed.documents {
         let start = DocumentStart {
             kind: doc.kind,
@@ -227,6 +271,7 @@ mod tests {
         chunks::<()>(
             parsed,
             n,
+            &Rules::default(),
             |c| {
                 out.push(c);
                 Ok(())
@@ -254,6 +299,9 @@ mod tests {
                     assert!(m.iter().all(|m| batch.contains(&(m.segment as usize))));
                     docs.last_mut().unwrap().1.extend(m);
                 }
+                Chunk::CardFlags(c) => {
+                    assert!(c.iter().all(|c| batch.contains(&(c.segment as usize))));
+                }
             }
         }
         docs
@@ -270,7 +318,8 @@ mod tests {
         let parsed = mk_parsers::parse(Format::Csv, csv.as_bytes()).unwrap();
         let one = flat(collect(parsed.clone(), 1));
         assert_eq!(one[0].0.len(), 51);
-        assert_eq!(one[0].1.len(), 50);
+        // Each email and its domain (INV-ID-05).
+        assert_eq!(one[0].1.len(), 100);
         for n in [2, 7, 4096] {
             assert_eq!(flat(collect(parsed.clone(), n)), one, "chunk size {n}");
         }
@@ -309,6 +358,7 @@ mod tests {
         let raws: Vec<String> = flat(docs)
             .into_iter()
             .flat_map(|d| d.1)
+            .filter(|m| m.key.kind() == mk_kernel::IdentifierKind::Email)
             .map(|m| m.raw)
             .collect();
         assert_eq!(raws, vec!["a@x.example", "c@x.example"]);
@@ -325,5 +375,53 @@ mod tests {
         .unwrap();
         sink.finish().unwrap();
         assert_eq!(reports, vec![1, 2]);
+    }
+
+    /// US-04.2 AC2 / US-04.6: the sink applies the region, and card-like numbers come as
+    /// flags with their cell, never as mentions.
+    #[test]
+    fn rules_and_card_flags() {
+        let csv = "name,phone,card\nA,020 7946 0318,4111 1111 1111 1111\n";
+        let parsed = mk_parsers::parse(Format::Csv, csv.as_bytes()).unwrap();
+        let rules = Rules {
+            phone_region: mk_identifiers::Region::parse("GB"),
+        };
+        let mut out = Vec::new();
+        chunks::<()>(
+            parsed,
+            10,
+            &rules,
+            |c| {
+                out.push(c);
+                Ok(())
+            },
+            |_| {},
+        )
+        .unwrap();
+        let keys: Vec<String> = out
+            .iter()
+            .filter_map(|c| match c {
+                Chunk::Mentions(m) => Some(m.iter().map(|m| m.key.to_string())),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(keys, vec!["phone:+442079460318"]);
+        let Some(Chunk::CardFlags(flags)) = out.last() else {
+            panic!("{out:?}")
+        };
+        assert_eq!(flags.len(), 1);
+        assert_eq!(flags[0].last4, "1111");
+        assert_eq!(flags[0].segment, 1);
+        assert!(matches!(
+            &flags[0].locator,
+            mk_kernel::Locator::CsvCell { column: mk_kernel::Column::Name(n), .. } if n == "card"
+        ));
+        // NFR-SEC-14: the number is in the segment text only, never in a mention or flag.
+        for c in &out {
+            if matches!(c, Chunk::Mentions(_) | Chunk::CardFlags(_)) {
+                assert!(!format!("{c:?}").contains("1111 1111"), "{c:?}");
+            }
+        }
     }
 }

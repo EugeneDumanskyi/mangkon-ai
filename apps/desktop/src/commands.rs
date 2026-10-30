@@ -293,15 +293,23 @@ pub async fn save_settings(
     let r = state.current()?.project.save_settings(settings.into())?;
     Ok(ipc::SettingsSaved {
         reprocess_ocr: r.ocr,
+        rerun_identifiers: r.identifiers,
     })
 }
 
-/// "Re-process affected files now?": queues the files the OCR languages change and reads them
-/// (US-01.6 AC3). Returns how many were queued.
+/// "Re-process affected files now?" (US-01.6 AC3): with `ocr`, queues the files the OCR
+/// languages change; with `identifiers`, finds identifiers again from the stored text (the
+/// phone region changed, US-04.2 AC2). Then runs. Returns how many files were queued.
 #[tauri::command]
-pub async fn reprocess(state: State<'_, AppState>) -> Result<u32, IpcError> {
+pub async fn reprocess(
+    state: State<'_, AppState>,
+    ocr: bool,
+    identifiers: bool,
+) -> Result<u32, IpcError> {
     let open = state.current()?;
-    let n = open.project.reprocess(mk_core::Reprocess { ocr: true })?;
+    let n = open
+        .project
+        .reprocess(mk_core::Reprocess { ocr, identifiers })?;
     state.start_ingest(&open);
     Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
@@ -371,22 +379,34 @@ pub async fn occurrences(
 }
 
 /// The source around one mention, the hit split out (US-08.1 AC3–AC6).
+/// A source view with its document's card-like numbers, masked (US-04.6 AC1).
+fn with_card_flags(
+    project: &mk_core::Project,
+    ctx: Option<mk_core::SourceContext>,
+) -> Result<Option<ipc::SourceView>, IpcError> {
+    let Some(ctx) = ctx else { return Ok(None) };
+    let mut view = ipc::SourceView::from(ctx);
+    view.document.card_flags = project
+        .card_flags(view.document.document_id)?
+        .iter()
+        .map(Into::into)
+        .collect();
+    Ok(Some(view))
+}
+
 #[tauri::command]
 pub async fn source_context(
     state: State<'_, AppState>,
     mention_id: i64,
 ) -> Result<ipc::SourceView, IpcError> {
-    state
-        .current()?
-        .project
-        .source_context(mention_id)?
-        .map(Into::into)
-        .ok_or_else(|| {
-            IpcError::new(
-                "gone",
-                "This place is no longer in the project. The file may have changed.",
-            )
-        })
+    let open = state.current()?;
+    let ctx = open.project.source_context(mention_id)?;
+    with_card_flags(&open.project, ctx)?.ok_or_else(|| {
+        IpcError::new(
+            "gone",
+            "This place is no longer in the project. The file may have changed.",
+        )
+    })
 }
 
 /// One page of keyword search results after `cursor`, best first (US-06.1 AC1–AC3). The
@@ -417,17 +437,14 @@ pub async fn search_context(
     end: Option<u32>,
 ) -> Result<ipc::SourceView, IpcError> {
     let span = start.zip(end).map(|(s, e)| (s as usize, e as usize));
-    state
-        .current()?
-        .project
-        .segment_context(segment_id, span)?
-        .map(Into::into)
-        .ok_or_else(|| {
-            IpcError::new(
-                "gone",
-                "This place is no longer in the project. The file may have changed.",
-            )
-        })
+    let open = state.current()?;
+    let ctx = open.project.segment_context(segment_id, span)?;
+    with_card_flags(&open.project, ctx)?.ok_or_else(|| {
+        IpcError::new(
+            "gone",
+            "This place is no longer in the project. The file may have changed.",
+        )
+    })
 }
 
 /// A document from its start: an attachment, or the email it came in (US-08.1 AC4).
@@ -436,17 +453,14 @@ pub async fn source_document(
     state: State<'_, AppState>,
     document_id: i64,
 ) -> Result<ipc::SourceView, IpcError> {
-    state
-        .current()?
-        .project
-        .document_view(document_id)?
-        .map(Into::into)
-        .ok_or_else(|| {
-            IpcError::new(
-                "gone",
-                "This document is no longer in the project. The file may have changed.",
-            )
-        })
+    let open = state.current()?;
+    let ctx = open.project.document_view(document_id)?;
+    with_card_flags(&open.project, ctx)?.ok_or_else(|| {
+        IpcError::new(
+            "gone",
+            "This document is no longer in the project. The file may have changed.",
+        )
+    })
 }
 
 /// One page of a PDF or image document, with the boxes of `mention_id` or of a search `hit`

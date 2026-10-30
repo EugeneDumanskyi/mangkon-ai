@@ -20,6 +20,7 @@ use mk_workspace::{ProjectLayout, RootKind};
 
 use crate::control::{RunControl, Stop};
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
+use crate::identifiers::RerunSummary;
 use crate::stage_a::{Failure, SPILL_AT, Staging};
 use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
 
@@ -107,10 +108,11 @@ pub struct StageASummary {
     pub interrupted: usize,
 }
 
-/// What [`Project::ingest`] did: the re-scan, then the Stage A run.
+/// What [`Project::ingest`] did: the re-scan, the identifier re-run, then the Stage A run.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct IngestSummary {
     pub rescan: RescanSummary,
+    pub identifiers: RerunSummary,
     pub stage_a: StageASummary,
     /// The run stopped early for this request (US-03.2, US-03.3, US-03.4).
     pub interrupted: Option<Stop>,
@@ -181,6 +183,8 @@ pub struct Project {
     run_started: Mutex<Option<(Instant, i64)>>,
     /// Item → display path, for "current file" (US-03.1 AC1).
     in_flight: Mutex<BTreeMap<i64, String>>,
+    /// Contents done and total of an identifier re-run going on (M4b).
+    rerun: Mutex<Option<(u64, u64)>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -236,23 +240,23 @@ impl Project {
             .map_err(|e| ProjectError::Io(layout.cache(), e))?;
         let workers =
             mk_jobs::stage_a_limit(std::thread::available_parallelism().map_or(1, |n| n.get()));
-        Ok((
-            Project {
-                layout,
-                store,
-                events: Events::start(DEBOUNCE),
-                workers,
-                worker_config: WorkerConfig::default(),
-                tessdata: None,
-                renderer: Mutex::new(None),
-                control: RunControl::default(),
-                run: Mutex::new(()),
-                running: AtomicBool::new(false),
-                run_started: Mutex::new(None),
-                in_flight: Mutex::new(BTreeMap::new()),
-            },
-            OpenSummary { schema, recovered },
-        ))
+        let project = Project {
+            layout,
+            store,
+            events: Events::start(DEBOUNCE),
+            workers,
+            worker_config: WorkerConfig::default(),
+            tessdata: None,
+            renderer: Mutex::new(None),
+            control: RunControl::default(),
+            run: Mutex::new(()),
+            running: AtomicBool::new(false),
+            run_started: Mutex::new(None),
+            in_flight: Mutex::new(BTreeMap::new()),
+            rerun: Mutex::new(None),
+        };
+        project.stamp_identifier_rules_if_empty()?;
+        Ok((project, OpenSummary { schema, recovered }))
     }
 
     pub fn layout(&self) -> &ProjectLayout {
@@ -285,6 +289,15 @@ impl Project {
 
     pub(crate) fn renderer(&self) -> &Mutex<Option<WorkerProcess>> {
         &self.renderer
+    }
+
+    pub(crate) fn control(&self) -> &RunControl {
+        &self.control
+    }
+
+    /// Contents done and total of an identifier re-run going on.
+    pub(crate) fn rerun_progress(&self) -> &Mutex<Option<(u64, u64)>> {
+        &self.rerun
     }
 
     /// The folder of OCR language files (ADR-0018); `None` until set.
@@ -330,10 +343,18 @@ impl Project {
         Ok(mk_parsers::ocr::installed_languages(dir))
     }
 
-    /// What the workers of this run need to OCR: the project's languages and the language
-    /// folder, with English written there first. Without a folder, or if English cannot be
-    /// written, OCR is off and files that need it fail with a plain reason.
-    fn ocr_settings(&self) -> Result<Settings, ProjectError> {
+    /// What the workers of this run need: the phone region (US-04.2) and, with `ocr`, the
+    /// project's OCR languages and the language folder, with English written there first.
+    /// Without a folder, or if English cannot be written, OCR is off and files that need it
+    /// fail with a plain reason.
+    fn worker_settings(&self, ocr: bool) -> Result<Settings, ProjectError> {
+        let phone_region = self.identifier_rules()?.phone_region.map(|r| r.code());
+        if !ocr {
+            return Ok(Settings {
+                phone_region,
+                ..Settings::default()
+            });
+        }
         let tessdata = self.tessdata.as_ref().and_then(|dir| {
             mk_parsers::ocr::install_english(dir).ok()?;
             dir.to_str().map(str::to_string)
@@ -341,6 +362,7 @@ impl Project {
         Ok(Settings {
             ocr_languages: self.store.ocr_languages()?,
             tessdata,
+            phone_region,
             ..Settings::default()
         })
     }
@@ -448,26 +470,38 @@ impl Project {
         Ok(summary)
     }
 
-    /// Re-scan, then Stage A until nothing is pending: what both apps run after a folder is
-    /// added (US-01.3) and on reopen (a killed run is finished, ADR-0006). A paused queue only
-    /// re-scans. Pause, cancel and close end it early ([`IngestSummary::interrupted`]).
+    /// Re-scan, then a pending identifier re-run ([`Project::rerun_identifiers`]), then Stage
+    /// A until nothing is pending: what both apps run after a folder is added (US-01.3), on
+    /// reopen (a killed run is finished, ADR-0006) and after "Re-process affected files now?".
+    /// A paused queue only re-scans. Pause, cancel and close end it early
+    /// ([`IngestSummary::interrupted`]). A re-run asked for while Stage A ran (a region change)
+    /// runs after it.
     pub fn ingest(&self) -> Result<IngestSummary, ProjectError> {
         let _run = self.begin_run();
         let rescan = self.rescan(false)?;
-        let stage_a = if rescan.interrupted {
-            StageASummary::default()
-        } else {
-            self.stage_a_locked()?
-        };
-        Ok(IngestSummary {
+        let mut summary = IngestSummary {
             rescan,
-            stage_a,
-            interrupted: self.control.requested(),
-        })
+            ..IngestSummary::default()
+        };
+        if !summary.rescan.interrupted {
+            summary.identifiers = self.rerun_identifiers_locked()?;
+            if !summary.identifiers.interrupted {
+                summary.stage_a = self.stage_a_locked()?;
+                if !self.control.stopping() {
+                    let after = self.rerun_identifiers_locked()?;
+                    summary.identifiers.contents += after.contents;
+                    summary.identifiers.mentions += after.mentions;
+                    summary.identifiers.card_flags += after.card_flags;
+                    summary.identifiers.interrupted = after.interrupted;
+                }
+            }
+        }
+        summary.interrupted = self.control.requested();
+        Ok(summary)
     }
 
     /// Takes the run lock, waiting for a pause or cancel to finish first.
-    fn begin_run(&self) -> RunGuard<'_> {
+    pub(crate) fn begin_run(&self) -> RunGuard<'_> {
         let guard = lock(&self.run);
         self.running.store(true, Ordering::SeqCst);
         *lock(&self.run_started) = Some((Instant::now(), now_ms()));
@@ -533,7 +567,10 @@ impl Project {
     /// Whether a run would start a file now: what the desktop checks on open, so a paused
     /// project stays paused (US-03.4 AC1, NFR-REL-04).
     pub fn has_runnable_work(&self) -> Result<bool, ProjectError> {
-        Ok(self.store.has_runnable_work()?)
+        Ok(
+            self.store.has_runnable_work()?
+                || (self.identifiers_pending()? && !self.is_paused()?),
+        )
     }
 
     /// The files in a worker now, by display path (US-03.1 AC1).
@@ -645,14 +682,10 @@ impl Project {
                 .collect();
             // Language files are only touched when a run may OCR: a PDF, an image, or an email
             // that may carry one.
-            let settings = if pending.iter().any(|p| {
+            let settings = self.worker_settings(pending.iter().any(|p| {
                 Format::from_name(&p.file_type)
                     .is_some_and(|f| f.is_paged() || matches!(f, Format::Eml | Format::Mbox))
-            }) {
-                self.ocr_settings()?
-            } else {
-                Settings::default()
-            };
+            }))?;
             let items: Vec<_> = pending.iter().map(|p| p.item).collect();
             let order = mk_jobs::next_batch(&items, 0, items.len());
             let queue = Budget::new(
@@ -933,7 +966,7 @@ impl Project {
 }
 
 /// Ends a run: clears the running flag and the run's start, then releases the run lock.
-struct RunGuard<'a> {
+pub(crate) struct RunGuard<'a> {
     project: &'a Project,
     _guard: MutexGuard<'a, ()>,
 }
