@@ -438,12 +438,15 @@ pub struct OccurrenceRow {
     pub locator: Locator,
     pub raw: String,
     pub confidence: f32,
+    /// The identifier key, such as `email:a@x.example`.
+    pub key: String,
 }
 
 const OCCURRENCE_SELECT: &str = "
     SELECT m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
            s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
-           m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr
+           m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr,
+           m.identifier_key
     FROM identifier_mention m
     JOIN segment s ON s.id = m.segment_id
     JOIN content c ON c.id = m.content_id
@@ -494,6 +497,7 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
             )?,
             raw: r.get(13)?,
             confidence: r.get::<_, f64>(14)? as f32,
+            key: r.get(19)?,
         },
         counted,
     ))
@@ -521,6 +525,34 @@ pub(crate) fn mentions_of(
         let (row, counted) = occurrence_from(r)?;
         if counted {
             out.push(row);
+        }
+    }
+    Ok(out)
+}
+
+/// The counted mentions of `key` in one document (INV-CO-07), in reading order: by segment,
+/// then position in it (US-08.2 AC1). No cap: a document holds few mentions of one value.
+pub(crate) fn mentions_in_document(
+    conn: &Connection,
+    key: &str,
+    document: i64,
+) -> Result<Vec<i64>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT m.id, c.state FROM identifier_mention m
+         JOIN segment s ON s.id = m.segment_id
+         JOIN content c ON c.id = m.content_id
+         WHERE m.identifier_key = ?1 AND m.document_id = ?2
+         ORDER BY s.ordinal, m.span_start, m.id",
+    )?;
+    let mut rows = stmt.query(params![key, document])?;
+    let mut out = Vec::new();
+    while let Some(r) = rows.next()? {
+        let state: String = r.get(1)?;
+        let counted = IngestionState::from_name(&state)
+            .ok_or_else(|| StoreError::Invalid(format!("unknown content state {state}")))?
+            .counts_for_connections();
+        if counted {
+            out.push(r.get(0)?);
         }
     }
     Ok(out)
@@ -649,6 +681,19 @@ pub struct DocumentInfo {
     pub segments: u64,
     /// The first present path of the content, if any.
     pub path: Option<String>,
+    /// That path, or when none is present the path last seen (US-08.5): with the size and
+    /// modified time it had when it was read. An attachment's is its email file's.
+    pub known: Option<KnownFile>,
+}
+
+/// A path of a content as the store last saw it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct KnownFile {
+    pub path: String,
+    pub size: u64,
+    pub mtime_ns: i64,
+    /// Whether the last re-scan found it.
+    pub present: bool,
 }
 
 pub(crate) fn document_info(
@@ -658,17 +703,29 @@ pub(crate) fn document_info(
     let mut stmt = conn.prepare_cached(
         "SELECT d.id, d.content_id, c.file_type, d.kind, d.position, d.parent_id,
                 (SELECT COUNT(*) FROM segment WHERE document_id = d.id), r.path, f.rel_path,
-                c.hash
+                c.hash, f.size, f.mtime_ns, f.present
          FROM document d JOIN content c ON c.id = d.content_id
          LEFT JOIN file_ref f ON f.id = (
-             SELECT id FROM file_ref WHERE content_id = d.content_id AND present = 1
-             ORDER BY id LIMIT 1)
+             SELECT id FROM file_ref WHERE content_id = d.content_id
+             ORDER BY present DESC, CASE WHEN present = 1 THEN id END, last_seen_at DESC, id DESC
+             LIMIT 1)
          LEFT JOIN source_root r ON r.id = f.root_id
          WHERE d.id = ?1",
     )?;
     let mut rows = stmt.query([document])?;
     let Some(r) = rows.next()? else {
         return Ok(None);
+    };
+    let path = display_path(r.get(7)?, r.get(8)?);
+    let present = r.get::<_, Option<bool>>(12)?.unwrap_or(false);
+    let known = match (&path, r.get::<_, Option<i64>>(10)?, r.get(11)?) {
+        (Some(p), Some(size), Some(mtime_ns)) => Some(KnownFile {
+            path: p.clone(),
+            size: size as u64,
+            mtime_ns,
+            present,
+        }),
+        _ => None,
     };
     Ok(Some(DocumentInfo {
         id: r.get(0)?,
@@ -679,7 +736,8 @@ pub(crate) fn document_info(
         position: r.get(4)?,
         parent: r.get(5)?,
         segments: r.get::<_, i64>(6)? as u64,
-        path: display_path(r.get(7)?, r.get(8)?),
+        path: path.filter(|_| present),
+        known,
     }))
 }
 

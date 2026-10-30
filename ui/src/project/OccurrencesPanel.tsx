@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import { fileName, locationLabel, plural } from "../lib/labels";
@@ -21,6 +21,14 @@ export function OccurrencesPanel({
     queryFn: () => (key === null ? Promise.resolve([]) : commands.occurrences(key)),
     enabled: key !== null,
   });
+
+  // Keep the shown mention's row in view as Next / Previous move it (US-08.2 AC1).
+  useEffect(() => {
+    if (selected === null) return;
+    listRef.current
+      ?.querySelector(`[data-mention-id="${String(selected)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [selected, occurrences.data]);
 
   if (connection === null) {
     return (
@@ -46,7 +54,7 @@ export function OccurrencesPanel({
           {errorMessage(occurrences.error)}
         </p>
       )}
-      <ul ref={listRef} className="min-h-0 flex-1 overflow-auto">
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-auto" data-scroll="occurrences">
         {rows.map((o) => {
           const isSelected = o.mentionId === selected;
           return (
@@ -58,6 +66,7 @@ export function OccurrencesPanel({
                 }`}
                 aria-pressed={isSelected}
                 title={o.path ?? undefined}
+                data-mention-id={o.mentionId}
                 onClick={() => {
                   onSelect(o.mentionId);
                 }}

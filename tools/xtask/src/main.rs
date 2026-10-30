@@ -5,8 +5,10 @@
 //! - `check-layers`: the dependency rules (ADR-0002, ADR-0009).
 //! - `check-bindings`: the committed IPC bindings match the Rust types (ADR-0003).
 //! - `notices [--check]`: writes or checks `THIRD_PARTY_NOTICES` (NFR-LEG-05).
+//! - `mem [--pid <pid>] [--seconds <s>] [--every <s>]`: samples the running app's memory (NFR-RES-01).
 
 mod layers;
+mod mem;
 mod notices;
 mod prereq;
 
@@ -23,7 +25,8 @@ Tasks:
   ci                                   Run every CI gate locally, in CI order
   check-layers                         Check the dependency rules (ADR-0002, ADR-0009)
   check-bindings                       Check ui/src/ipc/bindings matches the Rust IPC types
-  notices [--check]                    Write (or check) THIRD_PARTY_NOTICES";
+  notices [--check]                    Write (or check) THIRD_PARTY_NOTICES
+  mem [--pid P] [--seconds S] [--every S]  Sample the running app's memory (Linux, NFR-RES-01)";
 
 type Result<T = ()> = std::result::Result<T, String>;
 
@@ -36,6 +39,7 @@ fn main() -> ExitCode {
         Some("check-layers") => check_layers(),
         Some("check-bindings") => check_bindings(&root()),
         Some("notices") => notices(rest.contains(&"--check")),
+        Some("mem") => mem::mem(&rest),
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);

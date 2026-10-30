@@ -579,3 +579,183 @@ fn inv_co_04_roundtrip_ocr_box() {
     assert!(low.is_empty(), "{low:#?}");
     eprintln!("ocr: {} highlights on their boxes", pairs.len());
 }
+
+/// A small seeded generator (xorshift64*), so the sample is the same on every run.
+struct Seeded(u64);
+
+impl Seeded {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+}
+
+/// The highlighted text of a source view, every hit part joined.
+fn highlighted(view: &mk_core::SourceContext) -> String {
+    use mk_core::SourceBody as B;
+    let marked: Vec<&mk_core::Marked> = match &view.body {
+        B::Text { lines } => lines.iter().map(|l| &l.text).collect(),
+        B::Table { rows, .. } => rows.iter().flat_map(|r| &r.cells).collect(),
+        B::Paragraphs { paragraphs } => paragraphs.iter().collect(),
+        B::Json { rows } => rows.iter().filter_map(|r| r.value.as_ref()).collect(),
+        B::Email { headers, parts, .. } => headers
+            .iter()
+            .map(|h| &h.value)
+            .chain(parts.iter().flat_map(|p| &p.lines))
+            .collect(),
+        B::Page { lines, .. } => lines.iter().collect(),
+    };
+    // A hit across lines is split per line; the line break is not shown.
+    marked
+        .iter()
+        .map(|m| m.hit.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the page view of a mention highlights its ground-truth boxes (IoU ≥ 0.5: each line
+/// box for PDF text, the union of word boxes for OCR). `Ok(false)` when the ground truth has no
+/// twin for it (checked by its text then).
+fn page_highlight_ok(f: &Fixture, m: &MentionRow, id: i64) -> Result<bool, String> {
+    let td1 = td1().unwrap();
+    let (gt_doc, _) = f.pages.iter().find(|(_, d)| **d == m.document_id).unwrap();
+    let file = &f
+        .gt
+        .documents
+        .iter()
+        .find(|d| &d.id == gt_doc)
+        .unwrap()
+        .file;
+    let page = m.locator.page().unwrap().get();
+    let ocr = matches!(m.locator, Locator::OcrText { .. });
+    let Some(g) = f.gt.mentions.iter().find(|g| {
+        &g.document == gt_doc
+            && g.raw == m.raw
+            && match &g.location {
+                Location::PdfText { page: p, .. } => !ocr && *p == page,
+                Location::Scan { page: p, .. } => ocr && *p == page,
+                _ => false,
+            }
+    }) else {
+        return Ok(false);
+    };
+    let view = f
+        .project
+        .page_view(m.document_id, page, Some(id))
+        .unwrap()
+        .unwrap();
+    if view.status != mk_core::PageStatus::Shown || view.boxes.is_empty() {
+        return Err(format!(
+            "{gt_doc} p{page} {}: {:?} {:?}",
+            m.raw, view.status, view.note
+        ));
+    }
+    let bytes = std::fs::read(td1.join(file)).unwrap();
+    let (w, h) = match &g.location {
+        Location::Scan { dpi, .. } if file.ends_with(".pdf") => {
+            let (w, h) = display_points(&bytes, page);
+            (w * *dpi as f32 / 72.0, h * *dpi as f32 / 72.0)
+        }
+        Location::Scan { .. } => (view.width as f32, view.height as f32),
+        _ => display_points(&bytes, page),
+    };
+    let ok = match &g.location {
+        Location::Scan { boxes, .. } => {
+            let union = view.boxes.iter().skip(1).fold(view.boxes[0], |a, b| {
+                let (x, y) = (a.x.min(b.x), a.y.min(b.y));
+                mk_core::PageBox {
+                    x,
+                    y,
+                    width: (a.x + a.width).max(b.x + b.width) - x,
+                    height: (a.y + a.height).max(b.y + b.height) - y,
+                }
+            });
+            let gt = boxes.iter().skip(1).fold(boxes[0], |a, b| {
+                mk_bench::BBox([
+                    a.x0().min(b.x0()),
+                    a.y0().min(b.y0()),
+                    a.x1().max(b.x1()),
+                    a.y1().max(b.y1()),
+                ])
+            });
+            iou(fraction(&gt, w, h), &union) >= 0.5
+        }
+        _ => {
+            let want = shown_pdf_boxes(&bytes, page, g);
+            want.len() == view.boxes.len()
+                && want
+                    .iter()
+                    .zip(&view.boxes)
+                    .all(|(b, got)| iou(fraction(b, w, h), got) >= 0.5)
+        }
+    };
+    if ok {
+        Ok(true)
+    } else {
+        Err(format!("{gt_doc} p{page} {}: boxes off", m.raw))
+    }
+}
+
+/// NFR-QA-12 (M3 criterion 5b): of 200 seeded random clicks on TD-1's mentions, at least 198 open on the
+/// right text: the view's highlight is the mention's text, and on a page its boxes lie on the
+/// ground truth's (PDF text and OCR). Release build: `cargo test --release -p mk-core --test
+/// slice_td1 -- --ignored nfr_qa_12`.
+#[test]
+#[ignore = "M3 acceptance run, release build"]
+fn nfr_qa_12_highlight_lands_on_right_text() {
+    let Some(f) = fixture() else { return };
+    let mut pool: Vec<&MentionRow> = f.mentions.iter().collect();
+    assert!(!pool.is_empty());
+    pool.sort_by_key(|m| (m.document_id, m.key.to_string(), format!("{:?}", m.locator)));
+    let mut rng = Seeded(0x4D33_4421);
+    // 200 clicks drawn with replacement: TD-1 has fewer stored mentions than that while only
+    // emails are found (M4 adds the other types).
+    let sample: Vec<&MentionRow> = (0..200)
+        .map(|_| pool[(rng.next() % pool.len() as u64) as usize])
+        .collect();
+    let distinct: std::collections::BTreeSet<*const MentionRow> =
+        sample.iter().map(|m| *m as *const _).collect();
+    let mut wrong = Vec::new();
+    let (mut on_boxes, mut by_text) = (0, 0);
+    for m in &sample {
+        let id = f
+            .project
+            .occurrences(&m.key.to_string())
+            .unwrap()
+            .into_iter()
+            .find(|o| o.document_id == m.document_id && o.locator == m.locator)
+            .unwrap()
+            .mention_id;
+        let view = f.project.source_context(id).unwrap().unwrap();
+        // The stored text's highlight is the mention, on every kind of view.
+        let hit = highlighted(&view).replace('\n', "");
+        let raw = m.raw.replace('\n', "");
+        if hit != raw {
+            wrong.push(format!(
+                "doc {} {:?}: highlighted {hit:?}, want {raw:?}",
+                m.document_id, m.locator
+            ));
+            continue;
+        }
+        if m.locator.page().is_some() && f.pages.values().any(|d| *d == m.document_id) {
+            match page_highlight_ok(f, m, id) {
+                Ok(true) => on_boxes += 1,
+                Ok(false) => by_text += 1,
+                Err(e) => wrong.push(e),
+            }
+        } else {
+            by_text += 1;
+        }
+    }
+    let right = sample.len() - wrong.len();
+    eprintln!(
+        "NFR-QA-12: {right} of {} right ({} distinct of {} mentions; {on_boxes} on ground-truth \
+         boxes, {by_text} by text); wrong: {wrong:#?}",
+        sample.len(),
+        distinct.len(),
+        f.mentions.len()
+    );
+    assert!(right >= 198, "{wrong:#?}");
+}

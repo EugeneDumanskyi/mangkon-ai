@@ -8,7 +8,11 @@ export type Occurrence = {
 /**
  * What `source_context` takes.
  */
-mentionId: number, fileType: string, 
+mentionId: number, 
+/**
+ * The identifier key: the connection it belongs to.
+ */
+key: string, fileType: string, 
 /**
  * `null` when the file is no longer in any source folder.
  */

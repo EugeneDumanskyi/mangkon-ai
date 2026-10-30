@@ -1,12 +1,26 @@
 import type { DocumentLink } from "../ipc/bindings/DocumentLink";
 import type { MarkedText } from "../ipc/bindings/MarkedText";
 import type { SourceBody } from "../ipc/bindings/SourceBody";
+import { LinkRun, PieceText } from "./Links";
 
 // Every document text is shown as React text nodes only: no HTML from a document is ever parsed,
 // so nothing in it runs or loads (US-08.4, NFR-SEC-09, gap A8).
 
-/** A text with its hit, already split on the Rust side. */
+/** A text with its hit, already split on the Rust side; with its links as runs, if any. */
 export function Marked({ text }: { text: MarkedText }) {
+  if (text.runs.length > 0) {
+    return (
+      <>
+        {text.runs.map((r, i) =>
+          r.kind === "link" ? (
+            <LinkRun key={i} url={r.url} pieces={r.pieces} />
+          ) : (
+            <PieceText key={i} piece={r} />
+          ),
+        )}
+      </>
+    );
+  }
   return (
     <>
       {text.before}

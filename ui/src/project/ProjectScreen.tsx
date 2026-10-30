@@ -1,9 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
-import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
+import type { ClickSweepInfo } from "../ipc/bindings/ClickSweepInfo";
 import type { ProjectInfo } from "../ipc/bindings/ProjectInfo";
 import { onCoreEvent } from "../lib/coreEvents";
+import {
+  type History,
+  type Place,
+  START,
+  applyScrolls,
+  back,
+  go,
+  readScrolls,
+  restored,
+} from "../lib/history";
 import { addSummary, skippedLines } from "../lib/progress";
 import { ConnectionsList } from "./ConnectionsList";
 import { DocumentsList } from "./DocumentsList";
@@ -11,7 +21,7 @@ import { OccurrencesPanel } from "./OccurrencesPanel";
 import { ProgressPanel } from "./ProgressPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { SourcePane } from "./SourcePane";
-import { runViewSweep } from "./viewSweep";
+import { runClickSweep, runViewSweep } from "./viewSweep";
 
 type Tab = "connections" | "documents" | "settings";
 const TABS: [Tab, string][] = [
@@ -60,14 +70,25 @@ export function ProjectScreen({
   project,
   uiTiming,
   viewSweep = false,
+  clickSweep = null,
 }: {
   project: ProjectInfo;
   uiTiming: boolean;
   viewSweep?: boolean;
+  /** The click sweep (NFR-PERF-14, NFR-QA-12), for scripted runs only. */
+  clickSweep?: ClickSweepInfo | null;
 }) {
   const client = useQueryClient();
-  const [selected, setSelected] = useState<ConnectionItem | null>(null);
-  const [mention, setMention] = useState<number | null>(null);
+  // Where the connections screen is, and where it was (US-08.2 AC2).
+  const [history, setHistory] = useState<History>(START);
+  const { connection: selected, mention, document: openedDocument } = history.place;
+  const goTo = useCallback((place: Place) => {
+    const scroll = readScrolls();
+    setHistory((h) => go(h, place, scroll));
+  }, []);
+  const goBack = useCallback(() => {
+    setHistory(back);
+  }, []);
   const [tab, setTab] = useState<Tab>("connections");
   const [summary, setSummary] = useState<Summary | null>(null);
   const progress = useQuery({
@@ -117,10 +138,60 @@ export function ProjectScreen({
     if (!viewSweep || !finished || swept.current) return;
     swept.current = true;
     void runViewSweep((c, m) => {
-      setSelected(c);
-      setMention(m);
+      goTo({ connection: c, mention: m, document: null });
     }).then(commands.recordViewSweep);
-  }, [viewSweep, finished]);
+  }, [viewSweep, finished, goTo]);
+  useEffect(() => {
+    if (clickSweep === null || !finished || swept.current) return;
+    swept.current = true;
+    void runClickSweep(clickSweep, (c) => {
+      goTo({ connection: c, mention: null, document: null });
+    }).then(commands.recordViewSweep);
+  }, [clickSweep, finished, goTo]);
+
+  // Back restores the panes' scroll once they show the place again: the source pane's view,
+  // and the list rows, may still be loading.
+  const restore = history.restore;
+  useEffect(() => {
+    if (restore === null) return;
+    const want =
+      openedDocument !== null
+        ? `d${String(openedDocument)}`
+        : mention !== null
+          ? `m${String(mention)}`
+          : null;
+    let frame = 0;
+    const end = performance.now() + 5_000;
+    const tick = () => {
+      const pane = document.querySelector<HTMLElement>('section[aria-label="Source"]');
+      const img = pane?.querySelector("img");
+      const ready = (want === null || pane?.dataset.view === want) && (!img || img.complete);
+      if (ready || performance.now() > end) {
+        applyScrolls(restore);
+        setHistory(restored);
+      } else {
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    frame = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [restore, mention, openedDocument]);
+  // Alt+← goes back, as in a browser.
+  useEffect(() => {
+    if (tab !== "connections") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        goBack();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [tab, goBack]);
   const empty = project.sources.length === 0 && (progress.data?.total ?? 0) === 0;
 
   const button = "rounded border border-border px-3 py-1 text-sm disabled:opacity-50";
@@ -222,13 +293,29 @@ export function ProjectScreen({
             <ConnectionsList
               selectedKey={selected?.key ?? null}
               onSelect={(c) => {
-                setSelected(c);
-                setMention(null);
+                goTo({ connection: c, mention: null, document: null });
               }}
               uiTiming={uiTiming}
             />
-            <OccurrencesPanel connection={selected} selected={mention} onSelect={setMention} />
-            <SourcePane mentionId={mention} />
+            <OccurrencesPanel
+              connection={selected}
+              selected={mention}
+              onSelect={(m) => {
+                goTo({ connection: selected, mention: m, document: null });
+              }}
+            />
+            <SourcePane
+              mentionId={mention}
+              documentId={openedDocument}
+              canBack={history.back.length > 0}
+              onBack={goBack}
+              onMention={(m) => {
+                goTo({ connection: selected, mention: m, document: null });
+              }}
+              onOpenDocument={(d) => {
+                goTo({ connection: selected, mention, document: d });
+              }}
+            />
           </div>
         )}
       </div>

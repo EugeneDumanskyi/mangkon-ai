@@ -1,4 +1,5 @@
 import type { Location } from "../ipc/bindings/Location";
+import type { OriginalFile } from "../ipc/bindings/OriginalFile";
 
 /**
  * "line 12", "row 3, column email", "row 3, column 2", "paragraph 4", "$.customers[12].phone",
@@ -50,4 +51,17 @@ const LOW_OCR_QUALITY = 0.6;
 export function ocrQualityLabel(quality: number): string {
   const label = `OCR quality ${String(Math.round(quality * 100))}%`;
   return quality < LOW_OCR_QUALITY ? `${label} (low)` : label;
+}
+
+/** The text of the banner for an original that is not as it was read (US-08.5 AC1). */
+export function originalNote(original: OriginalFile | null): string | null {
+  if (original === null) return "Original file not found";
+  switch (original.state) {
+    case "present":
+      return null;
+    case "missing":
+      return `Original file not found at ${original.path}`;
+    case "changed":
+      return "The file changed since it was read: showing the stored text";
+  }
 }

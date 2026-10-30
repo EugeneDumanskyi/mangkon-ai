@@ -92,15 +92,13 @@ impl AppState {
     }
 
     /// Timing runs only (`MK_UI_TIMING=1`, NFR-PERF-34): once the UI has subscribed, opens
-    /// `MK_UI_TIMING_PROJECT` (made there if new) and adds `MK_UI_TIMING_SOURCE`, so the run
-    /// needs no clicks.
+    /// `MK_UI_TIMING_PROJECT` (made there if new) and adds `MK_UI_TIMING_SOURCE` if set, so the
+    /// run needs no clicks. Without a source the project is only reopened (W3d-1, NFR-RES-01).
     pub fn scripted_run_once(&self) {
-        let (Some(project), Some(source)) = (
-            std::env::var_os("MK_UI_TIMING_PROJECT"),
-            std::env::var_os("MK_UI_TIMING_SOURCE"),
-        ) else {
+        let Some(project) = std::env::var_os("MK_UI_TIMING_PROJECT") else {
             return;
         };
+        let source = std::env::var_os("MK_UI_TIMING_SOURCE");
         if self.scripted.swap(true, Ordering::SeqCst) {
             return;
         }
@@ -113,7 +111,10 @@ impl AppState {
         })()
         .map_err(IpcError::from)
         .and_then(|_| self.open(Target::Folder(dir)))
-        .and_then(|_| self.add_source(Path::new(&source)));
+        .and_then(|_| match &source {
+            Some(source) => self.add_source(Path::new(source)),
+            None => Ok(()),
+        });
         if let Err(e) = result {
             self.emit(UiEvent::Error { message: e.message });
         }

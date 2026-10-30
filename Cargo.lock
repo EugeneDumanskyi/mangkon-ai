@@ -2366,6 +2366,7 @@ dependencies = [
 name = "mangkon-desktop"
 version = "0.0.0"
 dependencies = [
+ "dbus",
  "mk-core",
  "rfd",
  "serde",

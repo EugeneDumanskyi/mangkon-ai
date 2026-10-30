@@ -39,8 +39,8 @@ pub use ops::{
     SegmentOut, StageAOutput, StagedPart, StartedItem,
 };
 pub use read::{
-    ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, MentionRow, OccurrenceRow,
-    PendingWork, Progress, RootRow, SegmentRow, SegmentWindow, WindowSegment,
+    ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, KnownFile, MentionRow,
+    OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow, SegmentWindow, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 
@@ -158,7 +158,7 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         Ok((
             Store {
-                readers: readers::Readers::new(readers),
+                readers: readers::Readers::new(path.to_path_buf(), READERS, readers),
                 writer: writer::Writer::start(conn),
                 path: path.to_path_buf(),
             },
@@ -168,6 +168,13 @@ impl Store {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Gives memory back after a run (NFR-RES-01): shrinks the writer's page cache and closes
+    /// idle readers but one. Reads afterwards open readers again as needed.
+    pub fn release_memory(&self) -> Result<(), StoreError> {
+        self.readers.release();
+        self.writer.shrink()
     }
 
     // ---- writes: one transaction each ----
@@ -437,6 +444,12 @@ impl Store {
     /// The counted mentions of an identifier key, at most `limit` (US-07.3 AC2).
     pub fn mentions_of(&self, key: &str, limit: usize) -> Result<Vec<OccurrenceRow>, StoreError> {
         self.readers.with(|c| read::mentions_of(c, key, limit))
+    }
+
+    /// The counted mentions of `key` in one document, in reading order (US-08.2 AC1).
+    pub fn mentions_in_document(&self, key: &str, document: i64) -> Result<Vec<i64>, StoreError> {
+        self.readers
+            .with(|c| read::mentions_in_document(c, key, document))
     }
 
     /// Failed contents with their reasons, at most `limit` (NFR-USE-05).

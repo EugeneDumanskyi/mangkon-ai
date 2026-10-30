@@ -536,16 +536,53 @@ impl Drop for WorkerProcess {
 /// after the first large buffer is freed (up to 32 MB), so later page buffers (8.7 MB for a
 /// 300 DPI A4 page) come from the heap and an idle worker keeps tens of MB of them. A fixed
 /// 1 MB threshold stops that: on TD-2, 23 workers peaked ≈ 530–560 MB lower (`docs/11-ingestion.md`
-/// §7). Other C libraries ignore the variable. Kept in front of tunables set by the user.
+/// §7). Other C libraries ignore the variable. Kept in front of tunables set by the user, not
+/// the app's own (`restart_with_malloc_tunables`).
 fn malloc_tunables() -> Option<String> {
     if !cfg!(all(target_os = "linux", target_env = "gnu")) {
         return None;
     }
     const OURS: &str = "glibc.malloc.mmap_threshold=1048576";
-    Some(match std::env::var("GLIBC_TUNABLES") {
+    let user = std::env::var(USER_TUNABLES).or_else(|_| std::env::var("GLIBC_TUNABLES"));
+    Some(match user {
         Ok(t) if !t.is_empty() => format!("{OURS}:{t}"),
         _ => OURS.to_string(),
     })
+}
+
+/// The user's own `GLIBC_TUNABLES`, kept by the app's restart; also marks that it happened.
+const USER_TUNABLES: &str = "MK_USER_GLIBC_TUNABLES";
+
+/// Memory the desktop app frees goes back to the OS (NFR-RES-01). After a large ingest glibc
+/// keeps ≈ 65 MB of freed heap for reuse; trim and mmap thresholds of 128 KB give it back, which
+/// brought the app from 285 to 221 MB RSS after a TD-2 ingest (`docs/11-ingestion.md` §9).
+/// glibc reads the variable only at start, so the app runs itself again once with it set, before
+/// any thread or window exists. Returns only when that is not needed or fails, and then the app
+/// goes on as it is. Other platforms: nothing to do.
+pub fn restart_with_malloc_tunables() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        use std::os::unix::process::CommandExt;
+        if std::env::var_os(USER_TUNABLES).is_some() {
+            return;
+        }
+        const OURS: &str = "glibc.malloc.trim_threshold=131072:glibc.malloc.mmap_threshold=131072";
+        let user = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
+        let all = if user.is_empty() {
+            OURS.to_string()
+        } else {
+            format!("{OURS}:{user}")
+        };
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let err = Command::new(exe)
+            .args(std::env::args_os().skip(1))
+            .env("GLIBC_TUNABLES", all)
+            .env(USER_TUNABLES, user)
+            .exec();
+        eprintln!("mangkon: restart with malloc tunables failed, going on without: {err}");
+    }
 }
 
 pub(crate) fn own_rss(sys: &mut System) -> u64 {

@@ -9,6 +9,7 @@
 mod commands;
 mod ipc;
 mod nav;
+mod os_open;
 mod state;
 
 use tauri::webview::NewWindowResponse;
@@ -21,6 +22,8 @@ fn main() -> std::process::ExitCode {
     if let Some(code) = mk_core::worker_main_if_requested() {
         return code;
     }
+    // Linux: once more with glibc's malloc tunables, so freed memory goes back (NFR-RES-01).
+    mk_core::restart_with_malloc_tunables();
     let builder = tauri::Builder::default().manage(AppState::default());
     #[cfg(not(feature = "spike-s2d"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -38,6 +41,9 @@ fn main() -> std::process::ExitCode {
         commands::source_document,
         commands::page_view,
         commands::page_image,
+        commands::open_original,
+        commands::show_in_folder,
+        commands::open_link,
         commands::pick_files,
         commands::recent_projects,
         commands::create_project,
@@ -80,6 +86,9 @@ fn main() -> std::process::ExitCode {
         commands::source_document,
         commands::page_view,
         commands::page_image,
+        commands::open_original,
+        commands::show_in_folder,
+        commands::open_link,
         commands::pick_files,
         commands::recent_projects,
         commands::create_project,

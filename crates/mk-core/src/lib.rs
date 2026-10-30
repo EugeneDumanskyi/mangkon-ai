@@ -17,6 +17,7 @@
 
 mod control;
 mod events;
+mod links;
 mod manage;
 mod page;
 mod project;
@@ -33,13 +34,14 @@ use std::process::ExitCode;
 
 pub use control::{PAUSE_GRACE, Stop};
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
 pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_store::{
     CancelOutcome, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow, FailedFile,
-    OccurrenceRow, RemoveOutcome, STATUS_MISSING,
+    KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING,
 };
 pub use mk_workspace::{ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
@@ -48,11 +50,13 @@ pub use project::{
     StageASummary, file_types, project_exists,
 };
 pub use view::{
-    CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, DocumentLink, EmailField,
-    EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, PageKind, SourceBody, SourceContext,
-    WHOLE_EMAIL_SEGMENTS,
+    CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, DocumentLink,
+    EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original, PageKind,
+    Piece, Position, Run, SourceBody, SourceContext, WHOLE_EMAIL_SEGMENTS, not_found_note,
 };
-pub use workers::{Stopped, WorkerConfig, WorkerError, WorkerStop, worker_processes};
+pub use workers::{
+    Stopped, WorkerConfig, WorkerError, WorkerStop, restart_with_malloc_tunables, worker_processes,
+};
 pub use workspace::{RecentProject, Workspace, WorkspaceError};
 
 /// The worker entry (ADR-0007): if this process was started as `<exe> --worker [...]`, runs the

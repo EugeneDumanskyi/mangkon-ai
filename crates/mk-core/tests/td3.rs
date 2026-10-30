@@ -337,3 +337,49 @@ fn us_02_8_ac1_documents_page_fields() {
     }
     assert!(failed > 0);
 }
+
+/// M3 criterion 4 (all of M3): TD-1 and TD-3 in one project. Every TD-1 file is read; every TD-3
+/// file ends as `expected.json` says; each failure has a plain reason and its path, with no Rust
+/// error text (NFR-REL-01, NFR-USE-05, NFR-CAP-04..07); a rebuild gives the same rows as the
+/// incremental run (ADR-0005).
+#[test]
+fn m3_criterion_4_td3_mixed_into_td1() {
+    let Some(f) = fixture() else { return };
+    let (_, text_failed) = check_td3(f, is_text);
+    let (_, paged_failed) = check_td3(f, is_paged);
+    for g in
+        f.gt.files
+            .iter()
+            .filter(|g| g.path.starts_with("synthetic/") && format(&g.path).is_some())
+    {
+        let c = content(f, f.td1_root, g.path.strip_prefix("synthetic/").unwrap());
+        assert_eq!(c.state, IngestionState::Done, "{}", g.path);
+    }
+    let failed = f.project.failed_files(10_000).unwrap();
+    assert_eq!(failed.len(), text_failed + paged_failed);
+    for x in &failed {
+        let path = x.path.as_deref().unwrap_or_default();
+        let reason = x.reason.as_deref().unwrap_or_default();
+        assert!(
+            Path::new(path).is_file() && path.contains("td3"),
+            "{path:?}: {reason}"
+        );
+        // Plain words: no Rust paths, debug output, panics or error type names.
+        assert!(
+            reason.starts_with(char::is_uppercase)
+                && !["::", "Error", "panicked", "{", "Os {", "unwrap", "RUST_"]
+                    .iter()
+                    .any(|t| reason.contains(t)),
+            "{path}: {reason:?}"
+        );
+    }
+    let rebuilt = f.project.rebuild().unwrap();
+    assert!(
+        rebuilt.same_as_incremental && rebuilt.consistent,
+        "{rebuilt:?}"
+    );
+    eprintln!(
+        "criterion 4: {} files failed alone with plain reasons; rebuild equals incremental",
+        failed.len()
+    );
+}

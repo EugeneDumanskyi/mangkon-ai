@@ -15,7 +15,7 @@ const body: PageBody = {
   page: 2,
   pages: 3,
   text: "ocr",
-  lines: [{ before: `${hostile} `, hit: "x@y.example", after: "" }],
+  lines: [{ before: `${hostile} `, hit: "x@y.example", after: "", runs: [] }],
   ocrQuality: 0.42,
 };
 
@@ -76,7 +76,7 @@ describe("page view", () => {
 
   for (const status of ["originalMissing", "changed", "textOnly"] as const) {
     it(`falls back to the stored text with the note when the page is ${status}`, () => {
-      const note = "Original file missing: showing the stored text";
+      const note = "Original file not found at /cases/a.pdf";
       const html = render({ ...shown, status, width: 0, height: 0, boxes: [], note }, false);
       expect(html).not.toContain("<img");
       expect(html).not.toContain("data-toggle-text");
@@ -84,6 +84,24 @@ describe("page view", () => {
       expect(html).toContain("<mark");
     });
   }
+
+  it("leaves a missing or changed original to the pane's banner when it shows one (US-08.5)", () => {
+    for (const status of ["originalMissing", "changed"] as const) {
+      const note = "Original file not found at /cases/a.pdf";
+      const html = renderToStaticMarkup(
+        <PageFigure
+          body={body}
+          page={{ ...shown, status, width: 0, height: 0, boxes: [], note }}
+          url={null}
+          showText={false}
+          onToggle={() => undefined}
+          bannerShown
+        />,
+      );
+      expect(html).not.toContain(note);
+      expect(html).toContain("<mark");
+    }
+  });
 
   it("waits for the page and its image", () => {
     expect(render(undefined, false)).toContain("Loading the page");

@@ -20,6 +20,10 @@ pub struct AppInfo {
     /// then save the counts with `record_view_sweep` (`MK_UI_TIMING=1` and `MK_VIEW_SWEEP=1`;
     /// the NFR-SEC-09 network check).
     pub view_sweep: bool,
+    /// The click sweep (`MK_UI_TIMING=1` and `MK_VIEW_SWEEP=clicks`; NFR-PERF-14, NFR-QA-12):
+    /// click seeded random occurrence rows, time each click to the highlight, and save the
+    /// samples with `record_view_sweep`.
+    pub click_sweep: Option<ClickSweepInfo>,
     /// The scripted queue walk (`MK_QUEUE_WALK=1` or `2`): the UI clicks through the project and
     /// queue controls, then saves the steps with `record_queue_walk` (M3c release check).
     pub queue_walk: Option<QueueWalkInfo>,
@@ -55,6 +59,7 @@ impl From<mk_core::AppInfo> for AppInfo {
             }),
             ui_timing: ui_timing_enabled(),
             view_sweep: view_sweep_enabled(),
+            click_sweep: click_sweep(),
             queue_walk: queue_walk_phase().map(|phase| QueueWalkInfo {
                 phase,
                 location: std::env::var("MK_QUEUE_WALK_LOCATION").unwrap_or_default(),
@@ -198,6 +203,41 @@ pub fn view_sweep_enabled() -> bool {
     ui_timing_enabled() && std::env::var_os("MK_VIEW_SWEEP").is_some_and(|v| v == "1")
 }
 
+/// What the click sweep clicks: `MK_VIEW_SWEEP_N` random mentions (default 50) from seed
+/// `MK_VIEW_SWEEP_SEED` (default 1), then the mention ids in `MK_VIEW_SWEEP_FIXED` (comma
+/// separated: the large-file cases).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClickSweepInfo {
+    pub seed: u32,
+    pub n: u32,
+    #[ts(type = "number[]")]
+    pub fixed: Vec<i64>,
+}
+
+/// `MK_UI_TIMING=1` and `MK_VIEW_SWEEP=clicks`.
+pub fn click_sweep() -> Option<ClickSweepInfo> {
+    if !ui_timing_enabled() || std::env::var("MK_VIEW_SWEEP").as_deref() != Ok("clicks") {
+        return None;
+    }
+    let num = |k: &str, d: u32| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(d)
+    };
+    Some(ClickSweepInfo {
+        seed: num("MK_VIEW_SWEEP_SEED", 1),
+        n: num("MK_VIEW_SWEEP_N", 50),
+        fixed: std::env::var("MK_VIEW_SWEEP_FIXED")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|v| v.trim().parse().ok())
+            .collect(),
+    })
+}
+
 /// `MK_QUEUE_WALK=1` (create, add, pause, cancel, retry, remove, settings, quit paused) or `2`
 /// (reopen, still paused, resume to the end).
 pub fn queue_walk_phase() -> Option<u8> {
@@ -239,6 +279,31 @@ pub struct ViewSweep {
     /// Views by body kind (`text`, `table`, `paragraphs`, `json`, `email`, `page`).
     pub kinds: std::collections::BTreeMap<String, u32>,
     pub errors: Vec<String>,
+    /// The click sweep's samples; empty for the full sweep.
+    pub clicks: Vec<ClickSample>,
+}
+
+/// One timed click on an occurrence row (NFR-PERF-14) and what it highlighted (NFR-QA-12).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClickSample {
+    #[ts(type = "number")]
+    pub mention_id: i64,
+    /// One of `MK_VIEW_SWEEP_FIXED`.
+    pub fixed: bool,
+    /// The body kind shown.
+    pub kind: String,
+    /// Click → the frame after the highlight is in the DOM (a page: after its image loaded).
+    pub ms: f64,
+    /// The mention's text, and the highlighted text in the DOM (a page image: its OCR or text
+    /// side, toggled after the timing).
+    pub expected: String,
+    pub highlighted: String,
+    pub correct: bool,
+    /// Next, then Back, came back to this mention at the same scroll (US-08.2); `null` when it
+    /// is the only mention of its value in the document.
+    pub back_ok: Option<bool>,
 }
 
 /// One timed run: `ConnectionsChanged` received → connections list re-rendered.
@@ -826,6 +891,8 @@ pub struct Occurrence {
     /// What `source_context` takes.
     #[ts(type = "number")]
     pub mention_id: i64,
+    /// The identifier key: the connection it belongs to.
+    pub key: String,
     pub file_type: String,
     /// `null` when the file is no longer in any source folder.
     pub path: Option<String>,
@@ -839,6 +906,7 @@ impl From<mk_core::OccurrenceRow> for Occurrence {
     fn from(o: mk_core::OccurrenceRow) -> Self {
         Self {
             mention_id: o.mention_id,
+            key: o.key,
             file_type: o.file_type,
             path: o.path,
             location: (&o.locator).into(),
@@ -857,6 +925,37 @@ pub struct MarkedText {
     pub before: String,
     pub hit: String,
     pub after: String,
+    /// The same text as runs around its links (US-08.4 AC3); empty when it has none. The UI
+    /// shows these instead of `before`, `hit` and `after` when there are any.
+    pub runs: Vec<TextRun>,
+}
+
+/// A part of a text, in the hit or not.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TextPiece {
+    pub text: String,
+    pub hit: bool,
+}
+
+/// Plain text or a link found in the shown text. A link is opened only through `open_link`,
+/// after the UI has shown its full URL and the user confirmed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum TextRun {
+    Text { text: String, hit: bool },
+    Link { url: String, pieces: Vec<TextPiece> },
+}
+
+impl From<mk_core::Piece> for TextPiece {
+    fn from(p: mk_core::Piece) -> Self {
+        Self {
+            text: p.text,
+            hit: p.hit,
+        }
+    }
 }
 
 impl From<mk_core::Marked> for MarkedText {
@@ -865,6 +964,55 @@ impl From<mk_core::Marked> for MarkedText {
             before: m.before,
             hit: m.hit,
             after: m.after,
+            runs: m
+                .runs
+                .into_iter()
+                .map(|r| match r {
+                    mk_core::Run::Text(p) => TextRun::Text {
+                        text: p.text,
+                        hit: p.hit,
+                    },
+                    mk_core::Run::Link { url, pieces } => TextRun::Link {
+                        url,
+                        pieces: pieces.into_iter().map(Into::into).collect(),
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+/// "Mention 2 of 5" in this document, with the mentions to go to (US-08.2 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MentionPosition {
+    /// 1-based.
+    pub index: u32,
+    pub count: u32,
+    #[ts(type = "number | null")]
+    pub prev: Option<i64>,
+    #[ts(type = "number | null")]
+    pub next: Option<i64>,
+}
+
+/// The original file when the view opened (US-08.5): there, gone, or changed since it was read.
+/// The view shows the stored text in every case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+#[ts(export)]
+pub enum OriginalFile {
+    Present { path: String },
+    Missing { path: String },
+    Changed { path: String },
+}
+
+impl From<mk_core::Original> for OriginalFile {
+    fn from(o: mk_core::Original) -> Self {
+        match o {
+            mk_core::Original::Present { path } => Self::Present { path },
+            mk_core::Original::Missing { path } => Self::Missing { path },
+            mk_core::Original::Changed { path } => Self::Changed { path },
         }
     }
 }
@@ -1006,6 +1154,10 @@ pub struct SourceDocument {
 pub struct SourceView {
     /// `null` when the view was opened at a document, not at a mention.
     pub occurrence: Option<Occurrence>,
+    /// Where the mention is among its value's mentions in this document; `null` for a document.
+    pub position: Option<MentionPosition>,
+    /// `null` when no path of the file is known.
+    pub original: Option<OriginalFile>,
     pub document: SourceDocument,
     /// The email this document is an attachment of (US-08.1 AC4).
     pub parent: Option<DocumentLink>,
@@ -1090,6 +1242,13 @@ impl From<mk_core::SourceContext> for SourceView {
         let d = c.document;
         Self {
             occurrence: c.occurrence.map(Into::into),
+            position: c.position.map(|p| MentionPosition {
+                index: p.index,
+                count: p.count,
+                prev: p.prev,
+                next: p.next,
+            }),
+            original: c.original.map(Into::into),
             document: SourceDocument {
                 document_id: d.id,
                 file_type: d.file_type,

@@ -104,6 +104,7 @@ export function ConnectionsList({
       )}
       <div
         ref={scrollRef}
+        data-scroll="connections"
         className="min-h-0 flex-1 overflow-auto focus:outline-2 focus:outline-accent"
         role="listbox"
         aria-label="Connections"

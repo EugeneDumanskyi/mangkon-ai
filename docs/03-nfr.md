@@ -53,7 +53,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION · M3b (RM-1, `mangkon-cli ingest` on all 101 TD-1 files, fresh project): 2.3–2.4 s (`11-ingestion.md` §7) |
 | NFR-PERF-12 | First cross-source person/org visible after drop on TD-1 ("within minutes") | ≤ 5 min | Timer | Brief ("minutes") · ASSUMPTION (5 min) |
 | NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 with the recommended minimum-tier model, 4 slots (NFR-PERF-25). Bigger models are a quality choice and show an estimate instead | Timer | M1: estimate ~11 min for Qwen3.5-4B with 4 slots (~24 min with 1); 35B-A3B ~94 min (`09-model-check.md` §5.1) · ASSUMPTION (estimate, measured in M6) |
-| NFR-PERF-14 | Click on a link → source viewer shows highlight | ≤ 1 s p95 (PDF ≤ 500 pages, CSV ≤ 1,000,000 rows, MBOX message) | Timer, 50 random clicks on TD-1 and TD-2 | Brief ("one click") · ASSUMPTION (1 s) |
+| NFR-PERF-14 | Click on a link → source viewer shows highlight | ≤ 1 s p95 (PDF ≤ 500 pages, CSV ≤ 1,000,000 rows, MBOX message) | Timer, 50 random clicks on TD-1 and TD-2 | Brief ("one click") · ASSUMPTION (1 s) · M3d (RM-1, release app, `MK_VIEW_SWEEP=clicks`, click to the frame after the highlight): p95 83 ms on TD-1 (51 clicks, 12 of them page views), 36 ms on TD-2 (50); 48 ms for row 999,990 of a 1M-row CSV, 27 ms for message 1,286,852 of a 2 GB MBOX (`11-ingestion.md` §9) |
 
 ### 3.3 Throughput
 
@@ -97,7 +97,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-RES-01 | App memory when idle (project open, model not loaded) | ≤ 500 MB | OS process monitor | ASSUMPTION · M2c (RM-1): 439 MB RSS for the app and its WebKit processes, no project open. M2d: 475 MB with the TD-2 project open; 530 MB right after ingesting it in the same session (PSS 242 / 300 MB). Over the limit after a large ingest; follow-up in M3 (`10-walking-skeleton.md` §5, §6) |
+| NFR-RES-01 | App memory when idle (project open, model not loaded) | ≤ 500 MB | OS process monitor | ASSUMPTION · M2c (RM-1): 439 MB RSS for the app and its WebKit processes, no project open. M2d: 475 MB with the TD-2 project open; 530 MB right after ingesting it in the same session (PSS 242 / 300 MB). Over the limit after a large ingest; follow-up in M3 (`10-walking-skeleton.md` §5, §6) · M3d (W3d-1, RM-1, RSS): 483 MiB with the TD-2 project reopened ✅; 576 MiB right after ingesting TD-2 (now with PDFs and scans) ❌, flat over 60 s. The store gives its memory back after a run; what the app still holds is freed heap kept by glibc (with lower trim and mmap thresholds it drops by 65 MiB), plus ≈ 16 MiB of WebKit script heap. Closing the gap needs an allocator decision (`11-ingestion.md` §9). Decided: on Linux with glibc the app restarts itself once at start with lower trim and mmap thresholds: 471 MiB reopened ✅, 512 MiB right after the TD-2 ingest ❌ (12 MiB over, mostly WebKit script heap); the rest of the miss is accepted for now (roadmap §4 #18) |
 | NFR-RES-02 | App memory during Stage A on TD-2 (model not counted) | ≤ 2 GB | OS process monitor | ASSUMPTION · M2c (RM-1, the CSV part of TD-2, 23 workers): peak 233 MB, 908 MB with the desktop binary as worker (`10-walking-skeleton.md` §5). M3a (RM-1, TD-2's text formats, 3,664 files): 260 MB, 952 MB with the desktop binary as worker (`11-ingestion.md` §4). M3b (RM-1, all 10,000 TD-2 files, OCR included): 1,218 MB, 1,906 MB with the desktop binary as worker, after two fixes: Tesseract clears each page, workers start with a fixed 1 MB glibc mmap threshold (first build: 2,064 / 2,675 MB; `11-ingestion.md` §7). Linux only |
 | NFR-RES-03 | CPU when idle | < 2% average over 1 min | OS process monitor | ASSUMPTION |
 | NFR-RES-04 | Free disk for models + project data | ~30 GB | README + hardware check | Brief |
@@ -120,7 +120,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-REL-07 | Parser memory guard | A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with "Needed too much memory" | TD-3 | Reworded per gap A5 (2026-10-27). M2c (S2b, Linux): stopped ≤ 160 ms after passing 1 GB |
 | NFR-REL-08 | Model download | Resumes after network loss; SHA-256 verified on 100% of downloads | Pull network cable mid-download | Brief |
 | NFR-REL-09 | User decisions kept | 100% of decisions survive re-scan, model change, and app upgrade | Automated regression test | Brief |
-| NFR-REL-10 | Original files untouched | 0 writes to user source folders | File-system audit (checksums before/after TD-1 run) | ASSUMPTION (follows from design) |
+| NFR-REL-10 | Original files untouched | 0 writes to user source folders | File-system audit (checksums before/after TD-1 run) | ASSUMPTION (follows from design) · M3d (RM-1): all 103 TD-1 files unchanged after ingest, rebuild, 86 views, 553 rendered pages, retry (`nfr_rel_10_td1_unchanged_after_full_run`), and after the release-app sweeps, strace run and kill test (`11-ingestion.md` §9) |
 | NFR-REL-11 | Schema migration | Backup before every migration; failed migration leaves project usable from backup | Migration tests | ASSUMPTION |
 | NFR-REL-12 | `llama-server` crash | AI jobs pause with reason; Layer 1 keeps working; auto-restart at most 2 times | Kill sidecar test | ASSUMPTION |
 
@@ -143,7 +143,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | M1: confirmed. 94.0% / 96.7% / 98.5% on reference text; OCR noise measured in M6 |
 | NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
 | NFR-QA-11 | LLM mentions with evidence not found in source text | 0 shown | Automated span check | Brief ("never invent") · M1: the span check discarded 0–4 mentions per run (≤ 1.0%) |
-| NFR-QA-12 | Highlight lands on the right text | ≥ 99% of 200 random clicks | Semi-automated check | ASSUMPTION |
+| NFR-QA-12 | Highlight lands on the right text | ≥ 99% of 200 random clicks | Semi-automated check | ASSUMPTION · M3d (RM-1): 200 of 200 seeded clicks on TD-1 right in the core (`nfr_qa_12_highlight_lands_on_right_text`; 71 also on ground-truth boxes; TD-1 has 86 email mentions, so the 200 draws cover 75 distinct ones); 108 of 108 in the release app, highlighted DOM text checked (`11-ingestion.md` §9) |
 | NFR-QA-13 | CSV column-mapping suggestions correct | ≥ 90% of columns in TD-1 | Benchmark | ASSUMPTION |
 
 ---

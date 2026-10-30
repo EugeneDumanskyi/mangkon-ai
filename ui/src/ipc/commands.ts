@@ -98,6 +98,12 @@ export const commands = {
   /** The PNG of a page `pageView` has shown, as raw bytes. */
   pageImage: (documentId: number, page: number) =>
     invoke<ArrayBuffer>("page_image", { documentId, page }),
+  /** Opens the document's original file with its default app (US-08.6). */
+  openOriginal: (documentId: number) => invoke<null>("open_original", { documentId }),
+  /** Shows the document's original file in the file manager (US-08.6). */
+  showInFolder: (documentId: number) => invoke<null>("show_in_folder", { documentId }),
+  /** Opens a link the user confirmed; the core checks it again (US-08.4 AC3). */
+  openLink: (url: string) => invoke<null>("open_link", { url }),
   /** Core events go to `onEvent` until the page reloads (no `core:event` permission). */
   subscribe: (onEvent: (event: UiEvent) => void) => {
     const channel = new Channel<UiEvent>();

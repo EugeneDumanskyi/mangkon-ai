@@ -7,6 +7,8 @@
 //! Spans count Unicode characters (INV-CO-04). They are applied here, on the Rust side, so the
 //! UI never has to map them onto its own string units.
 
+use std::path::PathBuf;
+
 use mk_corpus::IngestionState;
 use mk_graph::{ConnectionRow, RankKey};
 use mk_kernel::{Column, Locator, Span};
@@ -49,20 +51,36 @@ pub struct ConnectionsPage {
 }
 
 /// A text with one marked part (the hit). `hit` is empty for a text without one, and then the
-/// whole text is in `before`.
+/// whole text is in `before`. A text with links also comes as [`Run`]s (US-08.4 AC3), so the UI
+/// never maps offsets itself; `runs` is empty when it has none.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Marked {
     pub before: String,
     pub hit: String,
     pub after: String,
+    pub runs: Vec<Run>,
+}
+
+/// A part of a text: in the hit or not.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Piece {
+    pub text: String,
+    pub hit: bool,
+}
+
+/// A text with links, in order: plain pieces and links. A link holds the hit's pieces when the
+/// hit lies in it (a `mailto:` URL with the address found in it).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Run {
+    Text(Piece),
+    Link { url: String, pieces: Vec<Piece> },
 }
 
 impl Marked {
     pub fn plain(text: impl Into<String>) -> Self {
-        Marked {
-            before: text.into(),
-            ..Marked::default()
-        }
+        let text = text.into();
+        let len = text.chars().count();
+        Self::split(&text, len, len)
     }
 
     /// Splits `text` at a character span (INV-CO-04). A span past the end is clamped.
@@ -73,12 +91,50 @@ impl Marked {
             before: text[..s].to_string(),
             hit: text[s..e].to_string(),
             after: text[e..].to_string(),
+            runs: runs(text, (s, e)),
         }
     }
 
     pub fn has_hit(&self) -> bool {
         !self.hit.is_empty()
     }
+}
+
+/// The pieces of `text[from..to]`, split where the hit (byte range) starts and ends.
+fn pieces(text: &str, (from, to): (usize, usize), (hs, he): (usize, usize)) -> Vec<Piece> {
+    let (a, b) = (hs.clamp(from, to), he.clamp(from, to));
+    [(from, a, false), (a, b, true), (b, to, false)]
+        .into_iter()
+        .filter(|(x, y, _)| x < y)
+        .map(|(x, y, hit)| Piece {
+            text: text[x..y].to_string(),
+            hit,
+        })
+        .collect()
+}
+
+/// `text` as runs around its links; empty when it has none.
+fn runs(text: &str, hit: (usize, usize)) -> Vec<Run> {
+    let urls = crate::links::find_urls(text);
+    if urls.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut at = 0;
+    for (s, e) in urls {
+        out.extend(pieces(text, (at, s), hit).into_iter().map(Run::Text));
+        out.push(Run::Link {
+            url: text[s..e].to_string(),
+            pieces: pieces(text, (s, e), hit),
+        });
+        at = e;
+    }
+    out.extend(
+        pieces(text, (at, text.len()), hit)
+            .into_iter()
+            .map(Run::Text),
+    );
+    out
 }
 
 /// One line of a text file in the source view.
@@ -177,10 +233,81 @@ pub enum SourceBody {
     },
 }
 
+/// Where the shown mention is among the mentions of its value in its document (US-08.2 AC1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Position {
+    /// 1-based.
+    pub index: u32,
+    pub count: u32,
+    /// The mentions before and after it, if any.
+    pub prev: Option<i64>,
+    pub next: Option<i64>,
+}
+
+/// The original file, as a stat sees it when the view opens (US-08.5). The view always comes
+/// from the stored text (INV-CO-04); this only says whether the file is still there.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Original {
+    Present {
+        path: String,
+    },
+    /// Moved or deleted: its last known path.
+    Missing {
+        path: String,
+    },
+    /// There, but its size or modified time is not what was read (ASSUMPTION: enough to say
+    /// "changed" without hashing a large file on every view; a page view also checks the hash).
+    Changed {
+        path: String,
+    },
+}
+
+impl Original {
+    /// The file a document came from, by stat. `None` when the store knows no path for it.
+    pub fn of(document: &DocumentInfo) -> Option<Original> {
+        let known = document.known.as_ref()?;
+        let path = known.path.clone();
+        if !known.present {
+            return Some(Original::Missing { path });
+        }
+        Some(match std::fs::metadata(&path) {
+            Ok(md) if md.is_file() => {
+                let now = mk_corpus::fs::meta(&md);
+                if now.size == known.size && now.mtime_ns == known.mtime_ns {
+                    Original::Present { path }
+                } else {
+                    Original::Changed { path }
+                }
+            }
+            _ => Original::Missing { path },
+        })
+    }
+
+    pub fn path(&self) -> &str {
+        match self {
+            Original::Present { path }
+            | Original::Missing { path }
+            | Original::Changed { path } => path,
+        }
+    }
+}
+
+/// The banner text for a missing original (US-08.5 AC1).
+pub fn not_found_note(path: &str) -> String {
+    format!("Original file not found at {path}")
+}
+
+/// The note for an original that changed since it was read.
+pub const CHANGED_NOTE: &str = "The file changed since it was read: showing the stored text";
+
 #[derive(Clone, PartialEq, Debug)]
 pub struct SourceContext {
     /// The mention shown, if the view was opened at one.
     pub occurrence: Option<OccurrenceRow>,
+    /// Its place among its value's mentions in this document; `None` for a document view.
+    pub position: Option<Position>,
+    /// The original file's state; `None` when no path is known.
+    pub original: Option<Original>,
     pub document: DocumentInfo,
     /// The email this document is an attachment of (US-08.1 AC4).
     pub parent: Option<DocumentLink>,
@@ -286,10 +413,46 @@ impl Project {
         };
         Ok(Some(SourceContext {
             parent: self.parent_link(&document)?,
+            position: Some(self.position(&occurrence)?),
             occurrence: Some(occurrence),
+            original: Original::of(&document),
             document,
             body,
         }))
+    }
+
+    /// Where `occurrence` is among the counted mentions of its value in its document (US-08.2
+    /// AC1). A mention that no longer counts is shown as the only one.
+    fn position(&self, occurrence: &OccurrenceRow) -> Result<Position, ProjectError> {
+        let ids = self
+            .store()
+            .mentions_in_document(&occurrence.key, occurrence.document_id)?;
+        let Some(i) = ids.iter().position(|id| *id == occurrence.mention_id) else {
+            return Ok(Position {
+                index: 1,
+                count: 1,
+                prev: None,
+                next: None,
+            });
+        };
+        Ok(Position {
+            index: i as u32 + 1,
+            count: ids.len() as u32,
+            prev: i.checked_sub(1).map(|p| ids[p]),
+            next: ids.get(i + 1).copied(),
+        })
+    }
+
+    /// The original file of a document, to open or show in its folder (US-08.6): an
+    /// attachment's is its email file. `None` if the document is gone or its file is not there.
+    pub fn original_path(&self, document: i64) -> Result<Option<PathBuf>, ProjectError> {
+        let Some(doc) = self.store().document_info(document)? else {
+            return Ok(None);
+        };
+        Ok(match Original::of(&doc) {
+            Some(Original::Present { path } | Original::Changed { path }) => Some(path.into()),
+            _ => None,
+        })
     }
 
     /// A document from its start, without a hit: an attachment, or the email it came in
@@ -318,6 +481,8 @@ impl Project {
         };
         Ok(Some(SourceContext {
             occurrence: None,
+            position: None,
+            original: Original::of(&document),
             parent: self.parent_link(&document)?,
             document,
             body,

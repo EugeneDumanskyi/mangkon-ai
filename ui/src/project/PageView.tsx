@@ -4,6 +4,7 @@ import { commands, errorMessage } from "../ipc/commands";
 import { ocrQualityLabel } from "../lib/labels";
 import type { PageView as Page } from "../ipc/bindings/PageView";
 import { type PageBody, PageLines } from "./SourceBody";
+import { OriginalBanner } from "./Original";
 
 // The page image comes from the core as PNG bytes and is shown through a `blob:` URL; the boxes
 // are fractions of the page, so they stay on the hit at any size (US-08.1 AC1–AC2). The text
@@ -39,6 +40,7 @@ export function PageFigure({
   showText,
   onToggle,
   onImageLoad,
+  bannerShown = false,
 }: {
   body: PageBody;
   /** `undefined` while it loads. */
@@ -48,8 +50,11 @@ export function PageFigure({
   showText: boolean;
   onToggle: () => void;
   onImageLoad?: () => void;
+  /** The pane already says the original is gone or changed (US-08.5). */
+  bannerShown?: boolean;
 }) {
   const shown = page?.status === "shown";
+  const aboutOriginal = page?.status === "originalMissing" || page?.status === "changed";
   const textLabel = body.text === "ocr" ? "Show OCR text" : "Show text";
   const pages = page?.pages ?? body.pages;
   return (
@@ -73,11 +78,18 @@ export function PageFigure({
           <span className="text-muted">{ocrQualityLabel(body.ocrQuality)}</span>
         )}
       </p>
-      {page?.note && (
-        <p role="note" className="rounded-sm border border-border bg-surface-alt px-2 py-1 text-sm">
-          {page.note}
-        </p>
-      )}
+      {page?.note &&
+        (aboutOriginal ? (
+          // Folded into the pane's banner when it already says so.
+          !bannerShown && <OriginalBanner note={page.note} />
+        ) : (
+          <p
+            role="note"
+            className="rounded-sm border border-border bg-surface-alt px-2 py-1 text-sm"
+          >
+            {page.note}
+          </p>
+        ))}
       {page === undefined ? (
         <p className="text-sm text-muted">Loading the page…</p>
       ) : shown && !showText ? (
@@ -124,10 +136,12 @@ export function PageView({
   documentId,
   mentionId,
   body,
+  bannerShown = false,
 }: {
   documentId: number;
   mentionId: number | null;
   body: PageBody;
+  bannerShown?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [showText, setShowText] = useState(false);
@@ -167,6 +181,7 @@ export function PageView({
           setShowText((s) => !s);
         }}
         onImageLoad={scrollToHit}
+        bannerShown={bannerShown}
       />
     </div>
   );

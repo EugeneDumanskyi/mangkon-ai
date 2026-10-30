@@ -78,6 +78,7 @@ fn us_07_3_ac2_occurrence_opens_its_line_and_cell() {
                         before: "Zoë → ".into(),
                         hit: "shared@x.example".into(),
                         after: " wrote".into(),
+                        runs: Vec::new(),
                     }
                 );
                 // 20 segments after the hit, never the whole file.

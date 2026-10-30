@@ -928,7 +928,9 @@ impl Drop for RunGuard<'_> {
     fn drop(&mut self) {
         self.project.running.store(false, Ordering::SeqCst);
         *lock(&self.project.run_started) = None;
-        lock(&self.project.in_flight).clear();
+        // The run's maps and the store's page caches go back to the allocator (NFR-RES-01).
+        *lock(&self.project.in_flight) = BTreeMap::new();
+        let _ = self.project.store.release_memory();
     }
 }
 

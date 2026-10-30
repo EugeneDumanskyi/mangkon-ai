@@ -440,6 +440,57 @@ pub async fn page_image(
         .ok_or_else(|| IpcError::new("gone", "This page cannot be shown."))
 }
 
+/// The original file of a document that is still there (US-08.6). The UI names a document,
+/// never a path, so it can only open files of the project.
+fn original(state: &AppState, document_id: i64) -> Result<PathBuf, IpcError> {
+    state
+        .current()?
+        .project
+        .original_path(document_id)?
+        .ok_or_else(|| {
+            IpcError::new(
+                "missing",
+                "The original file is not where it was read from.",
+            )
+        })
+}
+
+fn os_error(e: std::io::Error) -> IpcError {
+    IpcError::new("os", format!("The system could not open it: {e}"))
+}
+
+/// "Open with default app" (US-08.6).
+#[tauri::command]
+pub async fn open_original(state: State<'_, AppState>, document_id: i64) -> Result<(), IpcError> {
+    let path = original(&state, document_id)?;
+    crate::os_open::open(path.as_os_str()).map_err(os_error)
+}
+
+/// "Show in folder" (US-08.6).
+#[tauri::command]
+pub async fn show_in_folder(state: State<'_, AppState>, document_id: i64) -> Result<(), IpcError> {
+    let path = original(&state, document_id)?;
+    crate::os_open::reveal(&path).map_err(os_error)
+}
+
+/// The check `open_link` makes again on the Rust side (US-08.4 AC3): `http`, `https` or
+/// `mailto`, no control characters, at most 2,048 characters.
+pub fn check_link(url: &str) -> Result<(), IpcError> {
+    if mk_core::openable_url(url) {
+        Ok(())
+    } else {
+        Err(IpcError::new("refused", "This link cannot be opened."))
+    }
+}
+
+/// Opens a link from a document in the system browser or mail app, after the UI has shown the
+/// full URL and the user confirmed (US-08.4 AC3).
+#[tauri::command]
+pub async fn open_link(url: String) -> Result<(), IpcError> {
+    check_link(&url)?;
+    crate::os_open::open(std::ffi::OsStr::new(&url)).map_err(os_error)
+}
+
 /// Sets the channel core events go to (`UiEvent`). Replaces the previous one.
 #[tauri::command]
 pub async fn subscribe(
@@ -477,7 +528,7 @@ pub fn record_view_sweep<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     sweep: ipc::ViewSweep,
 ) -> Result<String, IpcError> {
-    if !ipc::view_sweep_enabled() {
+    if !ipc::view_sweep_enabled() && ipc::click_sweep().is_none() {
         return Err(IpcError::new("disabled", "The view sweep is off."));
     }
     let path = std::env::var_os("MK_VIEW_SWEEP_OUT")
@@ -513,6 +564,33 @@ pub fn record_queue_walk<R: tauri::Runtime>(
         .map_err(|e| IpcError::new("io", format!("{}: {e}", path.display())))?;
     app.exit(0);
     Ok(path.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// US-08.4 AC3: `open_link` refuses anything but a plain web or mail URL, whatever the UI
+    /// sends.
+    #[test]
+    fn us_08_4_ac3_open_link_refuses_other_urls() {
+        assert!(check_link("https://example.org/a?b=1").is_ok());
+        assert!(check_link("mailto:anna@x.example").is_ok());
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "/usr/bin/xterm",
+            "--help",
+            "https://a.example/\u{0}",
+            "https://a.example/ x",
+            "tauri://localhost/",
+        ] {
+            let e = check_link(bad).unwrap_err();
+            assert_eq!(e.code, "refused", "{bad}");
+        }
+        let long = format!("https://a.example/{}", "x".repeat(2_048));
+        assert!(check_link(&long).is_err());
+    }
 }
 
 #[cfg(feature = "spike-s2d")]

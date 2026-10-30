@@ -32,5 +32,10 @@ serde_json = "1.0.154"
 tauri = { version = "=2.12.5", default-features = false, features = ["wry", "compression", "common-controls-v6", "x11", "dbus"] }
 ts-rs = "12.0.1"
 
+# "Show in folder" over D-Bus (`FileManager1.ShowItems`, US-08.6). Already in the tree through
+# `tao` with the same features, so no new native library.
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9.12"
+
 [build-dependencies]
 tauri-build = "=2.7.4"

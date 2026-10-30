@@ -54,6 +54,23 @@ impl Writer {
     }
 }
 
+impl Writer {
+    /// `PRAGMA shrink_memory` on the write connection, outside any transaction: frees its page
+    /// cache after a run (NFR-RES-01). Waits for the jobs queued before it.
+    pub(crate) fn shrink(&self) -> Result<(), StoreError> {
+        let (reply, answer) = mpsc::sync_channel(1);
+        let job: Job = Box::new(move |conn| {
+            let _ = reply.send(conn.execute_batch("PRAGMA shrink_memory"));
+        });
+        self.jobs
+            .as_ref()
+            .ok_or(StoreError::WriterGone)?
+            .send(job)
+            .map_err(|_| StoreError::WriterGone)?;
+        Ok(answer.recv().map_err(|_| StoreError::WriterGone)??)
+    }
+}
+
 fn run<R, F>(conn: &mut Connection, f: F) -> Result<R, StoreError>
 where
     F: FnOnce(&Transaction) -> Result<R, StoreError>,

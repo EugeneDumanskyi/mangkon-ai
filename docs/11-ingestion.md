@@ -441,3 +441,129 @@ Phase 2, same data folder, 3 min 21 s:
 **Met:** create → add → pause/resume → cancel → retry → remove → settings re-process → quit with a paused job → reopen still paused (NFR-REL-04 paused, US-03.4 AC1). 10,028 = 10,029 − the removed file's content.
 
 **Found and fixed by this run.** With a long project path, the path took most of the toolbar line and the progress panel (`flex-1`, no basis) was squeezed to 10 px; its text then wrapped one character per line, and in a 533 px high window it left the tab panel 35 px, so the documents list showed no rows. The panel now has a 20 rem basis and wraps to its own line.
+
+## 9. M3d checks
+
+Measured on RM-1, idle, 2026-10-30, `cargo xtask build --release`, Wayland session. Memory figures are in MiB (kB from `/proc` ÷ 1,024).
+
+### W3d-1 — memory right after a large ingest (NFR-RES-01, M2 criterion 7a)
+
+**Question:** where does the extra RSS after a TD-2 ingest sit (`10-walking-skeleton.md` §6: 530 MB against 475 MB reopened), and can it be given back without unsafe code or a new allocator?
+
+**Method.** `cargo xtask mem` samples the app and every process below it every 10 s for 60 s: RSS, its anonymous and file-backed parts (`/proc/<pid>/status`), and PSS (`/proc/<pid>/smaps_rollup`).
+
+```sh
+# (b) right after an ingest, in the same session; sampling starts when the timings are written
+XDG_DATA_HOME=<empty dir> MK_UI_TIMING=1 MK_UI_TIMING_PROJECT=<empty dir> \
+  MK_UI_TIMING_SOURCE=testdata/td2 MK_UI_TIMING_OUT=timing.json target/release/mangkon &
+cargo xtask mem --pid $!
+# (a) the same project reopened: no source, so nothing is read
+XDG_DATA_HOME=<same dir> MK_UI_TIMING=1 MK_UI_TIMING_PROJECT=<same dir> target/release/mangkon &
+cargo xtask mem --pid $!
+```
+
+The fix tried first is in this build: when a run ends, the core clears its in-flight map and asks the store to give memory back (`PRAGMA shrink_memory` on the writer and the idle reader; the other readers are closed and reopen on demand).
+
+| State | App RSS (anon) | WebKitWebProcess RSS (anon) | WebKitNetworkProcess | **RSS total** | PSS total |
+|---|---|---|---|---|---|
+| (a) TD-2 project reopened | 209 (56) | 226 (58) | 48 | **483** ✅ | 252 |
+| (b) right after ingesting TD-2 (175 s, PDFs and scans included) | 285 (128) | 242 (74) | 48 | **576** ❌ | 344 |
+| (b) with `GLIBC_TUNABLES=glibc.malloc.arena_max=2` | 253 (95) | 241 (73) | 48 | 542 ❌ | 310 |
+| (b) with `GLIBC_TUNABLES=glibc.malloc.trim_threshold=131072:glibc.malloc.mmap_threshold=131072` | 221 (63) | 241 (73) | 48 | 510 ❌ | 278 |
+| **Final build:** the app restarts itself once with those tunables. (a) reopened | 197 (44) | 226 (58) | 48 | **471** ✅ | 240 |
+| **Final build:** (b) right after ingesting TD-2 | 222 (64) | 241 (73) | 48 | **512** ❌ | 280 |
+
+Every state was flat from 0 to 60 s (within 4 MiB). In the final build the app's workers still get their own 1 MB mmap threshold (§7), not the app's tunables.
+
+**What the numbers say.**
+- The file-backed part of the app barely moves (153 → 157 MiB): the extra is anonymous memory, +72 MiB.
+- With lower glibc trim and mmap thresholds the app's anonymous memory falls to 63 MiB, 7 MiB above the reopened state. So ≈ 65 MiB of the 72 is freed heap that glibc keeps for reuse, not live data. Fewer arenas give back about half of it.
+- The web process holds ≈ 16 MiB more than after a reopen: script heap from the run's progress updates, not yet collected. The UI's query caches are not the cause (connections and progress each use one query key), and the page cannot force a collection.
+- With both, state (b) would still be ≈ 510 MiB, on the line.
+
+**Verdict.** Stopped at the fallback, as planned. 7a is met for a reopened project and **not met** right after a large ingest, by 76 MiB. What is left needs a decision:
+1. Set the glibc tunables for the app process itself (the workers already get `GLIBC_TUNABLES`, §7). An environment variable is read only at start, so the app would re-execute itself once, or a launcher would set it.
+2. `malloc_trim(0)` after a run: unsafe code outside `mk-tesseract-sys`.
+3. Another allocator (jemalloc or mimalloc): an ADR.
+
+Any of these gets the app process back to its reopened size; the web process's 16 MiB stays.
+
+**Decision (2026-10-30): option 1, and the rest of the miss is accepted for now.** On Linux with glibc, the app runs itself again once at start with the trim and mmap thresholds set (`mk_core::restart_with_malloc_tunables`), before any thread or window exists. A user's own `GLIBC_TUNABLES` is kept after the app's, so the user's values win; the workers get the user's value, not the app's. It needs no unsafe code and no new dependency, and macOS and Windows are unaffected. With it, state (b) is 512 MiB: 12 MiB over the limit, almost all of it the web process's script heap, which no allocator change in the app reaches. A reopened project is 471 MiB. The rest of the miss goes to a later hardening milestone (roadmap §4 #18).
+
+### Click to highlight in the release app (NFR-PERF-14, NFR-QA-12, US-08.2 AC2)
+
+```sh
+XDG_DATA_HOME=<dir> MK_UI_TIMING=1 MK_UI_TIMING_PROJECT=<project> MK_VIEW_SWEEP=clicks \
+  MK_VIEW_SWEEP_N=50 MK_VIEW_SWEEP_SEED=1 MK_VIEW_SWEEP_FIXED=<mention ids> \
+  MK_VIEW_SWEEP_OUT=clicks.json target/release/mangkon
+```
+
+With `MK_VIEW_SWEEP=clicks` the UI picks a seeded random connection, then a random occurrence of it, `MK_VIEW_SWEEP_N` times, and adds the fixed mention ids (`ui/src/project/viewSweep.ts`). For each it clicks the real occurrence row and stops the clock at the frame after the highlight is in the DOM (for a page view, after the image has loaded). It reads the highlighted text back and compares it with the mention's value. Where the document has another mention of the value, it goes Next, then Back, and checks that the three panes' scroll offsets come back within 2 px. The projects were read by `mangkon-cli ingest` and reopened in the app.
+
+| Project | Clicks | p50 | **p95** | max | Right text | Back restored |
+|---|---|---|---|---|---|---|
+| TD-1 (102 files) | 51: 38 JSON, 12 page, 1 text | 33 ms | **83 ms** | 100 ms | 51 / 51 | 38 / 38 |
+| TD-2 (1,089 files) | 50, all CSV | 33 ms | **36 ms** | 42 ms | 50 / 50 | 1 / 1 |
+| `rows-1m.csv` + `messages-2g.mbox` (5,000 connections) | 7: 2 CSV, 5 email | 27 ms | **54 ms** | 54 ms | 7 / 7 | 2 / 2 |
+
+Fixed clicks:
+
+| Case | Mention | Time | Right text |
+|---|---|---|---|
+| Page 18 of `public/fr-2025-03543.pdf`, the deepest page with a mention in TD-1 | 487 | 83 ms | yes |
+| Row 999,990 of the 1M-row CSV | 300261 | 48 ms | yes |
+| Message 1,286,852 of the 2 GB MBOX (1,286,855 messages) | 12526552 | 27 ms | yes |
+
+- **NFR-PERF-14 met:** p95 ≤ 100 ms against 1 s in every project, the large-file cases included.
+- **The 500-page ledger has no email address**, so it has no mention to click until M4 adds other identifier types; its page view was timed in §6 (≈ 28 × under its share).
+- **The occurrence list stops at 1,000 rows** (`MAX_OCCURRENCES`), in file and position order. The last CSV row and the last message carry addresses with 2,430 and 10,150 mentions, which the list does not reach; the fixed clicks use the latest rows whose address has fewer than 1,000 mentions.
+
+### NFR-QA-12 in the core
+
+```sh
+cargo test -p mk-core --release --test slice_td1 nfr_qa_12 -- --ignored --nocapture
+```
+
+200 seeded draws from TD-1's mentions, each opened as the app does: for a text view the highlighted text must equal the mention's value; for a page view the highlight boxes must cover the value's text on the page, and, where `ground-truth.json` has the value's box, overlap it (IoU ≥ 0.5). TD-1 has 86 stored email mentions, so the draws repeat: 75 distinct mentions.
+
+**Result: 200 / 200** right (71 also checked against ground-truth boxes). With the 108 / 108 clicks in the app above, **met** (≥ 99 %).
+
+### M3 criterion 4 — TD-3 mixed into TD-1
+
+`m3_criterion_4_td3_mixed_into_td1` (`crates/mk-core/tests/td3.rs`, release): one project with all of TD-1 and TD-3. Every TD-1 file is read; the 28 TD-3 files that should fail fail alone, each with the reason `expected.json` gives and its path, and no Rust error text; a rebuild equals the incremental rows. 20 s. **Met.**
+
+### Viewer stories (US-08.2, US-08.4 AC3, US-08.5, US-08.6)
+
+| Story | Check | Result |
+|---|---|---|
+| US-08.2 AC1 | `us_08_2_ac1_position_in_document`; `SourcePane.test.tsx` | "Mention N of M" with Previous / Next, in document order |
+| US-08.2 AC2 | `history.test.ts`; the Back step of the click sweep | Back restores the place and the scroll of the three panes; Alt+← |
+| US-08.4 AC3 | `us_08_4_ac3_link_runs`, `us_08_4_ac3_finds_urls_in_text`, `us_08_4_ac3_open_link_refuses_other_urls`; `LinkConfirm.test.tsx` | URLs in the shown text become link buttons; the confirm shows the full URL, Cancel first; other schemes, control characters and URLs over 2,048 characters are refused in Rust |
+| US-08.5 AC1 | `us_08_5_ac1_missing_original_every_format`, `us_08_5_changed_original`; `PageView.test.tsx` | Every TD-1 format, its file moved away: stored text and "Original file not found at <path>", before and after a re-scan; changed file noted |
+| US-08.6 AC1 | `original_path` checks in the same test (an attachment resolves to its email's file; none when missing) | Show in folder / Open with default app off when the original is missing |
+
+Checked by hand in the release app on Linux (2026-10-30): a link in an email opened in the browser after the confirm, Show in folder opened the file manager, Open with default app opened the file. Not verified here: macOS and Windows.
+
+### No network with the M3d viewer (NFR-SEC-09, M3 criterion 6)
+
+The §7 run again, with this build:
+
+| | |
+|---|---|
+| Mentions opened | **86** (email 46, page 33, DOCX / HTML paragraphs 5, JSON 3, TXT / MD 3) |
+| Page views | 29 images shown and toggled to text; the 4 pages of the two PDF attachments are shown as text by design |
+| `connect` calls | 11, all `AF_UNIX`: the session and system D-Bus, the accessibility bus, Wayland |
+| `AF_INET` / `AF_INET6` | **0** |
+
+No link is opened by the sweep; opening one is the user's choice after the confirm. **Met on Linux.**
+
+### Kill test (NFR-REL-02/03/04)
+
+`mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1`: **20 / 20** passed (shortest reference ingestion 1.51 s, 23 lanes): 19 kills in Stage A at 0.25–1.32 s with 2–4 items recovered each, 1 after the run had finished; 0 orphan workers; 40 s in all. **Met** with the lazy reader pool.
+
+### TD-1 unchanged (NFR-REL-10)
+
+- `nfr_rel_10_td1_unchanged_after_full_run` (release): SHA-256 of the 103 TD-1 files, then ingest, rebuild, a view of each of the 86 mentions, a render of every page of every document (553), and a retry; then SHA-256 again: identical. The retry had nothing to do (no TD-1 file fails).
+- After the release-app runs above (click sweeps, strace sweep, kill test): the same 103 checksums, and `tools/corpus-gen/corpus.sha256` checks clean.
+
+**Met.**

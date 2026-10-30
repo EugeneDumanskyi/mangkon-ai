@@ -19,6 +19,7 @@ use mk_worker::frame::{FrameReader, FrameWriter};
 use mk_worker::{PageImage, PagePoints, RenderPage};
 
 use crate::project::{Project, ProjectError};
+use crate::view::{CHANGED_NOTE, Original, not_found_note};
 use crate::workers::{RenderError, Stopped, WorkerProcess};
 
 /// Pixels per PDF point of a page view image: 144 DPI. ASSUMPTION (W3b-1 checks the time).
@@ -256,28 +257,36 @@ impl Project {
                 "Pages of attachments are shown as text",
             )));
         }
-        let Some(path) = doc.path.clone() else {
-            return Ok(Some(text_only(
-                PageStatus::OriginalMissing,
-                "Original file missing: showing the stored text",
-            )));
+        // US-08.5: a stat first, so a cached page of a file now gone is not shown as if it
+        // were there.
+        let path = match Original::of(&doc) {
+            Some(Original::Present { path }) => path,
+            Some(Original::Changed { .. }) => {
+                return Ok(Some(text_only(PageStatus::Changed, CHANGED_NOTE)));
+            }
+            Some(Original::Missing { path }) => {
+                return Ok(Some(text_only(
+                    PageStatus::OriginalMissing,
+                    &not_found_note(&path),
+                )));
+            }
+            None => {
+                return Ok(Some(text_only(
+                    PageStatus::OriginalMissing,
+                    "Original file not found",
+                )));
+            }
         };
         let image = match self.rendered(&doc, &path, page)? {
             Ok(image) => image,
             Err(f) => {
-                let status = match f.code.as_str() {
-                    "file_missing" => PageStatus::OriginalMissing,
-                    "file_changed" => PageStatus::Changed,
-                    _ => PageStatus::TextOnly,
-                };
-                let note = match status {
-                    PageStatus::OriginalMissing => {
-                        "Original file missing: showing the stored text".to_string()
-                    }
-                    PageStatus::Changed => {
-                        "The file changed since it was read: showing the stored text".to_string()
-                    }
-                    _ => format!("{}: showing the stored text", f.reason),
+                let (status, note) = match f.code.as_str() {
+                    "file_missing" => (PageStatus::OriginalMissing, not_found_note(&path)),
+                    "file_changed" => (PageStatus::Changed, CHANGED_NOTE.to_string()),
+                    _ => (
+                        PageStatus::TextOnly,
+                        format!("{}: showing the stored text", f.reason),
+                    ),
                 };
                 return Ok(Some(text_only(status, &note)));
             }
