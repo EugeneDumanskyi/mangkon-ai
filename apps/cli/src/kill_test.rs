@@ -147,6 +147,10 @@ fn ingest(dir: &Path, source: &Path, report: bool) -> Result<Project, ProjectErr
     say("phase open");
     let (mut project, _) = Project::open(dir)?;
     project.set_tessdata_dir(mk_core::tessdata_dir());
+    // M4c: a custom pattern runs in every Stage A commit too (US-04.7).
+    if project.custom_patterns()?.is_empty() {
+        project.add_pattern("tender_ref", r"VPA-TND-\d{4}-\d{3}")?;
+    }
     project.add_source_root(source)?;
     say("phase ingest");
     let stop = AtomicBool::new(false);

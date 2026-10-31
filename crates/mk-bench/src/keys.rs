@@ -6,6 +6,9 @@
 
 use crate::model::EntityKind;
 
+// `mk_kernel::NameKey` is the production form of these rules; a test there checks that the two
+// agree on every TD-1 table name.
+
 /// Legal suffixes dropped from organization names (US-11.1 AC1: "Ltd", "LLC", "GmbH" …).
 const LEGAL_SUFFIXES: &[&str] = &[
     "ltd",

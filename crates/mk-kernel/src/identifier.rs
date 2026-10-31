@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-/// Identifier type (US-04.1 – US-04.5). Custom patterns (US-04.7) come in M4c.
+/// Identifier type (US-04.1 – US-04.5, US-04.7).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum IdentifierKind {
@@ -19,10 +19,15 @@ pub enum IdentifierKind {
     Evm,
     Sol,
     Tron,
+    /// A match of a project's custom pattern (US-04.7, INV-ID-07). The key's value is
+    /// `<pattern>:<match>`, so the key reads `custom:<pattern>:<match>` and each pattern is its
+    /// own type ([`IdentifierKey::type_name`]).
+    Custom,
 }
 
 impl IdentifierKind {
-    pub const ALL: [IdentifierKind; 10] = [
+    /// The built-in types: what `mk-identifiers` finds without a project's patterns.
+    pub const BUILTIN: [IdentifierKind; 10] = [
         IdentifierKind::Email,
         IdentifierKind::Phone,
         IdentifierKind::PhoneUnnormalized,
@@ -33,6 +38,20 @@ impl IdentifierKind {
         IdentifierKind::Evm,
         IdentifierKind::Sol,
         IdentifierKind::Tron,
+    ];
+
+    pub const ALL: [IdentifierKind; 11] = [
+        IdentifierKind::Email,
+        IdentifierKind::Phone,
+        IdentifierKind::PhoneUnnormalized,
+        IdentifierKind::Url,
+        IdentifierKind::Domain,
+        IdentifierKind::Iban,
+        IdentifierKind::Btc,
+        IdentifierKind::Evm,
+        IdentifierKind::Sol,
+        IdentifierKind::Tron,
+        IdentifierKind::Custom,
     ];
 
     /// Stable name, as stored and as in the ground truth (`docs/07-test-corpus.md` §5).
@@ -48,12 +67,25 @@ impl IdentifierKind {
             IdentifierKind::Evm => "evm",
             IdentifierKind::Sol => "sol",
             IdentifierKind::Tron => "tron",
+            IdentifierKind::Custom => "custom",
         }
     }
 
     pub fn from_name(name: &str) -> Option<IdentifierKind> {
         IdentifierKind::ALL.into_iter().find(|k| k.as_str() == name)
     }
+}
+
+/// Longest custom pattern name, in characters (INV-ID-07). ASSUMPTION (M4c).
+pub const MAX_PATTERN_NAME: usize = 40;
+
+/// Whether `name` can name a custom pattern: 1–[`MAX_PATTERN_NAME`] characters, no `:` (it ends
+/// the name in a key) and no control characters, not starting or ending with a space.
+pub fn valid_pattern_name(name: &str) -> bool {
+    let n = name.chars().count();
+    (1..=MAX_PATTERN_NAME).contains(&n)
+        && name.trim() == name
+        && !name.chars().any(|c| c == ':' || c.is_control())
 }
 
 impl fmt::Display for IdentifierKind {
@@ -89,6 +121,38 @@ impl IdentifierKey {
     pub fn value(&self) -> &str {
         &self.value
     }
+
+    /// The key of a match of custom pattern `name` (US-04.7); `None` if `name` is not a valid
+    /// pattern name or `value` is empty.
+    pub fn custom(name: &str, value: &str) -> Option<Self> {
+        (valid_pattern_name(name) && !value.is_empty())
+            .then(|| Self::new(IdentifierKind::Custom, format!("{name}:{value}")))
+    }
+
+    /// The pattern of a custom key; `None` for a built-in one.
+    pub fn pattern(&self) -> Option<&str> {
+        match self.kind {
+            IdentifierKind::Custom => self.value.split_once(':').map(|(p, _)| p),
+            _ => None,
+        }
+    }
+
+    /// The value as people read it: a custom key's match without its pattern name.
+    pub fn display_value(&self) -> &str {
+        match self.kind {
+            IdentifierKind::Custom => self.value.split_once(':').map_or("", |(_, v)| v),
+            _ => &self.value,
+        }
+    }
+
+    /// The type as people and the lists name it: `custom:<pattern>` for a custom key, else the
+    /// kind's name.
+    pub fn type_name(&self) -> String {
+        match self.pattern() {
+            Some(p) => format!("custom:{p}"),
+            None => self.kind.as_str().to_string(),
+        }
+    }
 }
 
 impl fmt::Display for IdentifierKey {
@@ -119,6 +183,10 @@ impl FromStr for IdentifierKey {
         let kind = IdentifierKind::from_name(kind).ok_or(ParseKeyError)?;
         if value.is_empty() {
             return Err(ParseKeyError);
+        }
+        if kind == IdentifierKind::Custom {
+            let (name, v) = value.split_once(':').ok_or(ParseKeyError)?;
+            return Self::custom(name, v).ok_or(ParseKeyError);
         }
         Ok(Self::new(kind, value))
     }
@@ -159,10 +227,42 @@ mod tests {
         assert!(!format!("{e:?}").contains("4111"));
     }
 
+    /// INV-ID-07: a custom match's key is `custom:<pattern>:<value>`; its type is named after
+    /// the pattern. Names are 1–40 characters without `:` or control characters.
+    #[test]
+    fn inv_id_07_custom_key_form() {
+        let k = IdentifierKey::custom("tender_ref", "VPA-TND-2024-017").unwrap();
+        assert_eq!(k.to_string(), "custom:tender_ref:VPA-TND-2024-017");
+        assert_eq!(k.pattern(), Some("tender_ref"));
+        assert_eq!(k.display_value(), "VPA-TND-2024-017");
+        assert_eq!(k.type_name(), "custom:tender_ref");
+        assert_eq!(k.to_string().parse::<IdentifierKey>(), Ok(k));
+        // A value may hold `:`; the name ends at the first one.
+        let v = IdentifierKey::custom("case", "A:1").unwrap();
+        assert_eq!(v.to_string().parse::<IdentifierKey>(), Ok(v.clone()));
+        assert_eq!(v.display_value(), "A:1");
+        for bad in ["", "a:b", " lead", "tab\there", &"x".repeat(41)] {
+            assert!(IdentifierKey::custom(bad, "v").is_none(), "{bad:?}");
+        }
+        assert!(IdentifierKey::custom(&"é".repeat(40), "v").is_some());
+        assert!(IdentifierKey::custom("n", "").is_none());
+        assert!("custom:novalue".parse::<IdentifierKey>().is_err());
+        assert!("custom::v".parse::<IdentifierKey>().is_err());
+        let email = IdentifierKey::new(IdentifierKind::Email, "a@b.example");
+        assert_eq!((email.pattern(), email.type_name()), (None, "email".into()));
+        assert_eq!(email.display_value(), "a@b.example");
+    }
+
     proptest! {
         #[test]
+        fn custom_round_trip(name in "[A-Za-z_][A-Za-z0-9 _-]{0,38}[A-Za-z0-9_]", value in "[ -~]{1,30}") {
+            let k = IdentifierKey::custom(&name, &value).unwrap();
+            prop_assert_eq!(k.to_string().parse::<IdentifierKey>().unwrap(), k);
+        }
+
+        #[test]
         fn display_parse_round_trip(
-            kind in proptest::sample::select(IdentifierKind::ALL.to_vec()),
+            kind in proptest::sample::select(IdentifierKind::BUILTIN.to_vec()),
             value in "[a-z0-9.@:-]{1,40}",
         ) {
             let k = IdentifierKey::new(kind, value);

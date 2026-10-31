@@ -18,6 +18,9 @@
 //!   ([`Project::segment_context`]).
 //! - M4b: the identifier re-run after a region change or older rules
 //!   ([`Project::rerun_identifiers`]), card-like flags in the viewer.
+//! - M4c: custom patterns and their own re-run step ([`Project::add_pattern`]), column
+//!   mapping ([`Project::mapping_view`], [`Project::confirm_mapping`]) and "Name (from table)"
+//!   entities in the connections list.
 
 mod control;
 mod events;
@@ -25,6 +28,7 @@ mod identifiers;
 mod links;
 mod manage;
 mod page;
+mod patterns;
 mod project;
 mod search;
 pub mod stage_a;
@@ -43,17 +47,20 @@ pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
 pub use identifiers::RerunSummary;
 pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
-pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey};
+pub use mk_graph::model::EntityRow;
+pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey, SubjectKind};
 pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
+pub use mk_mapping::{Assignments, ColumnType, MappingState};
 pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
-    CancelOutcome, CardFlagRow, DocumentCursor, DocumentFilter, DocumentInfo, DocumentRow,
-    FailedFile, KnownFile, OccurrenceRow, RemoveOutcome, STATUS_MISSING, SearchCursor,
-    SearchFilter,
+    CancelOutcome, CardFlagRow, ColumnRow, DocumentCursor, DocumentFilter, DocumentInfo,
+    DocumentRow, FailedFile, KnownFile, MappingView, OccurrenceRow, RemoveOutcome, ReuseCandidate,
+    SHOWN_SAMPLES, STATUS_MISSING, SearchCursor, SearchFilter,
 };
-pub use mk_workspace::{ProjectSettings, RegistryEntry, Reprocess, RootKind};
+pub use mk_workspace::{PatternSetting, ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
+pub use patterns::{CustomPatternInfo, MAX_SAMPLE_CHARS, PatternTest, TOO_BROAD, test_pattern};
 pub use project::{
     HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
     StageASummary, file_types, project_exists,

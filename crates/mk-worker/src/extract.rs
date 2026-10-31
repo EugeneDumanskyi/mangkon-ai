@@ -1,28 +1,39 @@
 //! A content as protocol chunks while it is parsed: its segments, identifier mentions and
 //! card-like flags (US-04.1 – US-04.6). This is the Stage A step after parsing, run in the
 //! worker because it is cheap and needs the fresh segments (ADR-0007). The core runs the same
-//! [`segment_identifiers`] over stored segments when only the identifier rules change (M4b), so
-//! the two cannot drift.
+//! [`segment_builtin`] over stored segments when only the identifier rules change (M4b), and
+//! [`segment_custom`] when only the custom patterns change (M4c), so the two cannot drift.
 
 use mk_identifiers::Rules;
 use mk_parsers::{DocumentStart, ParseError, ParsedContent, ParsedSegment, RowState, Sink};
 
 use crate::protocol::{CardFlag, Chunk, Mention, Segment};
 
-/// The mentions and card-like flags in one segment (segment `segment` of its document), each
-/// with its locator (INV-CO-03/04). A hit that would cross a CSV cell edge is dropped: every
-/// mention lies in one cell; Message-ID headers are not scanned. A mention in OCR text gets the
-/// lowest of its own confidence and its words' OCR confidence (INV-ID-03).
+/// The mentions and card-like flags in one segment (segment `segment` of its document): the
+/// built-in identifiers ([`segment_builtin`]) and the matches of `rules.custom`
+/// ([`segment_custom`]).
 pub fn segment_identifiers(
     seg: &ParsedSegment,
     segment: u32,
     columns: &[Option<String>],
     rules: &Rules,
 ) -> (Vec<Mention>, Vec<CardFlag>) {
-    let found = mk_identifiers::find_all(&seg.text, rules);
-    let mentions = found
-        .hits
-        .into_iter()
+    let (mut mentions, cards) = segment_builtin(seg, segment, columns, rules);
+    mentions.extend(segment_custom(seg, segment, columns, &rules.custom));
+    (mentions, cards)
+}
+
+/// Hits as mentions, each with its locator (INV-CO-03/04). A hit that would cross a CSV cell
+/// edge is dropped: every mention lies in one cell; Message-ID headers are not scanned. A
+/// mention in OCR text gets the lowest of its own confidence and its words' OCR confidence
+/// (INV-ID-03).
+fn mentions_of(
+    seg: &ParsedSegment,
+    segment: u32,
+    columns: &[Option<String>],
+    hits: Vec<mk_identifiers::IdentifierHit>,
+) -> Vec<Mention> {
+    hits.into_iter()
         .filter_map(|hit| {
             let locator = mk_parsers::mention_locator(seg, columns, hit.span)?;
             let confidence = seg
@@ -36,7 +47,36 @@ pub fn segment_identifiers(
                 confidence,
             })
         })
-        .collect();
+        .collect()
+}
+
+/// The matches of a project's custom patterns in one segment (US-04.7), as mentions.
+pub fn segment_custom(
+    seg: &ParsedSegment,
+    segment: u32,
+    columns: &[Option<String>],
+    patterns: &[mk_identifiers::CustomPattern],
+) -> Vec<Mention> {
+    if patterns.is_empty() {
+        return Vec::new();
+    }
+    mentions_of(
+        seg,
+        segment,
+        columns,
+        mk_identifiers::find_custom(&seg.text, patterns),
+    )
+}
+
+/// The built-in identifiers and card-like flags in one segment (US-04.1 – US-04.6).
+pub fn segment_builtin(
+    seg: &ParsedSegment,
+    segment: u32,
+    columns: &[Option<String>],
+    rules: &Rules,
+) -> (Vec<Mention>, Vec<CardFlag>) {
+    let found = mk_identifiers::find_all(&seg.text, rules);
+    let mentions = mentions_of(seg, segment, columns, found.hits);
     let cards = found
         .cards
         .into_iter()
@@ -381,10 +421,11 @@ mod tests {
     /// flags with their cell, never as mentions.
     #[test]
     fn rules_and_card_flags() {
-        let csv = "name,phone,card\nA,020 7946 0318,4111 1111 1111 1111\n";
+        let csv = "name,phone,card\nA-12,020 7946 0318,4111 1111 1111 1111\n";
         let parsed = mk_parsers::parse(Format::Csv, csv.as_bytes()).unwrap();
         let rules = Rules {
             phone_region: mk_identifiers::Region::parse("GB"),
+            custom: vec![mk_identifiers::CustomPattern::compile("ref", r"A-\d+").unwrap()],
         };
         let mut out = Vec::new();
         chunks::<()>(
@@ -406,7 +447,8 @@ mod tests {
             })
             .flatten()
             .collect();
-        assert_eq!(keys, vec!["phone:+442079460318"]);
+        // Custom matches come with the built-in ones, in their cell (US-04.7).
+        assert_eq!(keys, vec!["phone:+442079460318", "custom:ref:A-12"]);
         let Some(Chunk::CardFlags(flags)) = out.last() else {
             panic!("{out:?}")
         };

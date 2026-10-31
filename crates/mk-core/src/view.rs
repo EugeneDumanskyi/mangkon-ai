@@ -7,10 +7,12 @@
 //! Spans count Unicode characters (INV-CO-04). They are applied here, on the Rust side, so the
 //! UI never has to map them onto its own string units.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use mk_corpus::IngestionState;
-use mk_graph::{ConnectionRow, RankKey};
+use mk_graph::model::EntityRow;
+use mk_graph::{ConnectionRow, RankKey, SubjectKind};
 use mk_kernel::{Column, Locator, Span};
 use mk_parsers::Format;
 use mk_store::{DocumentInfo, FailedFile, OccurrenceRow, WindowSegment};
@@ -47,6 +49,9 @@ pub struct IngestCounts {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectionsPage {
     pub rows: Vec<ConnectionRow>,
+    /// The entity rows of this page's entity connections, by name key: the display name and
+    /// the "Name (from table)" mark (US-05.3 AC2, INV-ER-07).
+    pub entities: BTreeMap<String, EntityRow>,
     /// `None` on the last page.
     pub next: Option<RankKey>,
 }
@@ -390,7 +395,17 @@ impl Project {
         let next = (rows.len() == limit)
             .then(|| rows.last().map(ConnectionRow::rank_key))
             .flatten();
-        Ok(ConnectionsPage { rows, next })
+        let entity_keys: Vec<String> = rows
+            .iter()
+            .filter(|r| r.subject_kind == SubjectKind::Entity)
+            .map(|r| r.subject_key.clone())
+            .collect();
+        let entities = self.store().entities(&entity_keys)?;
+        Ok(ConnectionsPage {
+            rows,
+            entities,
+            next,
+        })
     }
 
     /// The counted mentions of a connection's key, each with its locator and file (US-07.3

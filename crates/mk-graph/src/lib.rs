@@ -5,8 +5,10 @@
 //! and [`model::reference`] applies them to a whole in-memory project, so tests can check that
 //! incremental commits and a full rebuild agree (ADR-0005 follow-up).
 //!
-//! M2b: identifier connections and the ignore / un-ignore decisions. Entities (ADR-0005 step 3)
-//! come in M5–M7; there are no entity mentions yet.
+//! M2b: identifier connections and the ignore / un-ignore decisions. M4c: entities from
+//! confirmed table columns ("Name (from table)", US-05.3): grouped by name key, with a display
+//! name and their own connections and ignore decisions (domain §9.3 steps 1, 2 and 4). Merges,
+//! splits and AI entities come in M6–M7.
 
 pub mod model;
 
@@ -14,7 +16,7 @@ use std::cmp::{Ordering, Reverse};
 use std::collections::BTreeSet;
 use std::fmt;
 
-use mk_kernel::{IdentifierKey, IdentifierKind};
+use mk_kernel::{IdentifierKey, IdentifierKind, NameKey};
 
 /// Mentions below this confidence are "low confidence" (US-07.1 AC4, domain §9.1).
 pub const LOW_CONFIDENCE: f32 = 0.5;
@@ -33,16 +35,34 @@ pub struct IdentifierStats {
     pub max_confidence: f32,
 }
 
-/// What a connection is about. M2b has identifier connections only.
+/// What a connection is about: an identifier, or an entity (M4c: from table columns).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SubjectKind {
     Identifier,
+    Entity,
 }
 
 impl SubjectKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             SubjectKind::Identifier => "identifier",
+            SubjectKind::Entity => "entity",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        [SubjectKind::Identifier, SubjectKind::Entity]
+            .into_iter()
+            .find(|k| k.as_str() == name)
+    }
+
+    /// The kind of a subject key: a name key (`person:` / `org:`) is an entity, anything else
+    /// an identifier.
+    pub fn of_key(key: &str) -> Self {
+        if key.parse::<NameKey>().is_ok() {
+            SubjectKind::Entity
+        } else {
+            SubjectKind::Identifier
         }
     }
 }
@@ -51,7 +71,7 @@ impl SubjectKind {
 /// (INV-LK-05).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectionRow {
-    /// The identifier key, `type:value`.
+    /// The identifier key (`type:value`) or the entity's name key (`org:<name>`).
     pub subject_key: String,
     pub subject_kind: SubjectKind,
     pub source_count: u64,
@@ -106,6 +126,46 @@ pub fn connection_for(
     })
 }
 
+/// Counted mentions of one entity (domain §9.1): mentions whose content is not Missing and
+/// whose confidence is at least [`LOW_CONFIDENCE`] (table mentions are 1.0).
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct EntityStats {
+    pub documents: u64,
+    pub file_types: u64,
+    pub mentions: u64,
+}
+
+/// The connection row for an entity, if it is one (INV-LK-01): counted mentions in two or more
+/// distinct documents. Never low confidence: its uncounted mentions are already left out.
+pub fn entity_connection_for(
+    key: &NameKey,
+    stats: &EntityStats,
+    ignored: bool,
+) -> Option<ConnectionRow> {
+    (stats.documents >= 2).then(|| ConnectionRow {
+        subject_key: key.to_string(),
+        subject_kind: SubjectKind::Entity,
+        source_count: stats.documents,
+        file_type_count: stats.file_types,
+        mention_count: stats.mentions,
+        low_confidence: false,
+        ignored,
+    })
+}
+
+/// An entity's display name (INV-ER-07): its most frequent name as written, a tie broken by A→Z
+/// order (domain §9.3 step 4, ASSUMPTION). `None` without names.
+pub fn display_name<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for n in names {
+        *counts.entry(n).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(a.0)))
+        .map(|(n, _)| n.to_string())
+}
+
 /// Ranking order (domain §9.2) as a sortable key: confident first, then more documents, more
 /// file types, more mentions, then the key A→Z so the order is stable.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -154,29 +214,66 @@ impl ConnectionRow {
     }
 }
 
-/// Decision kinds. M2b has ignore and un-ignore of an identifier connection, anchored on its
-/// [`IdentifierKey`] (domain §9.5). The real kinds come in M4 and M7.
+/// Decision kinds (domain §9.5). Ignore and un-ignore of a connection, anchored on its
+/// [`IdentifierKey`] or, for an entity, on its [`NameKey`] (M2b, M4c); confirming a column
+/// mapping, anchored on the file path and header signature (M4c, `mk-mapping`). The others come
+/// in M7.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DecisionKind {
     IgnoreIdentifier,
     UnignoreIdentifier,
+    IgnoreEntity,
+    UnignoreEntity,
+    ConfirmMapping,
 }
 
 impl DecisionKind {
-    pub const ALL: [DecisionKind; 2] = [
+    pub const ALL: [DecisionKind; 5] = [
         DecisionKind::IgnoreIdentifier,
         DecisionKind::UnignoreIdentifier,
+        DecisionKind::IgnoreEntity,
+        DecisionKind::UnignoreEntity,
+        DecisionKind::ConfirmMapping,
     ];
 
     pub fn as_str(&self) -> &'static str {
         match self {
             DecisionKind::IgnoreIdentifier => "ignore_identifier",
             DecisionKind::UnignoreIdentifier => "unignore_identifier",
+            DecisionKind::IgnoreEntity => "ignore_entity",
+            DecisionKind::UnignoreEntity => "unignore_entity",
+            DecisionKind::ConfirmMapping => "confirm_mapping",
         }
     }
 
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == name)
+    }
+
+    /// The ignore and un-ignore kinds for a subject of `kind`.
+    pub fn ignore_pair(kind: SubjectKind) -> [DecisionKind; 2] {
+        match kind {
+            SubjectKind::Identifier => [
+                DecisionKind::IgnoreIdentifier,
+                DecisionKind::UnignoreIdentifier,
+            ],
+            SubjectKind::Entity => [DecisionKind::IgnoreEntity, DecisionKind::UnignoreEntity],
+        }
+    }
+
+    /// Whether this kind hides a connection when it applies.
+    pub fn is_ignore(&self) -> bool {
+        matches!(
+            self,
+            DecisionKind::IgnoreIdentifier | DecisionKind::IgnoreEntity
+        )
+    }
+
+    /// Whether this kind acts on a connection (its state is derived per anchor in
+    /// `decision_status`). A confirmed mapping acts on a file's table output instead: its state
+    /// is the file's mapping state (domain §7.3).
+    pub fn on_connection(&self) -> bool {
+        !matches!(self, DecisionKind::ConfirmMapping)
     }
 }
 
@@ -227,10 +324,12 @@ pub struct Resolution {
     pub statuses: Vec<(i64, DecisionStatus)>,
 }
 
-/// Resolves the ignore / un-ignore decisions on one identifier anchor (domain §7.5, §9.4).
+/// Resolves the ignore / un-ignore decisions on one identifier or entity anchor (domain §7.5,
+/// §9.4).
 ///
 /// The newest decision wins (INV-CU-05); the older ones are Superseded. The newest is Active
-/// when the anchor exists (the identifier has a stored mention), otherwise Orphaned (INV-CU-04),
+/// when the anchor exists (the identifier or entity has a stored mention), otherwise Orphaned
+/// (INV-CU-04),
 /// and it becomes Active again when the anchor comes back. Only an Active ignore hides the
 /// connection.
 pub fn resolve(decisions: &[DecisionFact], anchor_present: bool) -> Resolution {
@@ -251,7 +350,7 @@ pub fn resolve(decisions: &[DecisionFact], anchor_present: bool) -> Resolution {
         })
         .collect();
     Resolution {
-        ignored: anchor_present && newest.kind == DecisionKind::IgnoreIdentifier,
+        ignored: anchor_present && newest.kind.is_ignore(),
         statuses,
     }
 }
@@ -371,6 +470,44 @@ mod tests {
         );
         assert!(r.ignored);
         assert_eq!(r.statuses[2], (9, Active));
+    }
+
+    /// INV-ER-07: the most frequent name as written, a tie broken A→Z.
+    #[test]
+    fn inv_er_07_display_name() {
+        assert_eq!(
+            display_name([
+                "Brightwater Logistics Ltd",
+                "BRIGHTWATER LOGISTICS LTD",
+                "Brightwater Logistics Ltd"
+            ]),
+            Some("Brightwater Logistics Ltd".into())
+        );
+        assert_eq!(display_name(["b", "a"]), Some("a".into()));
+        assert_eq!(display_name([]), None);
+    }
+
+    /// INV-LK-01 for entities; an ignore on an entity anchor hides it.
+    #[test]
+    fn entity_connections_and_ignore() {
+        let k: NameKey = "org:brightwater logistics".parse().unwrap();
+        let stats = |documents| EntityStats {
+            documents,
+            file_types: 1,
+            mentions: documents,
+        };
+        assert_eq!(entity_connection_for(&k, &stats(1), false), None);
+        let row = entity_connection_for(&k, &stats(3), false).unwrap();
+        assert_eq!(row.subject_kind, SubjectKind::Entity);
+        assert_eq!(SubjectKind::of_key(&row.subject_key), SubjectKind::Entity);
+        assert_eq!(
+            SubjectKind::of_key("email:a@x.example"),
+            SubjectKind::Identifier
+        );
+        let r = resolve(&[d(1, DecisionKind::IgnoreEntity)], true);
+        assert!(r.ignored);
+        assert!(!resolve(&[d(1, DecisionKind::UnignoreEntity)], true).ignored);
+        assert!(!DecisionKind::ConfirmMapping.on_connection());
     }
 
     /// INV-CU-04: without its anchor the newest decision is orphaned and applies nothing; it

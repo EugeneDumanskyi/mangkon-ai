@@ -119,6 +119,8 @@ Ground truth totals in v1, synthetic slice: 890 mentions (467 names, 423 identif
 | `relations[]` | Layer 3 truth (INV-AI-06): `type` (`works_for`, `owns`, `director_of`, `paid`, `sent_to`, `related_to`), `subject`, `object`, `document`, `evidence` (two entity mentions in that document). |
 | `events[]` | Layer 3 truth (INV-AI-07): `date` (ISO 8601, partial such as `2025-02`, or `unknown`), `description`, `document`, `evidence`, `quote` (the sentence as printed). |
 
+**Column types (generator v6, M4c).** Each CSV and JSON document has `columns`: every column key (as defined in `04-domain.md`, Notes M4c) with its correct type (`email`, `phone`, `url_domain`, `iban`, `crypto`, `person`, `org`, `date`, `ignore`). They are labelled by hand in `tools/corpus-gen/src/columns.rs` by what the values are, not by the header: 23 CSV and 38 JSON columns. A card-number column is `ignore` (NFR-SEC-14). The bench scores the mapping suggestions against them (NFR-QA-13). v6 changed only `ground-truth.json` and the generator version in `td3/expected.json`; no TD-1 file changed.
+
 **Locations** follow the INV-CO-03 kinds, in each format's own terms. Character offsets count Unicode scalar values and are half-open (`start` inclusive, `end` exclusive).
 
 | Kind | For | Meaning |

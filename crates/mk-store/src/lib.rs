@@ -14,11 +14,13 @@ mod codec;
 mod derive;
 mod documents;
 mod manage;
+mod mapping;
 mod ops;
 mod read;
 mod readers;
 mod schema;
 mod search;
+mod table;
 mod time;
 mod writer;
 
@@ -26,7 +28,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use mk_corpus::StoredRef;
-use mk_graph::model::{DerivedState, Facts};
+use mk_graph::model::{DerivedState, EntityRow, Facts};
 use mk_graph::{ConnectionRow, DecisionKind, RankKey};
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
@@ -35,18 +37,20 @@ use mk_workspace::ProjectSettings;
 pub use app_store::{APP_MIGRATIONS, AppStore};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use manage::{CancelOutcome, RemoveOutcome};
+pub use mapping::{ColumnRow, MappingView, ReuseCandidate};
 pub use ops::{
     CardFlagOut, CommitOutcome, DocumentOut, FoundFlag, FoundMention, MentionOut, NewContent,
-    Recovery, RerunOutcome, RescanChange, RescanOutcome, SegmentFinds, SegmentOut, StageAOutput,
-    StagedPart, StartedItem, StoredSegment,
+    Recovery, RerunOutcome, RerunStep, RescanChange, RescanOutcome, SegmentFinds, SegmentOut,
+    StageAOutput, StagedPart, StartedItem, StoredSegment,
 };
 pub use read::{
     CardFlagRow, ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, KnownFile,
-    MentionRow, OccurrenceRow, PendingWork, Progress, RootRow, SegmentRow, SegmentWindow,
-    WindowSegment,
+    MentionRow, OccurrenceRow, PendingWork, Progress, RecordLinkRow, RootRow, SegmentRow,
+    SegmentWindow, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 pub use search::{SearchCursor, SearchFilter, SearchRow};
+pub use table::SHOWN_SAMPLES;
 
 /// Read connections (architecture §7).
 pub const READERS: usize = 4;
@@ -338,11 +342,14 @@ impl Store {
         })
     }
 
-    /// Finds one content's identifiers again from its stored segments with `find`, replacing
-    /// its built-in mentions and card-like flags and rebuilding their keys in one transaction
-    /// (M4b, see `ops::rerun_identifiers`). Runs on the writer thread.
-    pub fn rerun_identifiers<F>(
+    /// Finds one content's identifiers of `step` again from its stored segments with `find`,
+    /// replacing that step's mentions (and, for the built-in step, its card-like flags), running
+    /// its table step again and rebuilding the keys, in one transaction (M4b, M4c; see
+    /// `ops::rerun_step`). Runs on the writer thread. `None` if the re-run was started again
+    /// since `after`.
+    pub fn rerun<F>(
         &self,
+        step: RerunStep,
         after: i64,
         content: i64,
         mut find: F,
@@ -351,12 +358,43 @@ impl Store {
         F: FnMut(&StoredSegment) -> SegmentFinds + Send + 'static,
     {
         self.writer
-            .call(move |tx| ops::rerun_identifiers(tx, after, content, &mut find))
+            .call(move |tx| ops::rerun_step(tx, step, after, content, &mut find))
+    }
+
+    /// Marks a re-run of `step` over every content as started.
+    pub fn begin_rerun(&self, step: RerunStep) -> Result<(), StoreError> {
+        self.writer.call(move |tx| ops::begin_rerun(tx, step))
+    }
+
+    /// Marks the re-run of `step` at cursor `after` done: the mentions follow `stamp` (the
+    /// rules version, or the pattern set's hash). `false` if it was started again since.
+    pub fn finish_rerun(
+        &self,
+        step: RerunStep,
+        after: Option<i64>,
+        stamp: &str,
+    ) -> Result<bool, StoreError> {
+        let stamp = stamp.to_string();
+        self.writer
+            .call(move |tx| ops::finish_rerun(tx, step, after, &stamp))
+    }
+
+    /// [`rerun`](Self::rerun) of the built-in step.
+    pub fn rerun_identifiers<F>(
+        &self,
+        after: i64,
+        content: i64,
+        find: F,
+    ) -> Result<Option<RerunOutcome>, StoreError>
+    where
+        F: FnMut(&StoredSegment) -> SegmentFinds + Send + 'static,
+    {
+        self.rerun(RerunStep::Builtin, after, content, find)
     }
 
     /// Marks an identifier re-run of every content as started (a region change).
     pub fn begin_identifier_rerun(&self) -> Result<(), StoreError> {
-        self.writer.call(|tx| ops::begin_identifier_rerun(tx))
+        self.begin_rerun(RerunStep::Builtin)
     }
 
     /// Marks the identifier re-run at cursor `after` done: the mentions follow rules `version`.
@@ -366,8 +404,25 @@ impl Store {
         after: Option<i64>,
         version: u32,
     ) -> Result<bool, StoreError> {
+        self.finish_rerun(RerunStep::Builtin, after, &version.to_string())
+    }
+
+    /// Replaces the custom patterns (checked by the caller) and starts their re-run, in one
+    /// transaction (US-04.7 AC3).
+    pub fn set_custom_patterns(&self, patterns: Vec<(String, String)>) -> Result<(), StoreError> {
         self.writer
-            .call(move |tx| ops::finish_identifier_rerun(tx, after, version))
+            .call(move |tx| ops::set_custom_patterns(tx, &patterns))
+    }
+
+    /// Confirms the column mapping of the file at `file_ref` and applies it, in one transaction
+    /// (US-05.2 AC1). Returns the decision's `seq` and whether a connection changed.
+    pub fn confirm_mapping(
+        &self,
+        file_ref: i64,
+        assignments: mk_mapping::Assignments,
+    ) -> Result<(i64, bool), StoreError> {
+        self.writer
+            .call(move |tx| ops::confirm_mapping(tx, file_ref, &assignments))
     }
 
     /// Drops and rebuilds every derived table (ADR-0005 "full rebuild").
@@ -426,6 +481,39 @@ impl Store {
     /// the last content it committed.
     pub fn identifier_state(&self) -> Result<(Option<u32>, Option<i64>), StoreError> {
         self.readers.with(read::identifier_state)
+    }
+
+    /// Where a re-run step stands: the stamp of the stored mentions and, during a re-run, the
+    /// last content it committed.
+    pub fn rerun_state(
+        &self,
+        step: RerunStep,
+    ) -> Result<(Option<String>, Option<i64>), StoreError> {
+        self.readers.with(|c| read::rerun_state(c, step))
+    }
+
+    /// Each custom pattern as `(name, expression, stored matches)`, in the order added.
+    pub fn pattern_counts(&self) -> Result<Vec<(String, String, u64)>, StoreError> {
+        self.readers.with(read::pattern_counts)
+    }
+
+    /// The mapping screen of a file reference (US-05.1, US-05.2); `None` if it is gone or was
+    /// not read as a table.
+    pub fn mapping_view(&self, ref_id: i64) -> Result<Option<MappingView>, StoreError> {
+        self.readers.with(|c| mapping::mapping_view(c, ref_id))
+    }
+
+    /// The entity rows of `keys` that exist.
+    pub fn entities(
+        &self,
+        keys: &[String],
+    ) -> Result<std::collections::BTreeMap<String, EntityRow>, StoreError> {
+        self.readers.with(|c| read::entities(c, keys))
+    }
+
+    /// A content's record links (INV-CM-05).
+    pub fn record_links(&self, content: i64) -> Result<Vec<RecordLinkRow>, StoreError> {
+        self.readers.with(|c| read::record_links(c, content))
     }
 
     /// Contents with documents after `after`, in id order, at most `limit`.
@@ -510,7 +598,8 @@ impl Store {
             .with(|c| read::connection_count(c, include_ignored))
     }
 
-    /// The counted mentions of an identifier key, at most `limit` (US-07.3 AC2).
+    /// The counted mentions of an identifier key or an entity name key, at most `limit`
+    /// (US-07.3 AC2). Entity mentions have negative ids.
     pub fn mentions_of(&self, key: &str, limit: usize) -> Result<Vec<OccurrenceRow>, StoreError> {
         self.readers.with(|c| read::mentions_of(c, key, limit))
     }

@@ -111,6 +111,25 @@
       "maxItems": 4,
       "minItems": 4
     },
+    "ColumnTruth": {
+      "description": "One column of a table document and its correct type.",
+      "type": "object",
+      "properties": {
+        "column_key": {
+          "description": "CSV: the header text; JSON: the pointer with array indices as `*` (`/officers/*/name`).",
+          "type": "string"
+        },
+        "type": {
+          "description": "`email`, `phone`, `url_domain`, `iban`, `crypto`, `person`, `org`, `date` or `ignore`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "column_key",
+        "type"
+      ]
+    },
     "Difficulty": {
       "oneOf": [
         {
@@ -190,6 +209,13 @@
       "description": "A document: the unit that mentions and connections count (domain BC-02). Most files are one\ndocument; an MBOX holds one per message; an attachment is a child document (INV-CO-05).",
       "type": "object",
       "properties": {
+        "columns": {
+          "description": "CSV and JSON documents: every column with its correct type, labelled by hand\n(NFR-QA-13, BC-05). Generator v6.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ColumnTruth"
+          }
+        },
         "file": {
           "description": "`FileEntry::path` of the file that holds this document.",
           "type": "string"

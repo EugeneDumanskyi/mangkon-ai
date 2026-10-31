@@ -10,10 +10,13 @@ use std::process::ExitCode;
 
 use mk_bench::score::{Class, Found, FoundMention, Place, Report, compare, score};
 use mk_bench::{DocPart, GroundTruth};
-use mk_core::{Locator, Project, ProjectError, ProjectSettings};
+use mk_core::{Assignments, DocumentFilter, Locator, Project, ProjectError, ProjectSettings};
 
 /// The gate: a metric may fall this many points below the baseline (NFR-MNT-05).
 const MAX_DROP: f64 = 2.0;
+
+/// The custom pattern of TD-1's tender references (US-04.7), added before ingest.
+const TENDER_REF: (&str, &str) = ("tender_ref", r"VPA-TND-\d{4}-\d{3}");
 
 /// The TD-1 folders and the phone region each is read with.
 const PARTS: [(&str, &str); 2] = [("synthetic", "GB"), ("public", "US")];
@@ -145,10 +148,63 @@ fn ingest_part(
         phone_region: Some(region.into()),
         ..project.settings()?
     })?;
+    project.add_pattern(TENDER_REF.0, TENDER_REF.1)?;
     let root = project.add_source_root(source)?;
     project.ingest()?;
+    map_columns(&project, gt, part, found)?;
     collect(&project, gt, root, part, found)?;
     Ok(project.counts()?.failed as usize)
+}
+
+/// Records the suggested type of every column of the CSV and JSON files (NFR-QA-13), then
+/// confirms the suggestions as they are, so the table names can be scored (US-05.3).
+fn map_columns(
+    project: &Project,
+    gt: &GroundTruth,
+    part: &str,
+    found: &mut Found,
+) -> Result<(), ProjectError> {
+    let mut tables = Vec::new();
+    let mut after = None;
+    loop {
+        let page = project.documents_page(&DocumentFilter::default(), after.as_ref(), 500)?;
+        tables.extend(
+            page.rows
+                .into_iter()
+                .filter(|r| r.mapping_state.is_some())
+                .map(|r| (r.ref_id, format!("{part}/{}", r.rel_path))),
+        );
+        match page.next {
+            Some(next) => after = Some(next),
+            None => break,
+        }
+    }
+    for (ref_id, file) in tables {
+        let Some(view) = project.mapping_view(ref_id)? else {
+            continue;
+        };
+        if let Some(d) = gt
+            .documents
+            .iter()
+            .find(|d| d.file == file && d.part == DocPart::Whole)
+        {
+            for c in &view.columns {
+                found.columns.push((
+                    d.id.clone(),
+                    c.key.clone(),
+                    c.suggested.as_str().to_string(),
+                ));
+            }
+        }
+        let assignments = Assignments(
+            view.columns
+                .iter()
+                .map(|c| (c.key.clone(), c.suggested))
+                .collect(),
+        );
+        project.confirm_mapping(ref_id, assignments)?;
+    }
+    Ok(())
 }
 
 /// The ground-truth id of each stored document of `project`'s root `root`, and what was found
@@ -215,6 +271,16 @@ fn collect(
     for (_, document, last4) in store.all_card_flags()? {
         for id in doc_ids.get(&document).into_iter().flatten() {
             found.card_flags.push((id.clone(), last4.clone()));
+        }
+    }
+    let names: Vec<(i64, String)> = store.read_raw(|c| {
+        let mut stmt = c.prepare("SELECT document_id, name_key FROM entity_mention")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    })?;
+    for (document, key) in names {
+        for id in doc_ids.get(&document).into_iter().flatten() {
+            found.table_names.push((id.clone(), key.clone()));
         }
     }
     let derived = store.derived_state()?;

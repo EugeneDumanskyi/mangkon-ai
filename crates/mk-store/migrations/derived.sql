@@ -9,6 +9,16 @@ CREATE TABLE identifier (
     mention_count INTEGER NOT NULL
 ) STRICT;
 
+-- Entities (domain §9.3 steps 1, 2, 4): grouped by name key; the display name is the most
+-- frequent name as written, a tie broken A→Z (INV-ER-07). M4c: table names only.
+CREATE TABLE entity (
+    name_key      TEXT PRIMARY KEY,
+    entity_type   TEXT NOT NULL,
+    display_name  TEXT NOT NULL,
+    mention_count INTEGER NOT NULL,
+    from_table    INTEGER NOT NULL
+) STRICT;
+
 CREATE TABLE connection (
     subject_key     TEXT PRIMARY KEY,
     subject_kind    TEXT NOT NULL,

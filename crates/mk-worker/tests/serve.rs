@@ -285,7 +285,7 @@ fn us_02_2_ac4_ocr_languages_reach_the_worker() {
                 test_faults: false,
                 ocr_languages: languages.into(),
                 tessdata: tessdata.map(|t| t.to_str().unwrap().into()),
-                phone_region: None,
+                ..Settings::default()
             },
         })
     };

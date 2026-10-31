@@ -5,11 +5,15 @@
 //! order: email (with its domain), URL (with its domain), IBAN, crypto, card-like, phone. A
 //! finder never takes characters an earlier one took, so an IBAN is not also read as a phone and
 //! a card number never becomes one (INV-ID-06). Domains come only from email and URL hosts
-//! (INV-ID-05); a bare domain in text is not read (ASSUMPTION M4b). Custom patterns come in M4c.
-//! [`luhn`] (M4a) backs the card-like check.
+//! (INV-ID-05); a bare domain in text is not read (ASSUMPTION M4b). [`luhn`] (M4a) backs the
+//! card-like check.
+//!
+//! [`find_custom`] (M4c) runs a project's custom patterns (US-04.7), apart from the built-in
+//! finders, so either step can run again alone (INV-ID-08).
 
 mod card;
 mod crypto;
+mod custom;
 mod domain;
 mod email;
 mod iban;
@@ -20,6 +24,7 @@ mod url;
 use mk_kernel::{IdentifierKey, IdentifierKind, Span};
 
 pub use card::CardLikeHit;
+pub use custom::{CustomPattern, NEST_LIMIT, PatternError, SIZE_LIMIT, find_custom};
 pub use domain::registrable_domain;
 pub use email::{find_emails, normalize_email};
 pub use iban::iban_length;
@@ -49,6 +54,9 @@ pub struct Rules {
     /// The region of phone numbers written without a country code (US-04.2 AC2); `None` keeps
     /// them as unnormalized digits (AC3).
     pub phone_region: Option<Region>,
+    /// The project's custom patterns (US-04.7), compiled. [`find_all`] does not run them:
+    /// [`find_custom`] does.
+    pub custom: Vec<CustomPattern>,
 }
 
 /// Everything [`find_all`] found in one text.
@@ -195,6 +203,7 @@ pub(crate) mod test_util {
     pub fn gb() -> Rules {
         Rules {
             phone_region: Region::parse("GB"),
+            ..Rules::default()
         }
     }
 }
@@ -282,7 +291,7 @@ mod tests {
             region in proptest::option::of(proptest::sample::select(vec!["GB", "US", "DE"])),
         ) {
             let text: String = parts.concat();
-            let rules = Rules { phone_region: region.and_then(Region::parse) };
+            let rules = Rules { phone_region: region.and_then(Region::parse), ..Rules::default() };
             let found = find_all(&text, &rules);
             let slice = |s: Span| -> String { text.chars().skip(s.start()).take(s.len()).collect() };
             let mut last_end = 0;

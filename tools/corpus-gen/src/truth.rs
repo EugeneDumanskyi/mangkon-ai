@@ -150,6 +150,7 @@ impl<'s> Collector<'s> {
             kind,
             parent: parent.map(str::to_string),
             sha256,
+            columns: Vec::new(),
         });
     }
 

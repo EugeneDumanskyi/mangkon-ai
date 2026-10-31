@@ -49,6 +49,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "identifiers",
         sql: include_str!("../migrations/0006_identifiers.sql"),
     },
+    Migration {
+        version: 7,
+        name: "mapping",
+        sql: include_str!("../migrations/0007_mapping.sql"),
+    },
 ];
 
 /// What opening did.

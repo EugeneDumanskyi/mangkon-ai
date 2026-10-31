@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use mk_corpus::{IngestionState, PathChange};
 use mk_graph::DecisionKind;
 use mk_jobs::{ItemState, JobState, Stage, Trigger};
-use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
+use mk_kernel::{ContentHash, IdentifierKey, IdentifierKind, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::StoreError;
@@ -244,7 +244,7 @@ pub(crate) fn set_item_state(
     Ok((job, content))
 }
 
-/// The identifier keys of a content's stored mentions.
+/// The identifier keys and entity name keys of a content's stored mentions.
 pub(crate) fn content_keys(
     conn: &Connection,
     content: i64,
@@ -260,7 +260,7 @@ pub(crate) fn content_keys(
     for k in stmt.query_map([content], |r| r.get::<_, String>(0))? {
         keys.insert(k?);
     }
-    Ok(())
+    crate::table::content_entity_keys(conn, content, keys)
 }
 
 /// Marks a job Completed once none of its items is Pending or In progress (domain §7.2).
@@ -428,6 +428,8 @@ pub(crate) fn apply_rescan(
     let mut out = RescanOutcome::default();
     let mut affected: BTreeSet<i64> = BTreeSet::new();
     let mut created: BTreeSet<i64> = BTreeSet::new();
+    // Stored contents that gained or lost a path: the confirm decisions on their paths changed.
+    let mut paths_changed: BTreeSet<i64> = BTreeSet::new();
     let lookup = |hash: &ContentHash| -> Result<i64, StoreError> {
         content_id(conn, hash)?.ok_or_else(|| invalid(format!("no content {hash}")))
     };
@@ -444,6 +446,7 @@ pub(crate) fn apply_rescan(
                     created.insert(id);
                 } else {
                     out.duplicates += 1;
+                    paths_changed.insert(id);
                 }
                 out.added += 1;
                 conn.prepare_cached(
@@ -472,7 +475,10 @@ pub(crate) fn apply_rescan(
                 let (id, is_new) = ensure_content(conn, new, file_type, meta.size)?;
                 if is_new {
                     created.insert(id);
+                } else {
+                    paths_changed.insert(id);
                 }
+                paths_changed.insert(old_id);
                 conn.prepare_cached(
                     "UPDATE file_ref SET content_id = ?3, size = ?4, mtime_ns = ?5, present = 1,
                                          last_seen_at = ?6
@@ -598,8 +604,27 @@ pub(crate) fn apply_rescan(
         out.job = Some(job);
         out.new_items = needs_work.len();
     }
+    rerun_table_steps(conn, &paths_changed, &mut touched)?;
     out.connections_changed = rebuild_keys(conn, &touched)?;
     Ok(out)
+}
+
+/// The table step again for each of `contents` still stored (see [`crate::table`]).
+pub(crate) fn rerun_table_steps(
+    conn: &Connection,
+    contents: &BTreeSet<i64>,
+    touched: &mut BTreeSet<String>,
+) -> Result<(), StoreError> {
+    for &id in contents {
+        let stored: Option<i64> = conn
+            .prepare_cached("SELECT id FROM content WHERE id = ?1")?
+            .query_row([id], |r| r.get(0))
+            .optional()?;
+        if stored.is_some() {
+            crate::table::apply_table_step(conn, id, touched)?;
+        }
+    }
+    Ok(())
 }
 
 /// Adds contents without file references, each with a Stage A item in one new job. For
@@ -667,7 +692,7 @@ pub(crate) fn start_item(conn: &Connection, item: i64) -> Result<Option<StartedI
 const INSERT_MENTION: &str = "INSERT INTO identifier_mention (segment_id, document_id, content_id,
          identifier_key, span_start, span_end, column_index, column_name, raw, confidence,
          found_by)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'builtin')";
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 const INSERT_FLAG: &str = "INSERT INTO sensitive_flag (segment_id, document_id, content_id,
          span_start, span_end, column_index, column_name, last4)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
@@ -705,7 +730,16 @@ impl Place {
     }
 }
 
-/// Inserts one built-in mention; returns its key as stored.
+/// Which step found a mention of `key`: `custom` for a custom pattern's type, else `builtin`.
+fn found_by(key: &IdentifierKey) -> RerunStep {
+    if key.kind() == IdentifierKind::Custom {
+        RerunStep::Custom
+    } else {
+        RerunStep::Builtin
+    }
+}
+
+/// Inserts one mention; returns its key as stored.
 #[allow(clippy::too_many_arguments)]
 fn insert_mention(
     stmt: &mut rusqlite::CachedStatement<'_>,
@@ -720,6 +754,7 @@ fn insert_mention(
     if !(0.0..=1.0).contains(&confidence) {
         return Err(invalid("confidence outside 0..1"));
     }
+    let by = found_by(key).as_str();
     let key = key.to_string();
     stmt.execute(params![
         segment,
@@ -731,7 +766,8 @@ fn insert_mention(
         place.column_index,
         place.column_name,
         raw,
-        f64::from(confidence)
+        f64::from(confidence),
+        by
     ])?;
     Ok(key)
 }
@@ -920,6 +956,8 @@ pub(crate) fn commit_stage_a(
          WHERE d.content_id = ?1",
     )?
     .execute([content])?;
+    // Suggestions, and a confirmed mapping applied before the results show (INV-CM-04).
+    crate::table::apply_table_step(conn, content, &mut touched)?;
     conn.prepare_cached(
         "UPDATE content SET warnings = ?2, failure_code = NULL, failure_reason = NULL,
                             failure_detail = NULL
@@ -988,7 +1026,8 @@ pub(crate) fn append_decision(
     )?
     .execute(params![kind.as_str(), anchor, before, after, now_iso()])?;
     let seq = conn.last_insert_rowid();
-    let changed = rebuild_keys(conn, &BTreeSet::from([anchor.to_string()]))?;
+    let changed =
+        kind.on_connection() && rebuild_keys(conn, &BTreeSet::from([anchor.to_string()]))?;
     Ok((seq, changed))
 }
 
@@ -1055,38 +1094,80 @@ pub struct RerunOutcome {
     pub connections_changed: bool,
 }
 
+/// The identifier steps that re-run from stored segments, each alone (INV-ID-08): the built-in
+/// finders and card-like flags (M4b, on a region change or newer rules), or the custom patterns
+/// (M4c, when the pattern set changes).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum RerunStep {
+    Builtin,
+    Custom,
+}
+
+impl RerunStep {
+    /// The `found_by` of the mentions this step makes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RerunStep::Builtin => "builtin",
+            RerunStep::Custom => "custom",
+        }
+    }
+
+    /// The `project_meta` key of the step's unfinished re-run: the last content it committed.
+    pub(crate) fn cursor_key(&self) -> &'static str {
+        match self {
+            RerunStep::Builtin => RERUN_AFTER,
+            RerunStep::Custom => CUSTOM_RERUN_AFTER,
+        }
+    }
+
+    /// The `project_meta` key of what the stored mentions were made with: the rules version, or
+    /// a hash of the pattern set.
+    pub(crate) fn stamp_key(&self) -> &'static str {
+        match self {
+            RerunStep::Builtin => IDENTIFIER_VERSION,
+            RerunStep::Custom => CUSTOM_PATTERNS_APPLIED,
+        }
+    }
+}
+
 /// The `project_meta` key of an unfinished identifier re-run: the last content it committed.
 pub(crate) const RERUN_AFTER: &str = "identifier_rerun_after";
 pub(crate) const IDENTIFIER_VERSION: &str = "identifier_version";
+pub(crate) const CUSTOM_RERUN_AFTER: &str = "custom_rerun_after";
+pub(crate) const CUSTOM_PATTERNS_APPLIED: &str = "custom_patterns_applied";
 
-/// Finds a content's identifiers again from its stored segments (M4b): its built-in mentions
-/// and card-like flags are replaced by what `find` gives for each segment, in document and
-/// segment order, and the keys of the old and new mentions are rebuilt (ADR-0005), all in this
-/// one transaction; the re-run's cursor moves past the content in it too, so a kill loses at
-/// most this content's work (INV-PR-04/05). The segments are read one at a time: memory stays
-/// O(segment) whatever the content's size. Segments, the keyword index and decisions are not
-/// touched. A content with no documents (gone, failed, not read yet) changes nothing.
+/// Finds a content's identifiers of one step again from its stored segments: its mentions of
+/// that step (and, for the built-in step, its card-like flags) are replaced by what `find` gives
+/// for each segment, in document and segment order; the table step runs again so record links
+/// follow (M4c); the keys of the old and new mentions are rebuilt (ADR-0005), all in this one
+/// transaction. The re-run's cursor moves past the content in it too, so a kill loses at most
+/// this content's work (INV-PR-04/05). The segments are read one at a time: memory stays
+/// O(segment) whatever the content's size. Segments, the keyword index, the other step's
+/// mentions and decisions are not touched (INV-ID-08). A content with no documents (gone,
+/// failed, not read yet) changes nothing.
 ///
 /// `after` is the cursor the caller read; if the re-run was started again since (another region
-/// change), nothing is done and `None` comes back, so the caller starts over with the new rules.
-pub(crate) fn rerun_identifiers(
+/// or pattern change), nothing is done and `None` comes back, so the caller starts over with the
+/// new rules.
+pub(crate) fn rerun_step(
     conn: &Connection,
+    step: RerunStep,
     after: i64,
     content: i64,
     find: &mut dyn FnMut(&StoredSegment) -> SegmentFinds,
 ) -> Result<Option<RerunOutcome>, StoreError> {
-    if rerun_cursor(conn)? != Some(after) {
+    if rerun_cursor(conn, step)? != Some(after) {
         return Ok(None);
     }
     let mut out = RerunOutcome::default();
     let mut touched = BTreeSet::new();
     content_keys(conn, content, &mut touched)?;
-    conn.prepare_cached(
-        "DELETE FROM identifier_mention WHERE content_id = ?1 AND found_by = 'builtin'",
-    )?
-    .execute([content])?;
-    conn.prepare_cached("DELETE FROM sensitive_flag WHERE content_id = ?1")?
-        .execute([content])?;
+    conn.prepare_cached("DELETE FROM identifier_mention WHERE content_id = ?1 AND found_by = ?2")?
+        .execute(params![content, step.as_str()])?;
+    if step == RerunStep::Builtin {
+        conn.prepare_cached("DELETE FROM sensitive_flag WHERE content_id = ?1")?
+            .execute([content])?;
+    }
     let mut insert_mention_stmt = conn.prepare_cached(INSERT_MENTION)?;
     let mut insert_flag_stmt = conn.prepare_cached(INSERT_FLAG)?;
     let mut stmt = conn.prepare_cached(
@@ -1096,7 +1177,9 @@ pub(crate) fn rerun_identifiers(
          WHERE d.content_id = ?1 ORDER BY d.id, s.ordinal",
     )?;
     let mut rows = stmt.query([content])?;
+    let mut any = false;
     while let Some(r) = rows.next()? {
+        any = true;
         let id: i64 = r.get(0)?;
         let text: String = r.get(5)?;
         let ocr: Option<Vec<u8>> = r.get(8)?;
@@ -1117,6 +1200,12 @@ pub(crate) fn rerun_identifiers(
         let finds = find(&seg);
         let len = seg.text.chars().count();
         for m in finds.mentions {
+            if found_by(&m.key) != step {
+                return Err(invalid(format!(
+                    "a {} re-run found a mention of another step",
+                    step.as_str()
+                )));
+            }
             let place = Place::check(&m.locator, len, &seg.cell_starts)?;
             let key = insert_mention(
                 &mut insert_mention_stmt,
@@ -1131,6 +1220,9 @@ pub(crate) fn rerun_identifiers(
             touched.insert(key);
             out.mentions += 1;
         }
+        if step == RerunStep::Custom && !finds.card_flags.is_empty() {
+            return Err(invalid("a custom-pattern re-run makes no card-like flags"));
+        }
         for f in finds.card_flags {
             let place = Place::check(&f.locator, len, &seg.cell_starts)?;
             insert_flag(
@@ -1144,32 +1236,97 @@ pub(crate) fn rerun_identifiers(
             out.card_flags += 1;
         }
     }
-    crate::manage::set_meta(conn, RERUN_AFTER, Some(&content.to_string()))?;
+    drop(rows);
+    if any {
+        crate::table::apply_table_step(conn, content, &mut touched)?;
+    }
+    crate::manage::set_meta(conn, step.cursor_key(), Some(&content.to_string()))?;
     out.connections_changed = rebuild_keys(conn, &touched)?;
     Ok(Some(out))
 }
 
-fn rerun_cursor(conn: &Connection) -> Result<Option<i64>, StoreError> {
-    Ok(crate::documents::meta(conn, RERUN_AFTER)?.and_then(|v| v.parse().ok()))
+pub(crate) fn rerun_cursor(conn: &Connection, step: RerunStep) -> Result<Option<i64>, StoreError> {
+    Ok(crate::documents::meta(conn, step.cursor_key())?.and_then(|v| v.parse().ok()))
 }
 
-/// Starts an identifier re-run of every content from the first (a region change, US-04.2 AC2).
-pub(crate) fn begin_identifier_rerun(conn: &Connection) -> Result<(), StoreError> {
-    crate::manage::set_meta(conn, RERUN_AFTER, Some("0"))
+/// Starts a re-run of `step` over every content from the first (a region change, US-04.2 AC2;
+/// a pattern change, US-04.7 AC3).
+pub(crate) fn begin_rerun(conn: &Connection, step: RerunStep) -> Result<(), StoreError> {
+    crate::manage::set_meta(conn, step.cursor_key(), Some("0"))
 }
 
-/// Ends an identifier re-run whose cursor is still `after` (`None`: no re-run was started, an
-/// empty project): the stored mentions now follow rules `version`. `false` if the re-run was
-/// started again since, which then stays to do.
-pub(crate) fn finish_identifier_rerun(
+/// Ends a re-run of `step` whose cursor is still `after` (`None`: no re-run was started, an
+/// empty project): the stored mentions now follow `stamp` (the rules version, or the pattern
+/// set's hash). `false` if the re-run was started again since, which then stays to do.
+pub(crate) fn finish_rerun(
     conn: &Connection,
+    step: RerunStep,
     after: Option<i64>,
-    version: u32,
+    stamp: &str,
 ) -> Result<bool, StoreError> {
-    if rerun_cursor(conn)? != after {
+    if rerun_cursor(conn, step)? != after {
         return Ok(false);
     }
-    crate::manage::set_meta(conn, RERUN_AFTER, None)?;
-    crate::manage::set_meta(conn, IDENTIFIER_VERSION, Some(&version.to_string()))?;
+    crate::manage::set_meta(conn, step.cursor_key(), None)?;
+    crate::manage::set_meta(conn, step.stamp_key(), Some(stamp))?;
     Ok(true)
+}
+
+/// Replaces the project's custom patterns (US-04.7, checked by the caller: names unique
+/// ignoring case, each compiles) and starts a custom-pattern re-run, in one transaction: the
+/// re-run starts when the change is saved (AC3). A pattern kept by name keeps its `created_at`.
+pub(crate) fn set_custom_patterns(
+    conn: &Connection,
+    patterns: &[(String, String)],
+) -> Result<(), StoreError> {
+    let created: std::collections::HashMap<String, String> = {
+        let mut stmt = conn.prepare_cached("SELECT name, created_at FROM custom_pattern")?;
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    conn.execute("DELETE FROM custom_pattern", [])?;
+    let now = now_iso();
+    let mut insert = conn.prepare_cached(
+        "INSERT INTO custom_pattern (name, expression, created_at) VALUES (?1, ?2, ?3)",
+    )?;
+    for (name, expression) in patterns {
+        let at = created.get(name).unwrap_or(&now);
+        insert.execute(params![name, expression, at])?;
+    }
+    begin_rerun(conn, RerunStep::Custom)
+}
+
+/// Confirms a table's column mapping (US-05.2 AC1): the decision (anchor: the path and the
+/// header signature) and its application to the content — entity mentions, record links, the
+/// rebuild of their keys — in one transaction. Returns the decision's `seq` and whether a
+/// connection changed.
+pub(crate) fn confirm_mapping(
+    conn: &Connection,
+    file_ref: i64,
+    assignments: &mk_mapping::Assignments,
+) -> Result<(i64, bool), StoreError> {
+    let (root, rel, content): (i64, String, i64) = conn
+        .prepare_cached("SELECT root_id, rel_path, content_id FROM file_ref WHERE id = ?1")?
+        .query_row([file_ref], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .optional()?
+        .ok_or_else(|| invalid("This file is no longer in the project"))?;
+    let signature: String = conn
+        .prepare_cached(
+            "SELECT signature FROM table_document WHERE content_id = ?1
+             ORDER BY document_id LIMIT 1",
+        )?
+        .query_row([content], |r| r.get(0))
+        .optional()?
+        .ok_or_else(|| invalid("This file has no columns to map"))?;
+    let anchor = mk_mapping::mapping_anchor(root, &rel, &signature);
+    let (seq, _) = append_decision(
+        conn,
+        DecisionKind::ConfirmMapping,
+        &anchor,
+        None,
+        Some(&assignments.to_json()),
+    )?;
+    let mut touched = BTreeSet::new();
+    crate::table::apply_table_step(conn, content, &mut touched)?;
+    Ok((seq, rebuild_keys(conn, &touched)?))
 }

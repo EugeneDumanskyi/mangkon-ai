@@ -586,6 +586,15 @@ Notes (M4b):
 | INV-CM-04 | A confirmed mapping is applied again after the file changes, as long as the headers are the same. If headers change, the mapping goes to "Needs review". | US-05.2 AC3 |
 | INV-CM-05 | A record link joins only mentions from the same row (CSV) or the same parent object (JSON, ASSUMPTION). The row or object is its evidence. | US-05.3 AC2 |
 
+Notes (M4c):
+- INV-ID-07: a custom key is `custom:<pattern>:<value>`, the value trimmed with its case kept. Names are 1–40 characters with no `:` and no control characters, unique ignoring case. A name cannot be edited; renaming is remove and add, and ignores on the old name stay in the log, orphaned. A match that holds a card-like number is dropped (INV-ID-06).
+- INV-ID-08: custom matches take no part in the built-in claims, so either step can re-run alone. ASSUMPTION (M4c).
+- Column keys: the CSV header text (`Column n` without a header); the JSON pointer with array indices as `*` (`/officers/*/name`). JSON columns are keys of string and number values. The header signature is a BLAKE3 hash of the ordered CSV keys or the sorted JSON keys. Columns past 1,000 get no suggestion and stay Ignore. ASSUMPTION (M4c).
+- The mapping decision is anchored on `map:<root id>/<relative path>|<signature>`, so it survives a relocate. Removing and re-adding a root orphans it (INV-CU-04). ASSUMPTION (M4c).
+- INV-CM-05: a JSON record is the nearest enclosing array item, else the whole top-level object (answered 2026-10-30).
+- Ambiguous name headers (`name`, `holder`, `shareholder`) are decided by the values: half or more with a legal suffix → organization, else person. ASSUMPTION (M4c), refines US-05.1 AC2.
+- A confirmed identifier-type column changes nothing in v0.1: INV-CM-02 already reads every cell. Only person and organization columns make mentions.
+
 ### 6.6 AI extraction (BC-06)
 
 | ID | Rule | Source |

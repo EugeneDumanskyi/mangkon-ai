@@ -1,7 +1,7 @@
 //! Project settings (US-01.6, INV-WS-05/06/07).
 //!
 //! M3c: OCR languages. M4b: the phone region (identifier extraction) and the domain stop list
-//! (connections). Custom patterns and model endpoints come in M4c/M5.
+//! (connections). M4c: custom patterns (US-04.7). Model endpoints come in M5.
 
 use std::fmt;
 
@@ -74,6 +74,25 @@ pub struct ProjectSettings {
     pub ocr_languages: Vec<String>,
     /// Lowercase domains, sorted, no duplicates.
     pub domain_stop_list: Vec<String>,
+    /// Custom patterns in the order they were added (US-04.7); names unique ignoring case
+    /// (INV-ID-07).
+    pub custom_patterns: Vec<PatternSetting>,
+}
+
+/// A custom pattern as the project stores it: its name and expression (US-04.7).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PatternSetting {
+    pub name: String,
+    pub expression: String,
+}
+
+impl PatternSetting {
+    pub fn new(name: impl Into<String>, expression: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            expression: expression.into(),
+        }
+    }
 }
 
 impl Default for ProjectSettings {
@@ -82,6 +101,7 @@ impl Default for ProjectSettings {
             phone_region: None,
             ocr_languages: vec![DEFAULT_OCR_LANGUAGE.to_string()],
             domain_stop_list: DEFAULT_STOP_LIST.iter().map(|d| d.to_string()).collect(),
+            custom_patterns: Vec::new(),
         }
     }
 }
@@ -93,6 +113,10 @@ pub enum SettingsError {
     BadOcrLanguage(String),
     BadPhoneRegion(String),
     BadDomain(String),
+    /// A pattern that does not compile, with its name and the plain reason (US-04.7 AC2).
+    BadPattern(String, String),
+    /// Another pattern has this name, ignoring case (INV-ID-07).
+    DuplicatePattern(String),
 }
 
 impl fmt::Display for SettingsError {
@@ -104,6 +128,10 @@ impl fmt::Display for SettingsError {
                 write!(f, "Not a region code: {r} (use two letters, such as DE)")
             }
             SettingsError::BadDomain(d) => write!(f, "Not a domain: {d}"),
+            SettingsError::BadPattern(_, reason) => f.write_str(reason),
+            SettingsError::DuplicatePattern(n) => {
+                write!(f, "A pattern named \"{n}\" already exists")
+            }
         }
     }
 }
@@ -119,11 +147,14 @@ pub struct Reprocess {
     /// Identifiers found again from the stored text of every content (the phone region
     /// changed, US-04.2 AC2). No file is read again.
     pub identifiers: bool,
+    /// The custom patterns changed: only their step runs again, on the stored text (US-04.7
+    /// AC3, INV-ID-08). It starts at once, without asking.
+    pub custom: bool,
 }
 
 impl Reprocess {
     pub fn is_empty(&self) -> bool {
-        !self.ocr && !self.identifiers
+        !self.ocr && !self.identifiers && !self.custom
     }
 }
 
@@ -184,10 +215,28 @@ impl ProjectSettings {
         }
         domain_stop_list.sort();
         domain_stop_list.dedup();
+        let mut custom_patterns: Vec<PatternSetting> = Vec::new();
+        for p in self.custom_patterns {
+            let name = p.name.trim().to_string();
+            if let Err(e) = mk_identifiers::CustomPattern::compile(&name, &p.expression) {
+                return Err(SettingsError::BadPattern(name, e.to_string()));
+            }
+            if custom_patterns
+                .iter()
+                .any(|q| q.name.to_lowercase() == name.to_lowercase())
+            {
+                return Err(SettingsError::DuplicatePattern(name));
+            }
+            custom_patterns.push(PatternSetting {
+                name,
+                expression: p.expression,
+            });
+        }
         Ok(Self {
             phone_region,
             ocr_languages,
             domain_stop_list,
+            custom_patterns,
         })
     }
 
@@ -198,13 +247,24 @@ impl ProjectSettings {
 
     /// What changing from `old` to `new` needs re-done (INV-WS-07). A new OCR language set
     /// re-reads the files that were OCR'd or failed for a missing language; a new phone region
-    /// finds identifiers again in the stored text. The stop list needs nothing re-done: it
-    /// applies to connections when they are derived (INV-LK-03), right away.
+    /// finds identifiers again in the stored text; new custom patterns run only their own step
+    /// again (INV-ID-08). The stop list needs nothing re-done: it applies to connections when
+    /// they are derived (INV-LK-03), right away.
     pub fn affected_by(old: &ProjectSettings, new: &ProjectSettings) -> Reprocess {
         Reprocess {
             ocr: old.ocr_languages != new.ocr_languages,
             identifiers: old.phone_region != new.phone_region,
+            custom: old.custom_patterns != new.custom_patterns,
         }
+    }
+
+    /// The custom patterns compiled, for the finders. The settings were checked
+    /// ([`ProjectSettings::normalized`]); a pattern that no longer compiles is left out.
+    pub fn compiled_patterns(&self) -> Vec<mk_identifiers::CustomPattern> {
+        self.custom_patterns
+            .iter()
+            .filter_map(|p| mk_identifiers::CustomPattern::compile(&p.name, &p.expression).ok())
+            .collect()
     }
 }
 
@@ -250,6 +310,7 @@ mod tests {
             phone_region: Some(" de ".into()),
             ocr_languages: vec!["eng".into(), "deu".into(), "eng".into()],
             domain_stop_list: vec!["@Gmail.com".into(), "".into(), "gmail.com".into()],
+            custom_patterns: vec![],
         }
         .normalized()
         .unwrap();
@@ -295,7 +356,8 @@ mod tests {
             ProjectSettings::affected_by(&old, &region),
             Reprocess {
                 ocr: false,
-                identifiers: true
+                identifiers: true,
+                custom: false,
             }
         );
         let ocr = ProjectSettings {
@@ -306,7 +368,47 @@ mod tests {
             ProjectSettings::affected_by(&old, &ocr),
             Reprocess {
                 ocr: true,
-                identifiers: false
+                identifiers: false,
+                custom: false,
+            }
+        );
+    }
+
+    /// INV-ID-07: names unique ignoring case and trimmed; the expression must compile.
+    /// INV-ID-08: a pattern change re-runs only the custom-pattern step.
+    #[test]
+    fn inv_id_07_unique_name_ignoring_case() {
+        let with = |ps: Vec<PatternSetting>| {
+            ProjectSettings {
+                custom_patterns: ps,
+                ..ProjectSettings::default()
+            }
+            .normalized()
+        };
+        let ok = with(vec![
+            PatternSetting::new(" tender_ref ", r"VPA-TND-\d{4}-\d{3}"),
+            PatternSetting::new("case", r"C-\d+"),
+        ])
+        .unwrap();
+        assert_eq!(ok.custom_patterns[0].name, "tender_ref");
+        assert_eq!(ok.compiled_patterns().len(), 2);
+        assert_eq!(
+            with(vec![
+                PatternSetting::new("Case", "a"),
+                PatternSetting::new("case", "b")
+            ]),
+            Err(SettingsError::DuplicatePattern("case".into()))
+        );
+        let bad = with(vec![PatternSetting::new("x", "a(?=b)")]).unwrap_err();
+        assert!(matches!(bad, SettingsError::BadPattern(..)));
+        assert!(bad.to_string().contains("not supported"), "{bad}");
+        let old = ProjectSettings::default();
+        assert_eq!(
+            ProjectSettings::affected_by(&old, &ok),
+            Reprocess {
+                ocr: false,
+                identifiers: false,
+                custom: true,
             }
         );
     }

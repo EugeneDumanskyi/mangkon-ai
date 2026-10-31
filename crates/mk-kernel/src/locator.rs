@@ -69,6 +69,46 @@ pub enum Column {
     Index(u32),
 }
 
+/// Whether a CSV file's first record is a header: every cell has a letter and none looks like a
+/// number or date. ASSUMPTION: good enough for exports; the column mapping screen (M4c) shows
+/// what it gave. The parser decides with it, and a stored row 0 gives the same answer later.
+pub fn csv_header_row(row: &[String]) -> bool {
+    !row.is_empty()
+        && row.iter().all(|c| {
+            let c = c.trim();
+            let numeric = c
+                .chars()
+                .all(|ch| ch.is_ascii_digit() || " .,:/-+".contains(ch));
+            c.chars().any(char::is_alphabetic) && !numeric
+        })
+}
+
+/// Column names from a header row: each trimmed name, `None` for an empty or repeated one
+/// ([`Column::Name`] needs a unique, non-empty name).
+pub fn csv_column_names(first: &[String]) -> Vec<Option<String>> {
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for name in first {
+        *seen.entry(name.trim()).or_default() += 1;
+    }
+    first
+        .iter()
+        .map(|n| {
+            let n = n.trim();
+            (!n.is_empty() && seen[n] == 1).then(|| n.to_string())
+        })
+        .collect()
+}
+
+/// The column names a CSV document's first record (row 0) gives: its names if it is a header,
+/// else none (every column by index). Lets a stored document get its columns back (M4b, M4c).
+pub fn csv_columns(first_row: &[String]) -> Vec<Option<String>> {
+    if csv_header_row(first_row) {
+        csv_column_names(first_row)
+    } else {
+        Vec::new()
+    }
+}
+
 /// Exact address of a segment in its document (domain §3.3, INV-CO-03).
 ///
 /// The kind must match the document kind. Drafted kinds:

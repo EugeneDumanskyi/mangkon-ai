@@ -39,4 +39,8 @@ otherPaths: number,
 /**
  * Card-like numbers in the file: "Contains card-like number" (US-04.6 AC1).
  */
-cardLikeCount: number, };
+cardLikeCount: number, 
+/**
+ * CSV and JSON files: `suggested`, `confirmed` or `needs_review` (US-05.1, US-05.2 AC3).
+ */
+mappingState: string | null, };

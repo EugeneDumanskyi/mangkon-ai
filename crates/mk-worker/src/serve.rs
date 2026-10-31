@@ -204,12 +204,25 @@ fn process<W: Write>(
     progress.set(WorkStage::Parsing);
     engines.set_ocr(ocr_config(&req.settings));
     let mut input = io::BufReader::with_capacity(1 << 16, file);
+    let mut custom = Vec::with_capacity(req.settings.custom_patterns.len());
+    for (name, expression) in &req.settings.custom_patterns {
+        match mk_identifiers::CustomPattern::compile(name, expression) {
+            Ok(p) => custom.push(p),
+            Err(e) => {
+                return Ok(Err((
+                    "invalid_pattern",
+                    format!("The custom pattern \"{name}\" cannot be used: {e}"),
+                )));
+            }
+        }
+    }
     let rules = mk_identifiers::Rules {
         phone_region: req
             .settings
             .phone_region
             .as_deref()
             .and_then(mk_identifiers::Region::parse),
+        custom,
     };
     let mut sink = ChunkSink::new(
         req.limits.chunk_segments as usize,

@@ -154,6 +154,11 @@ pub struct Found {
     pub connections: BTreeSet<String>,
     /// Stored documents that map to no ground-truth document, by path and position.
     pub unmapped: Vec<String>,
+    /// Suggested column types as `(ground-truth document, column key, type)` (NFR-QA-13).
+    pub columns: Vec<(String, String, String)>,
+    /// "Name (from table)" mentions after the suggestions were confirmed, as
+    /// `(ground-truth document, name key)` (US-05.3).
+    pub table_names: Vec<(String, String)>,
 }
 
 /// Counts of one cell of the report.
@@ -258,6 +263,7 @@ fn found_type(key: &str) -> Option<IdType> {
         "evm" => IdType::Evm,
         "sol" => IdType::Sol,
         "tron" => IdType::Tron,
+        "custom" => IdType::Custom,
         _ => return None,
     })
 }
@@ -301,9 +307,6 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
         let Subject::Identifier { key } = &m.subject else {
             continue;
         };
-        if key.id_type == IdType::Custom {
-            continue;
-        }
         let place = Place::of(&m.location);
         expected
             .entry(m.document.as_str())
@@ -311,7 +314,10 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
             .push(Expected {
                 id: &m.id,
                 id_type: key.id_type,
-                key: format!("{}:{}", type_name(key.id_type), key.value),
+                key: match &key.pattern {
+                    Some(p) if key.id_type == IdType::Custom => format!("custom:{p}:{}", key.value),
+                    _ => format!("{}:{}", type_name(key.id_type), key.value),
+                },
                 exact: !matches!(place, Place::Page { .. } | Place::Html),
                 class: if matches!(m.location, Location::Scan { .. }) {
                     Class::Ocr
@@ -373,7 +379,7 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
             let c = cells.entry((w.id_type, w.class)).or_default();
             c.expected += 1;
             c.recalled += u32::from(*h);
-            if let (Class::Ocr, Some(t)) = (w.class, doc_tier) {
+            if let (Class::Ocr, Some(t), false) = (w.class, doc_tier, w.id_type == IdType::Custom) {
                 let c = tiers.entry(t).or_default();
                 c.expected += 1;
                 c.recalled += u32::from(*h);
@@ -390,8 +396,8 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
                 let c = cells.entry((t, f.class)).or_default();
                 c.found += 1;
                 c.correct += u32::from(*u);
-                if let (Class::Ocr, Some(t)) = (f.class, doc_tier) {
-                    let c = tiers.entry(t).or_default();
+                if let (Class::Ocr, Some(tier), false) = (f.class, doc_tier, t == IdType::Custom) {
+                    let c = tiers.entry(tier).or_default();
                     c.found += 1;
                     c.correct += u32::from(*u);
                 }
@@ -404,6 +410,10 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
         let mut add = |key: String| rows.entry(key).or_insert_with(Counts::default).add(c);
         add(format!("{}/{}", type_name(*t), class_name(*class)));
         add(format!("{}/all", type_name(*t)));
+        // Custom patterns are scored on their own rows; the NFR-QA-03..06 rows stay built-in.
+        if *t == IdType::Custom {
+            continue;
+        }
         add(format!("all/{}", class_name(*class)));
         add(if CHECKSUM.contains(t) {
             "checksum/all".to_string()
@@ -415,6 +425,7 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
     for (t, c) in &tiers {
         rows.insert(format!("all/ocr-{}", tier_name(*t)), *c);
     }
+    mapping_rows(gt, found, &mut rows);
     let target = |id: &str, what: &str, goal: f64, value: Option<f64>| Target {
         id: id.into(),
         what: what.into(),
@@ -448,6 +459,12 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
             85.0,
             row("all/ocr-clean").recall(),
         ),
+        target(
+            "NFR-QA-13",
+            "mapping suggestions correct, CSV columns",
+            90.0,
+            row("mapping/csv").recall(),
+        ),
     ];
     let (negative_failures, negatives_checked) = negatives(gt, found);
     Report {
@@ -458,6 +475,66 @@ pub fn score(gt: &GroundTruth, found: &Found) -> Report {
         unmapped: found.unmapped.clone(),
         missed,
     }
+}
+
+/// `mapping/{csv,json,all}`: the share of labelled columns whose suggested type is right (a
+/// column the app did not list counts as wrong), and `table-names/all`: the table entity
+/// mentions found against the annotated ones, matched by document and name key.
+fn mapping_rows(gt: &GroundTruth, found: &Found, rows: &mut BTreeMap<String, Counts>) {
+    let suggested: BTreeMap<(&str, &str), &str> = found
+        .columns
+        .iter()
+        .map(|(d, k, t)| ((d.as_str(), k.as_str()), t.as_str()))
+        .collect();
+    let mut table_docs = BTreeSet::new();
+    for d in gt.documents.iter().filter(|d| !d.columns.is_empty()) {
+        table_docs.insert(d.id.as_str());
+        let kind = if d.kind == crate::FileKind::Json {
+            "json"
+        } else {
+            "csv"
+        };
+        for c in &d.columns {
+            let right = suggested.get(&(d.id.as_str(), c.column_key.as_str()))
+                == Some(&c.column_type.as_str());
+            let cell = Counts {
+                expected: 1,
+                recalled: u32::from(right),
+                found: 1,
+                correct: u32::from(right),
+            };
+            for key in [format!("mapping/{kind}"), "mapping/all".to_string()] {
+                rows.entry(key).or_default().add(&cell);
+            }
+        }
+    }
+    if table_docs.is_empty() {
+        return;
+    }
+    let mut want: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    for m in &gt.mentions {
+        if let Subject::Entity { name_key, .. } = &m.subject
+            && table_docs.contains(m.document.as_str())
+        {
+            *want
+                .entry((m.document.as_str(), name_key.as_str()))
+                .or_default() += 1;
+        }
+    }
+    let mut got: BTreeMap<(&str, &str), u32> = BTreeMap::new();
+    for (d, k) in &found.table_names {
+        *got.entry((d.as_str(), k.as_str())).or_default() += 1;
+    }
+    let mut c = Counts::default();
+    for (k, n) in &want {
+        c.expected += n;
+        c.recalled += (*n).min(got.get(k).copied().unwrap_or(0));
+    }
+    for (k, n) in &got {
+        c.found += n;
+        c.correct += (*n).min(want.get(k).copied().unwrap_or(0));
+    }
+    rows.insert("table-names/all".into(), c);
 }
 
 fn compact(raw: &str) -> String {
@@ -569,6 +646,7 @@ mod tests {
             kind: FileKind::Txt,
             parent: None,
             sha256: None,
+            columns: Vec::new(),
         };
         let mention = |id: &str, doc: &str, t, v: &str, location| Mention {
             id: id.into(),

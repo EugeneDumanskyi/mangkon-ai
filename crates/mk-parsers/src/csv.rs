@@ -30,13 +30,13 @@ pub(crate) fn parse(
     let delimiter = detect_delimiter(input, encoding)?;
     let sample = read(Decoded::new(input, encoding)?, delimiter, SAMPLE_ROWS)?;
 
-    let header = sample.first().is_some_and(|r| looks_like_header(r));
+    let header = sample.first().is_some_and(|r| mk_kernel::csv_header_row(r));
     let expected = match (header, sample.first()) {
         (true, Some(first)) => first.len(),
         _ => mode(sample.iter().map(Vec::len)).unwrap_or(0),
     };
     let columns = if header {
-        names(&sample[0])
+        mk_kernel::csv_column_names(&sample[0])
     } else {
         vec![None; expected]
     };
@@ -144,43 +144,10 @@ fn mode(values: impl Iterator<Item = usize>) -> Option<usize> {
         .map(|(v, _)| v)
 }
 
-/// A first row is a header when every cell has a letter and none looks like a number or date.
-/// ASSUMPTION: good enough for exports; the column mapping screen (M4) lets the user correct it.
-/// Column names from a header row: each trimmed name, `None` for an empty or repeated one.
-fn names(first: &[String]) -> Vec<Option<String>> {
-    let mut seen: HashMap<&str, usize> = HashMap::new();
-    for name in first {
-        *seen.entry(name.trim()).or_default() += 1;
-    }
-    first
-        .iter()
-        .map(|n| {
-            let n = n.trim();
-            (!n.is_empty() && seen[n] == 1).then(|| n.to_string())
-        })
-        .collect()
-}
-
-/// The column names a CSV document's first record (row 0) gives, by the rule the parser uses:
-/// its names if it looks like a header, else none (every column by index). Lets a stored
-/// document get its columns back for an identifier re-run (M4b).
+/// The column names a CSV document's first record (row 0) gives, by the rule the parser uses
+/// ([`mk_kernel::csv_columns`]). Lets a stored document get its columns back (M4b).
 pub fn columns(first_row: &[String]) -> Vec<Option<String>> {
-    if looks_like_header(first_row) {
-        names(first_row)
-    } else {
-        Vec::new()
-    }
-}
-
-fn looks_like_header(row: &[String]) -> bool {
-    !row.is_empty()
-        && row.iter().all(|c| {
-            let c = c.trim();
-            let numeric = c
-                .chars()
-                .all(|ch| ch.is_ascii_digit() || " .,:/-+".contains(ch));
-            c.chars().any(char::is_alphabetic) && !numeric
-        })
+    mk_kernel::csv_columns(first_row)
 }
 
 #[cfg(test)]

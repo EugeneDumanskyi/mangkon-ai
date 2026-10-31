@@ -45,6 +45,8 @@ const KIND_LABELS: Record<string, string> = {
   evm: "Ethereum-style address",
   sol: "Solana address",
   tron: "TRON address",
+  person: "Person",
+  org: "Organization",
 };
 
 /** "IBAN", "Bitcoin address", … for an identifier type (US-04.1 – US-04.5). */
@@ -98,4 +100,34 @@ export function originalNote(original: OriginalFile | null): string | null {
     case "changed":
       return "The file changed since it was read: showing the stored text";
   }
+}
+
+const MAPPING_STATES: Record<string, string> = {
+  suggested: "Suggested",
+  confirmed: "Confirmed",
+  needs_review: "Needs review",
+};
+
+/** "Columns: Suggested / Confirmed / Needs review" of a CSV or JSON file (US-05.1, US-05.2). */
+export function mappingStateLabel(state: string): string {
+  return MAPPING_STATES[state] ?? state;
+}
+
+const COLUMN_TYPES: Record<string, string> = {
+  email: "Email",
+  phone: "Phone",
+  url_domain: "URL / domain",
+  iban: "IBAN",
+  crypto: "Crypto address",
+  person: "Person name",
+  org: "Organization name",
+  date: "Date",
+  ignore: "Ignore",
+};
+
+/** The column types a user can pick, in order (INV-CM-01). */
+export const COLUMN_TYPE_CHOICES = Object.keys(COLUMN_TYPES);
+
+export function columnTypeLabel(type: string): string {
+  return COLUMN_TYPES[type] ?? type;
 }

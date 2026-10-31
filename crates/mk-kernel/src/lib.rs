@@ -14,12 +14,19 @@ mod geometry;
 mod hash;
 mod identifier;
 mod locator;
+mod name;
 mod ocr;
 mod span;
 
 pub use geometry::{GeometryError, PageGeometry, Rect};
 pub use hash::{ContentHash, ParseHashError};
-pub use identifier::{IdentifierKey, IdentifierKind, ParseKeyError};
-pub use locator::{Column, LineNumber, Locator, PageNumber, json_path};
+pub use identifier::{
+    IdentifierKey, IdentifierKind, MAX_PATTERN_NAME, ParseKeyError, valid_pattern_name,
+};
+pub use locator::{
+    Column, LineNumber, Locator, PageNumber, csv_column_names, csv_columns, csv_header_row,
+    json_path,
+};
+pub use name::{EntityType, NameKey, ParseNameKeyError};
 pub use ocr::{ImageSize, OcrGeometry, OcrWord};
 pub use span::{Span, SpanError};

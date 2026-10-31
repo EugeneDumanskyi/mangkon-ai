@@ -1,13 +1,14 @@
 //! Worker protocol messages (ADR-0007). Version 3 (M3b) adds the page view's `RenderPage` and
 //! `PageImage` (ADR-0011), the OCR stage and settings (ADR-0017, ADR-0018), and OCR word
-//! geometry on segments. Version 4 (M4b) adds the phone region and card-like flags.
+//! geometry on segments. Version 4 (M4b) adds the phone region and card-like flags. Version 5
+//! (M4c) adds the custom patterns; a custom match is a mention whose key is of kind `custom`.
 
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry, PageGeometry};
 use serde::{Deserialize, Serialize};
 
 /// Protocol version. A worker says it in [`FromWorker::Hello`]; the core refuses any other.
 /// Bump on any change to these messages.
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 /// Core → worker.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -71,6 +72,9 @@ pub struct Settings {
     /// The project's phone region, such as `GB` (US-04.2 AC2); `None` keeps national numbers
     /// as digits (AC3).
     pub phone_region: Option<String>,
+    /// The project's custom patterns as `(name, expression)` (US-04.7). The worker compiles
+    /// them once per item; the core checked them when they were saved.
+    pub custom_patterns: Vec<(String, String)>,
 }
 
 /// Worker → core.

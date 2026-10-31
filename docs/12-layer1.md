@@ -212,3 +212,44 @@ target/release/mangkon-cli kill-test --source testdata/td1/synthetic --runs 20
 | US-04.6, NFR-SEC-14 | `us_04_6_ac1_card_like_is_flagged_masked`, `us_04_6_ac2_card_like_is_never_a_key`, `us_04_6_card_like_is_a_masked_flag` (core, also after a re-run), `nfr_sec_14_td1_card_like_is_only_a_flag` (TD-1), the bench negatives, `m4b.test.tsx` (badge, masked numbers) |
 | Every type on TD-1 text | `td1_text_identifiers.rs` (`mk-identifiers`) |
 | Spans slice back to the raw text (INV-CO-04) | proptests per finder, `inv_co_04_roundtrip_*` on TD-1 |
+
+## 4. M4c — custom patterns and column mapping
+
+### Benchmark on TD-1 (NFR-QA-13, US-04.7, US-05.3)
+
+`mangkon-cli bench` adds the pattern `tender_ref` = `VPA-TND-\d{4}-\d{3}` before ingest. After ingest it records the suggested type of every CSV and JSON column. Then it confirms the suggestions as they are and scores the "Name (from table)" mentions. Custom matches have their own rows, so the NFR-QA-03..06 rows stay built-in only and are unchanged. The baseline (`crates/mk-bench/baseline/td1.json`) was refreshed on purpose; the refresh only added rows.
+
+| Row | Expected | Result |
+|---|---|---|
+| `mapping/csv` (NFR-QA-13, target ≥ 90%) | 23 columns | 23 correct, **100%**, met |
+| `mapping/json` | 38 columns | 38 correct, 100% |
+| `mapping/all` | 61 columns | 100% |
+| `custom/all` (text 32, OCR 7) | 39 mentions | recall 100%, precision 100% |
+| `table-names/all` | 42 mentions | recall 100%, precision 100% |
+
+The column types are labelled by hand in the generator (v6, `07-test-corpus.md` §5). The suggester's header words are generic, and the unit tests use headers that are not in TD-1. JSON columns are the keys of string and number values. `true`/`false` and `null` values are not read as text, so they are not columns.
+
+### Kill test and rebuild
+
+- **Kill test.** `mangkon-cli kill-test` on TD-1 now adds the pattern `tender_ref` before each run, so the custom finder and the table step run in every Stage A commit. Result: 20/20 runs passed.
+- **Mapping confirms.** The CLI has no mapping command, so no confirmed mapping took part in the kill test. A confirm is one transaction (decision and apply). Its survival across re-scans and rebuilds is checked by `ignore_on_an_entity_survives_rescan_and_rebuild`, `us_05_2_ac3_rescan_reapplies_or_needs_review` and the property test.
+- **Rebuild.** It equals the incremental rows and matches the sources on TD-1 + TD-3 (316 identifiers, 155 connections; the search index is in step).
+
+### Measurements
+
+Pending: the custom-pattern re-run on TD-2, Stage A with 3 patterns on the 500 MB CSV (NFR-CAP-05, NFR-PERF-22) and the confirm on `s2a/rows-1m.csv`. They need an idle machine.
+
+### Tests
+
+| Check | Test |
+|---|---|
+| US-04.7 AC1 live test, type named after the pattern | `us_04_7_ac1_matches_named_after_the_pattern` (`mk-identifiers`), `us_04_7_ac1_pattern_matches_named_after_it`, `us_04_7_ac1_test_marks_matches` (core), `m4c.test.tsx` |
+| US-04.7 AC2 refused syntax, linear time | `us_04_7_ac2_invalid_patterns_are_refused`, `us_04_7_ac2_test_refuses_look_around`, `us_04_7_ac2_linear_time` (`(a*)*b` on 100k `a`) |
+| US-04.7 AC3 only the custom step | `us_04_7_ac3_custom_rerun_leaves_builtin_alone` (store), `us_04_7_ac3_only_the_custom_step_runs` (the source files are deleted first; built-in mention ids and card flags stay), `us_04_7_ac3_paused_queue_holds_the_custom_rerun`, `us_04_7_ac3_killed_rerun_resumes_from_its_cursor` |
+| US-04.7 AC4 | `us_04_7_ac4_too_broad_warns` (10,001 matches) |
+| INV-ID-07/08 | `inv_id_07_unique_name_ignoring_case`, `inv_id_08_steps_are_independent` |
+| US-05.1 | `us_05_1_ac2_identifier_columns_by_share`, `us_05_1_ac2_names_from_header_words` (`mk-mapping`), `us_05_1_suggestions_make_no_entities` (INV-CM-02/03) |
+| US-05.2 | `us_05_2_confirm_and_reuse`, `us_05_2_confirm_and_reuse_make_table_entities`, `us_05_2_ac3_rescan_reapplies_or_needs_review` (D5) |
+| US-05.3 | `us_05_3_ac1_entity_span_inside_cell`, `us_05_3_json_names_from_table` (CsvCell / JsonValue locators, record links) |
+| Decisions survive | `ignore_on_an_entity_survives_rescan_and_rebuild`; `derived_property.rs` gains pattern, re-run, confirm and entity-ignore operations (48 cases in CI, 400 run once) |
+| UI | `m4c.test.tsx`: pattern label, locked name, too-broad text, mapping pill, mapping form, "Name (from table)" |

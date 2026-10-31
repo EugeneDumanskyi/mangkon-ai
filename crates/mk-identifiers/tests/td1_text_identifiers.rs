@@ -29,6 +29,7 @@ fn us_04_x_td1_text_identifiers_match_ground_truth() {
     let gt = mk_bench::load(&gt_path).expect("ground truth loads");
     let rules = Rules {
         phone_region: Region::parse("GB"),
+        ..Rules::default()
     };
     let mut checked = 0;
     let mut kinds = BTreeSet::new();

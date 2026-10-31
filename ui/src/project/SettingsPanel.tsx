@@ -4,6 +4,7 @@ import { commands, errorMessage } from "../ipc/commands";
 import type { Settings } from "../ipc/bindings/Settings";
 import type { SettingsSaved } from "../ipc/bindings/SettingsSaved";
 import type { SourceRoot } from "../ipc/bindings/SourceRoot";
+import { CustomPatterns } from "./CustomPatterns";
 import { ocrChoices, parseDomains, reprocessQuestion } from "../lib/forms";
 import { plural } from "../lib/labels";
 
@@ -282,6 +283,7 @@ export function SettingsPanel() {
           {saved}
         </p>
       )}
+      <CustomPatterns />
       <h3 className="mt-6 font-semibold">Sources</h3>
       {rootError && (
         <p role="alert" className="text-sm">

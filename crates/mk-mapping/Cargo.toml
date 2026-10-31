@@ -1,0 +1,18 @@
+[package]
+name = "mk-mapping"
+description = "BC-05: CSV/JSON column mapping rules, pure functions (M4c)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+mk-identifiers.workspace = true
+mk-kernel.workspace = true
+serde_json = "1.0.154"
+
+[dev-dependencies]
+proptest = "1.12.0"

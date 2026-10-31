@@ -2538,6 +2538,7 @@ dependencies = [
  "mk-identifiers",
  "mk-jobs",
  "mk-kernel",
+ "mk-mapping",
  "mk-parsers",
  "mk-search",
  "mk-store",
@@ -2579,6 +2580,7 @@ dependencies = [
  "proptest",
  "psl",
  "regex",
+ "regex-syntax 0.8.11",
  "serde_json",
  "sha3",
 ]
@@ -2595,8 +2597,19 @@ name = "mk-kernel"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "mk-bench",
  "proptest",
  "serde",
+]
+
+[[package]]
+name = "mk-mapping"
+version = "0.0.0"
+dependencies = [
+ "mk-identifiers",
+ "mk-kernel",
+ "proptest",
+ "serde_json",
 ]
 
 [[package]]
@@ -2645,8 +2658,10 @@ version = "0.0.0"
 dependencies = [
  "mk-corpus",
  "mk-graph",
+ "mk-identifiers",
  "mk-jobs",
  "mk-kernel",
+ "mk-mapping",
  "mk-search",
  "mk-workspace",
  "proptest",
@@ -2682,6 +2697,9 @@ dependencies = [
 [[package]]
 name = "mk-workspace"
 version = "0.0.0"
+dependencies = [
+ "mk-identifiers",
+]
 
 [[package]]
 name = "moxcms"

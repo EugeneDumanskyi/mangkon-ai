@@ -122,6 +122,7 @@ const doc = (over: Partial<DocumentItem>): DocumentItem => ({
   failureDetail: null,
   otherPaths: 0,
   cardLikeCount: 0,
+  mappingState: null,
   ...over,
 });
 

@@ -2,16 +2,20 @@
 // the generated bindings, so a change on the Rust side breaks the TypeScript build.
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AppInfo } from "./bindings/AppInfo";
+import type { ColumnAssignment } from "./bindings/ColumnAssignment";
 import type { ConnectionCursor } from "./bindings/ConnectionCursor";
 import type { ConnectionsPage } from "./bindings/ConnectionsPage";
+import type { CustomPatternItem } from "./bindings/CustomPatternItem";
 import type { DocumentCursor } from "./bindings/DocumentCursor";
 import type { DocumentFilter } from "./bindings/DocumentFilter";
 import type { DocumentsPage } from "./bindings/DocumentsPage";
 import type { DocumentType } from "./bindings/DocumentType";
 import type { FrameStats } from "./bindings/FrameStats";
 import type { IpcError } from "./bindings/IpcError";
+import type { MappingView } from "./bindings/MappingView";
 import type { Occurrence } from "./bindings/Occurrence";
 import type { PageView } from "./bindings/PageView";
+import type { PatternTest } from "./bindings/PatternTest";
 import type { Progress } from "./bindings/Progress";
 import type { ProjectInfo } from "./bindings/ProjectInfo";
 import type { QueueWalk } from "./bindings/QueueWalk";
@@ -93,6 +97,19 @@ export const commands = {
   sourceRoots: () => invoke<SourceRoot[]>("source_roots"),
   relocateRoot: (root: number, path: string) => invoke<null>("relocate_root", { root, path }),
   removeRoot: (root: number) => invoke<RemoveSummary>("remove_root", { root }),
+  customPatterns: () => invoke<CustomPatternItem[]>("custom_patterns"),
+  addPattern: (name: string, expression: string) =>
+    invoke<null>("add_pattern", { name, expression }),
+  editPattern: (name: string, expression: string) =>
+    invoke<null>("edit_pattern", { name, expression }),
+  removePattern: (name: string) => invoke<null>("remove_pattern", { name }),
+  testPattern: (expression: string, sample: string) =>
+    invoke<PatternTest>("test_pattern", { expression, sample }),
+  mappingView: (refId: number) => invoke<MappingView | null>("mapping_view", { refId }),
+  confirmMapping: (refId: number, assignments: ColumnAssignment[]) =>
+    invoke<null>("confirm_mapping", { refId, assignments }),
+  reuseMapping: (refId: number, fromRefId: number) =>
+    invoke<null>("reuse_mapping", { refId, fromRefId }),
   connectionCount: () => invoke<number>("connection_count"),
   connectionsPage: (cursor: ConnectionCursor | null, limit: number) =>
     invoke<ConnectionsPage>("connections_page", { cursor, limit }),

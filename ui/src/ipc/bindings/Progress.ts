@@ -24,7 +24,7 @@ ingesting: boolean,
 paused: boolean, 
 /**
  * `"identifiers"` while identifiers are found again from stored text (a region change,
- * US-04.2 AC2), `"A"` while Stage A work is open; `null` when the queue is empty.
+ * US-04.2 AC2), `"custom patterns"` while custom patterns run on it (US-04.7 AC3), `"A"` while Stage A work is open; `null` when the queue is empty.
  */
 stage: string | null, 
 /**

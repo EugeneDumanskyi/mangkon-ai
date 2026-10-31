@@ -213,7 +213,7 @@ fn us_01_2_ac4_backup_then_migrate() {
     let (p, summary, entry) = ws.open_project(&dir).unwrap();
     assert_eq!(
         (summary.schema.from_version, summary.schema.to_version),
-        (3, 6)
+        (3, 7)
     );
     assert!(summary.schema.backup.unwrap().is_file());
     assert_eq!(entry.name, "Old case");
@@ -374,7 +374,8 @@ fn us_01_6_ac2_defaults() {
         p.save_settings(saved).unwrap(),
         Reprocess {
             ocr: false,
-            identifiers: true
+            identifiers: true,
+            custom: false,
         }
     );
     assert_eq!(p.settings().unwrap().phone_region.as_deref(), Some("DE"));
@@ -436,7 +437,8 @@ fn us_01_6_ac3_ocr_change_reprocesses_only_ocr_contents() {
         what,
         Reprocess {
             ocr: true,
-            identifiers: false
+            identifiers: false,
+            custom: false,
         }
     );
     assert_eq!(p.ocr_languages().unwrap(), "eng+deu");

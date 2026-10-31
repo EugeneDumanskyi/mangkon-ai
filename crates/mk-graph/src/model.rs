@@ -4,11 +4,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use mk_kernel::IdentifierKey;
+use mk_kernel::{IdentifierKey, NameKey};
 
 use crate::{
-    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, IdentifierStats, StopList,
-    connection_for, resolve,
+    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, EntityStats, IdentifierStats,
+    LOW_CONFIDENCE, StopList, SubjectKind, connection_for, display_name, entity_connection_for,
+    resolve,
 };
 
 /// A stored content as the derived rules see it.
@@ -29,12 +30,25 @@ pub struct MentionFact {
     pub confidence: f32,
 }
 
+/// A stored entity mention (M4c: from a confirmed table column).
+#[derive(Clone, PartialEq, Debug)]
+pub struct EntityMentionFact {
+    pub content: i64,
+    pub document: i64,
+    pub key: NameKey,
+    /// The name as written.
+    pub raw: String,
+    pub confidence: f32,
+    /// Made from a table column (US-05.3).
+    pub from_table: bool,
+}
+
 /// A logged decision.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct DecisionRecord {
     pub seq: i64,
     pub kind: DecisionKind,
-    /// The anchor, an identifier key as `type:value`.
+    /// The anchor: an identifier key as `type:value`, a name key, or a mapping anchor.
     pub anchor: String,
 }
 
@@ -44,6 +58,7 @@ pub struct DecisionRecord {
 pub struct Facts {
     pub contents: Vec<ContentFact>,
     pub mentions: Vec<MentionFact>,
+    pub entity_mentions: Vec<EntityMentionFact>,
     pub decisions: Vec<DecisionRecord>,
     pub stop_list: StopList,
 }
@@ -57,10 +72,23 @@ pub struct IdentifierRow {
     pub mention_count: u64,
 }
 
+/// A derived entity row (domain §5.1 `ENTITY`, M4c): present while any mention with its name
+/// key is stored, Missing content included.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EntityRow {
+    pub entity_type: String,
+    /// The most frequent name as written (INV-ER-07).
+    pub display_name: String,
+    pub mention_count: u64,
+    /// Every mention comes from a table column: "Name (from table)" (US-05.3, domain §9.1).
+    pub from_table: bool,
+}
+
 /// Every derived row of a project, keyed for comparison.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct DerivedState {
     pub identifiers: BTreeMap<String, IdentifierRow>,
+    pub entities: BTreeMap<String, EntityRow>,
     pub connections: BTreeMap<String, ConnectionRow>,
     pub decision_status: BTreeMap<i64, DecisionStatus>,
 }
@@ -76,8 +104,20 @@ pub fn reference(facts: &Facts) -> DerivedState {
             .1
             .push(m);
     }
+    let mut by_name: BTreeMap<String, (&NameKey, Vec<&EntityMentionFact>)> = BTreeMap::new();
+    for m in &facts.entity_mentions {
+        by_name
+            .entry(m.key.to_string())
+            .or_insert_with(|| (&m.key, Vec::new()))
+            .1
+            .push(m);
+    }
     let mut decisions: BTreeMap<&str, Vec<DecisionFact>> = BTreeMap::new();
     for d in &facts.decisions {
+        // Only connection decisions of the anchor's subject kind have a derived state here.
+        if !DecisionKind::ignore_pair(SubjectKind::of_key(&d.anchor)).contains(&d.kind) {
+            continue;
+        }
         decisions.entry(&d.anchor).or_default().push(DecisionFact {
             seq: d.seq,
             kind: d.kind,
@@ -87,10 +127,48 @@ pub fn reference(facts: &Facts) -> DerivedState {
     let mut out = DerivedState::default();
     let anchors: BTreeSet<&str> = by_key
         .keys()
+        .chain(by_name.keys())
         .map(String::as_str)
         .chain(decisions.keys().copied())
         .collect();
     for anchor in anchors {
+        if let Some((key, mentions)) = by_name.get(anchor) {
+            let resolution = resolve(decisions.get(anchor).map_or(&[][..], Vec::as_slice), true);
+            out.decision_status
+                .extend(resolution.statuses.iter().copied());
+            out.entities.insert(
+                anchor.to_string(),
+                EntityRow {
+                    entity_type: key.entity_type().as_str().to_string(),
+                    display_name: display_name(mentions.iter().map(|m| m.raw.as_str()))
+                        .unwrap_or_default(),
+                    mention_count: mentions.len() as u64,
+                    from_table: mentions.iter().all(|m| m.from_table),
+                },
+            );
+            let counted: Vec<&&EntityMentionFact> = mentions
+                .iter()
+                .filter(|m| m.confidence >= LOW_CONFIDENCE)
+                .filter(|m| contents.get(&m.content).is_some_and(|c| c.counted))
+                .collect();
+            let stats = EntityStats {
+                documents: counted
+                    .iter()
+                    .map(|m| m.document)
+                    .collect::<BTreeSet<_>>()
+                    .len() as u64,
+                file_types: counted
+                    .iter()
+                    .map(|m| contents[&m.content].file_type.as_str())
+                    .collect::<BTreeSet<_>>()
+                    .len() as u64,
+                mentions: counted.len() as u64,
+            };
+            if let Some(row) = entity_connection_for(key, &stats, resolution.ignored) {
+                out.connections.insert(anchor.to_string(), row);
+            }
+            continue;
+        }
         let mentions = by_key.get(anchor);
         let resolution = resolve(
             decisions.get(anchor).map_or(&[][..], Vec::as_slice),
@@ -190,6 +268,7 @@ mod tests {
                 },
             ],
             stop_list: StopList::default(),
+            ..Facts::default()
         };
         let d = reference(&facts);
         assert_eq!(d.identifiers.len(), 2);
@@ -200,6 +279,64 @@ mod tests {
         assert_eq!(
             d.decision_status,
             BTreeMap::from([(1, DecisionStatus::Active), (2, DecisionStatus::Orphaned)])
+        );
+    }
+
+    /// Domain §9.3 steps 1, 2, 4 for table entities: grouped by name key, display name by
+    /// frequency, from-table mark; entity ignores hide the row; mapping decisions have no
+    /// connection state.
+    #[test]
+    fn reference_builds_table_entities() {
+        let em = |content: i64, raw: &str| EntityMentionFact {
+            content,
+            document: content * 10,
+            key: NameKey::new(mk_kernel::EntityType::Org, raw).unwrap(),
+            raw: raw.into(),
+            confidence: 1.0,
+            from_table: true,
+        };
+        let facts = Facts {
+            contents: vec![
+                content(1, "csv", true),
+                content(2, "json", true),
+                content(3, "csv", false),
+            ],
+            entity_mentions: vec![
+                em(1, "Brightwater Logistics Ltd"),
+                em(1, "Brightwater Logistics Ltd"),
+                em(2, "BRIGHTWATER LOGISTICS LTD"),
+                em(3, "Northgate Marine"),
+                em(1, "Northgate Marine"),
+            ],
+            decisions: vec![
+                DecisionRecord {
+                    seq: 1,
+                    kind: DecisionKind::IgnoreEntity,
+                    anchor: "org:brightwater logistics".into(),
+                },
+                DecisionRecord {
+                    seq: 2,
+                    kind: DecisionKind::ConfirmMapping,
+                    anchor: "map:1/a.csv|abc".into(),
+                },
+            ],
+            ..Facts::default()
+        };
+        let d = reference(&facts);
+        let bw = &d.entities["org:brightwater logistics"];
+        assert_eq!(bw.display_name, "Brightwater Logistics Ltd");
+        assert_eq!((bw.mention_count, bw.from_table), (3, true));
+        let row = &d.connections["org:brightwater logistics"];
+        assert_eq!(
+            (row.source_count, row.file_type_count, row.ignored),
+            (2, 2, true)
+        );
+        // Northgate's second document is Missing: no connection, but the entity stays.
+        assert!(d.entities.contains_key("org:northgate marine"));
+        assert!(!d.connections.contains_key("org:northgate marine"));
+        assert_eq!(
+            d.decision_status,
+            BTreeMap::from([(1, DecisionStatus::Active)])
         );
     }
 }

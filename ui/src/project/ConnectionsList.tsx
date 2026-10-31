@@ -17,7 +17,12 @@ export function ConnectionSummary({ row, selected }: { row: ConnectionItem; sele
   return (
     <>
       <div className="flex items-baseline gap-2">
-        <span className="truncate font-mono">{row.value}</span>
+        <span className={row.fromTable ? "truncate" : "truncate font-mono"}>{row.value}</span>
+        {row.fromTable && (
+          <span className="shrink-0 rounded border border-current px-1 text-xs">
+            Name (from table)
+          </span>
+        )}
         {row.lowConfidence && (
           <span className="shrink-0 rounded border border-current px-1 text-xs">
             low confidence
@@ -33,7 +38,7 @@ export function ConnectionSummary({ row, selected }: { row: ConnectionItem; sele
         )}
       </div>
       <div className={selected ? "text-xs" : "text-xs text-muted"}>
-        {kindLabel(row.kind)} · {plural(row.sourceCount, "source")} ·{" "}
+        {row.label ?? kindLabel(row.kind)} · {plural(row.sourceCount, "source")} ·{" "}
         {plural(row.mentionCount, "mention")} · {plural(row.fileTypeCount, "file type")}
       </div>
     </>

@@ -138,6 +138,21 @@ pub struct Document {
     /// SHA-256 of the decoded attachment bytes, for child documents.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sha256: Option<String>,
+    /// CSV and JSON documents: every column with its correct type, labelled by hand
+    /// (NFR-QA-13, BC-05). Generator v6.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<ColumnTruth>,
+}
+
+/// One column of a table document and its correct type.
+#[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ColumnTruth {
+    /// CSV: the header text; JSON: the pointer with array indices as `*` (`/officers/*/name`).
+    pub column_key: String,
+    /// `email`, `phone`, `url_domain`, `iban`, `crypto`, `person`, `org`, `date` or `ignore`.
+    #[serde(rename = "type")]
+    pub column_type: String,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]

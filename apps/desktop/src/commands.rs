@@ -307,9 +307,11 @@ pub async fn reprocess(
     identifiers: bool,
 ) -> Result<u32, IpcError> {
     let open = state.current()?;
-    let n = open
-        .project
-        .reprocess(mk_core::Reprocess { ocr, identifiers })?;
+    let n = open.project.reprocess(mk_core::Reprocess {
+        ocr,
+        identifiers,
+        custom: false,
+    })?;
     state.start_ingest(&open);
     Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
@@ -345,6 +347,99 @@ pub async fn remove_root(
     let out = state.current()?.project.remove_root(root)?;
     state.emit(ipc::UiEvent::ProjectChanged);
     Ok(out.into())
+}
+
+/// The custom patterns with their match counts (US-04.7 AC4).
+#[tauri::command]
+pub async fn custom_patterns(
+    state: State<'_, AppState>,
+) -> Result<Vec<ipc::CustomPatternItem>, IpcError> {
+    let list = state.current()?.project.custom_patterns()?;
+    Ok(list.into_iter().map(Into::into).collect())
+}
+
+/// Saves a new pattern and starts its re-run on the stored text (US-04.7 AC3).
+#[tauri::command]
+pub async fn add_pattern(
+    state: State<'_, AppState>,
+    name: String,
+    expression: String,
+) -> Result<(), IpcError> {
+    let open = state.current()?;
+    open.project.add_pattern(&name, &expression)?;
+    state.start_ingest(&open);
+    Ok(())
+}
+
+/// Changes a pattern's expression; its name stays.
+#[tauri::command]
+pub async fn edit_pattern(
+    state: State<'_, AppState>,
+    name: String,
+    expression: String,
+) -> Result<(), IpcError> {
+    let open = state.current()?;
+    open.project.edit_pattern(&name, &expression)?;
+    state.start_ingest(&open);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_pattern(state: State<'_, AppState>, name: String) -> Result<(), IpcError> {
+    let open = state.current()?;
+    open.project.remove_pattern(&name)?;
+    state.start_ingest(&open);
+    Ok(())
+}
+
+/// The live test box (US-04.7 AC1/AC2); needs no project and saves nothing.
+#[tauri::command]
+pub async fn test_pattern(expression: String, sample: String) -> ipc::PatternTest {
+    mk_core::test_pattern(&expression, &sample).into()
+}
+
+/// The mapping screen of a CSV or JSON file (US-05.1 AC1).
+#[tauri::command]
+pub async fn mapping_view(
+    state: State<'_, AppState>,
+    ref_id: i64,
+) -> Result<Option<ipc::MappingView>, IpcError> {
+    Ok(state
+        .current()?
+        .project
+        .mapping_view(ref_id)?
+        .map(Into::into))
+}
+
+/// Confirms and applies a file's column types (US-05.2 AC1).
+#[tauri::command]
+pub async fn confirm_mapping(
+    state: State<'_, AppState>,
+    ref_id: i64,
+    assignments: Vec<ipc::ColumnAssignment>,
+) -> Result<(), IpcError> {
+    let assignments = ipc::assignments(assignments)?;
+    state
+        .current()?
+        .project
+        .confirm_mapping(ref_id, assignments)?;
+    state.emit(ipc::UiEvent::ProjectChanged);
+    Ok(())
+}
+
+/// "Use the same mapping as <file>" (US-05.2 AC2).
+#[tauri::command]
+pub async fn reuse_mapping(
+    state: State<'_, AppState>,
+    ref_id: i64,
+    from_ref_id: i64,
+) -> Result<(), IpcError> {
+    state
+        .current()?
+        .project
+        .reuse_mapping(ref_id, from_ref_id)?;
+    state.emit(ipc::UiEvent::ProjectChanged);
+    Ok(())
 }
 
 #[tauri::command]

@@ -7,6 +7,7 @@ members = [
     "crates/mk-tesseract-sys",
     "crates/mk-parsers",
     "crates/mk-identifiers",
+    "crates/mk-mapping",
     "crates/mk-jobs",
     "crates/mk-graph",
     "crates/mk-search",
@@ -43,6 +44,7 @@ mk-corpus = { path = "crates/mk-corpus" }
 mk-tesseract-sys = { path = "crates/mk-tesseract-sys" }
 mk-parsers = { path = "crates/mk-parsers" }
 mk-identifiers = { path = "crates/mk-identifiers" }
+mk-mapping = { path = "crates/mk-mapping" }
 mk-jobs = { path = "crates/mk-jobs" }
 mk-graph = { path = "crates/mk-graph" }
 mk-search = { path = "crates/mk-search" }

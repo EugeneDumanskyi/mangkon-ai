@@ -4,9 +4,10 @@ use std::collections::BTreeMap;
 
 use mk_corpus::{FileMeta, IngestionState, StoredRef};
 use mk_graph::model::{
-    ContentFact, DecisionRecord, DerivedState, Facts, IdentifierRow, MentionFact,
+    ContentFact, DecisionRecord, DerivedState, EntityMentionFact, EntityRow, Facts, IdentifierRow,
+    MentionFact,
 };
-use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey};
+use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey, SubjectKind};
 use mk_jobs::{ItemState, JobState, PendingItem};
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -170,7 +171,7 @@ pub(crate) fn connections_page(
     include_ignored: bool,
 ) -> Result<Vec<ConnectionRow>, StoreError> {
     let sql = "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                      ignored
+                      ignored, subject_kind
                FROM connection
                WHERE (?1 OR ignored = 0)
                  AND (?2 IS NULL OR
@@ -336,8 +337,25 @@ pub(crate) fn derived_state(conn: &Connection) -> Result<DerivedState, StoreErro
     }
     {
         let mut stmt = conn.prepare(
+            "SELECT name_key, entity_type, display_name, mention_count, from_table FROM entity",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                EntityRow {
+                    entity_type: r.get(1)?,
+                    display_name: r.get(2)?,
+                    mention_count: r.get::<_, i64>(3)? as u64,
+                    from_table: r.get(4)?,
+                },
+            ))
+        })?;
+        out.entities = rows.collect::<Result<_, _>>()?;
+    }
+    {
+        let mut stmt = conn.prepare(
             "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                    ignored
+                    ignored, subject_kind
              FROM connection",
         )?;
         let rows = stmt.query_map([], row_to_connection)?;
@@ -396,6 +414,26 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
         }
     }
     {
+        let mut stmt = conn.prepare(
+            "SELECT content_id, document_id, name_key, raw, confidence, producer
+             FROM entity_mention",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let key: String = r.get(2)?;
+            out.entity_mentions.push(EntityMentionFact {
+                content: r.get(0)?,
+                document: r.get(1)?,
+                key: key.parse().map_err(|e: mk_kernel::ParseNameKeyError| {
+                    StoreError::Invalid(e.to_string())
+                })?,
+                raw: r.get(3)?,
+                confidence: r.get::<_, f64>(4)? as f32,
+                from_table: r.get::<_, String>(5)? == "table",
+            });
+        }
+    }
+    {
         let mut stmt = conn.prepare("SELECT seq, kind, anchor FROM decision ORDER BY seq")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
@@ -424,8 +462,9 @@ pub(crate) fn connection_count(
     Ok(n as u64)
 }
 
-/// One mention of an identifier, with what the occurrence list and the source view need
-/// (US-07.3 AC2): where it is (INV-CO-03) and the file it came from.
+/// One mention of an identifier or an entity, with what the occurrence list and the source view
+/// need (US-07.3 AC2): where it is (INV-CO-03) and the file it came from. An entity mention's
+/// id is the negative of its row id, so both kinds share one id space (M4c).
 #[derive(Clone, PartialEq, Debug)]
 pub struct OccurrenceRow {
     pub mention_id: i64,
@@ -439,7 +478,7 @@ pub struct OccurrenceRow {
     pub locator: Locator,
     pub raw: String,
     pub confidence: f32,
-    /// The identifier key, such as `email:a@x.example`.
+    /// The identifier key, such as `email:a@x.example`, or the entity's name key.
     pub key: String,
 }
 
@@ -456,8 +495,22 @@ const OCCURRENCE_SELECT: &str = "
         ORDER BY id LIMIT 1)
     LEFT JOIN source_root r ON r.id = f.root_id";
 
+/// [`OCCURRENCE_SELECT`] for entity mentions: the same columns, the id negated.
+const ENTITY_OCCURRENCE_SELECT: &str = "
+    SELECT -m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
+           s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
+           m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr,
+           m.name_key
+    FROM entity_mention m
+    JOIN segment s ON s.id = m.segment_id
+    JOIN content c ON c.id = m.content_id
+    LEFT JOIN file_ref f ON f.id = (
+        SELECT id FROM file_ref WHERE content_id = m.content_id AND present = 1
+        ORDER BY id LIMIT 1)
+    LEFT JOIN source_root r ON r.id = f.root_id";
+
 /// A display path from a source root and a relative path, when the content has a present path.
-fn display_path(root: Option<String>, rel: Option<String>) -> Option<String> {
+pub(crate) fn display_path(root: Option<String>, rel: Option<String>) -> Option<String> {
     let (root, rel) = (root?, rel?);
     Some(
         mk_corpus::fs::resolve(root.as_ref(), &rel)
@@ -511,11 +564,18 @@ pub(crate) fn mentions_of(
     key: &str,
     limit: usize,
 ) -> Result<Vec<OccurrenceRow>, StoreError> {
-    let sql = format!(
-        "{OCCURRENCE_SELECT}
-         WHERE m.identifier_key = ?1
-         ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
-    );
+    let sql = match SubjectKind::of_key(key) {
+        SubjectKind::Identifier => format!(
+            "{OCCURRENCE_SELECT}
+             WHERE m.identifier_key = ?1
+             ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
+        ),
+        SubjectKind::Entity => format!(
+            "{ENTITY_OCCURRENCE_SELECT}
+             WHERE m.name_key = ?1
+             ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
+        ),
+    };
     let mut stmt = conn.prepare_cached(&sql)?;
     let mut rows = stmt.query([key])?;
     let mut out = Vec::new();
@@ -538,13 +598,23 @@ pub(crate) fn mentions_in_document(
     key: &str,
     document: i64,
 ) -> Result<Vec<i64>, StoreError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT m.id, c.state FROM identifier_mention m
-         JOIN segment s ON s.id = m.segment_id
-         JOIN content c ON c.id = m.content_id
-         WHERE m.identifier_key = ?1 AND m.document_id = ?2
-         ORDER BY s.ordinal, m.span_start, m.id",
-    )?;
+    let sql = match SubjectKind::of_key(key) {
+        SubjectKind::Identifier => {
+            "SELECT m.id, c.state FROM identifier_mention m
+             JOIN segment s ON s.id = m.segment_id
+             JOIN content c ON c.id = m.content_id
+             WHERE m.identifier_key = ?1 AND m.document_id = ?2
+             ORDER BY s.ordinal, m.span_start, m.id"
+        }
+        SubjectKind::Entity => {
+            "SELECT -m.id, c.state FROM entity_mention m
+             JOIN segment s ON s.id = m.segment_id
+             JOIN content c ON c.id = m.content_id
+             WHERE m.name_key = ?1 AND m.document_id = ?2
+             ORDER BY s.ordinal, m.span_start, m.id"
+        }
+    };
+    let mut stmt = conn.prepare_cached(sql)?;
     let mut rows = stmt.query(params![key, document])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -559,11 +629,15 @@ pub(crate) fn mentions_in_document(
     Ok(out)
 }
 
-/// One mention by id, counted or not.
+/// One mention by id, counted or not: an entity mention for a negative id.
 pub(crate) fn mention(conn: &Connection, id: i64) -> Result<Option<OccurrenceRow>, StoreError> {
-    let sql = format!("{OCCURRENCE_SELECT} WHERE m.id = ?1");
+    let sql = if id < 0 {
+        format!("{ENTITY_OCCURRENCE_SELECT} WHERE m.id = ?1")
+    } else {
+        format!("{OCCURRENCE_SELECT} WHERE m.id = ?1")
+    };
     let mut stmt = conn.prepare_cached(&sql)?;
-    let mut rows = stmt.query([id])?;
+    let mut rows = stmt.query([id.checked_abs().unwrap_or(0)])?;
     rows.next()?
         .map(|r| occurrence_from(r).map(|(row, _)| row))
         .transpose()
@@ -909,4 +983,92 @@ pub(crate) fn identifier_state(
         crate::documents::meta(conn, crate::ops::IDENTIFIER_VERSION)?.and_then(|v| v.parse().ok());
     let after = crate::documents::meta(conn, crate::ops::RERUN_AFTER)?.and_then(|v| v.parse().ok());
     Ok((version, after))
+}
+
+/// Each custom pattern with its stored match count (US-04.7 AC4), in the order they were added.
+/// Counts a key range of the `identifier_mention_key` index: `custom:<name>:` up to
+/// `custom:<name>;` (`;` follows `:`).
+pub(crate) fn pattern_counts(conn: &Connection) -> Result<Vec<(String, String, u64)>, StoreError> {
+    let patterns = crate::documents::custom_patterns(conn)?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT COUNT(*) FROM identifier_mention WHERE identifier_key >= ?1 AND identifier_key < ?2",
+    )?;
+    let mut out = Vec::with_capacity(patterns.len());
+    for p in patterns {
+        let n: i64 = stmt.query_row(
+            params![format!("custom:{}:", p.name), format!("custom:{};", p.name)],
+            |r| r.get(0),
+        )?;
+        out.push((p.name, p.expression, n as u64));
+    }
+    Ok(out)
+}
+
+/// The entity rows of `keys` that exist (connection labels: display name, type, table mark).
+pub(crate) fn entities(
+    conn: &Connection,
+    keys: &[String],
+) -> Result<BTreeMap<String, EntityRow>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT entity_type, display_name, mention_count, from_table FROM entity
+         WHERE name_key = ?1",
+    )?;
+    let mut out = BTreeMap::new();
+    for key in keys {
+        let row = stmt
+            .query_row([key], |r| {
+                Ok(EntityRow {
+                    entity_type: r.get(0)?,
+                    display_name: r.get(1)?,
+                    mention_count: r.get::<_, i64>(2)? as u64,
+                    from_table: r.get(3)?,
+                })
+            })
+            .optional()?;
+        if let Some(row) = row {
+            out.insert(key.clone(), row);
+        }
+    }
+    Ok(out)
+}
+
+/// A record link (INV-CM-05): an entity and an identifier in one CSV row or JSON record.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct RecordLinkRow {
+    pub document_id: i64,
+    pub record: String,
+    pub name_key: String,
+    pub identifier_key: String,
+}
+
+/// A content's record links, in document, record, entity and identifier order.
+pub(crate) fn record_links(
+    conn: &Connection,
+    content: i64,
+) -> Result<Vec<RecordLinkRow>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT document_id, record, name_key, identifier_key FROM record_link
+         WHERE content_id = ?1 ORDER BY document_id, record, name_key, identifier_key",
+    )?;
+    let rows = stmt.query_map([content], |r| {
+        Ok(RecordLinkRow {
+            document_id: r.get(0)?,
+            record: r.get(1)?,
+            name_key: r.get(2)?,
+            identifier_key: r.get(3)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Where a re-run step stands: what the stored mentions were made with (the rules version or
+/// the pattern set's hash; `None` if never stamped) and, while a re-run is unfinished, the last
+/// content it committed.
+pub(crate) fn rerun_state(
+    conn: &Connection,
+    step: crate::ops::RerunStep,
+) -> Result<(Option<String>, Option<i64>), StoreError> {
+    let stamp = crate::documents::meta(conn, step.stamp_key())?;
+    let after = crate::documents::meta(conn, step.cursor_key())?.and_then(|v| v.parse().ok());
+    Ok((stamp, after))
 }

@@ -341,7 +341,11 @@ impl IpcError {
 
 impl From<mk_core::ProjectError> for IpcError {
     fn from(e: mk_core::ProjectError) -> Self {
-        IpcError::new("project", e.to_string())
+        let code = match &e {
+            mk_core::ProjectError::Pattern(_) => "pattern",
+            _ => "project",
+        };
+        IpcError::new(code, e.to_string())
     }
 }
 
@@ -455,7 +459,7 @@ pub struct Progress {
     /// The queue is paused (US-03.2); it stays paused when the project is reopened.
     pub paused: bool,
     /// `"identifiers"` while identifiers are found again from stored text (a region change,
-    /// US-04.2 AC2), `"A"` while Stage A work is open; `null` when the queue is empty.
+    /// US-04.2 AC2), `"custom patterns"` while custom patterns run on it (US-04.7 AC3), `"A"` while Stage A work is open; `null` when the queue is empty.
     pub stage: Option<String>,
     /// Files finished in this run, and those plus the files still to do.
     pub run_done: u32,
@@ -562,6 +566,8 @@ pub struct DocumentItem {
     pub other_paths: u32,
     /// Card-like numbers in the file: "Contains card-like number" (US-04.6 AC1).
     pub card_like_count: u32,
+    /// CSV and JSON files: `suggested`, `confirmed` or `needs_review` (US-05.1, US-05.2 AC3).
+    pub mapping_state: Option<String>,
 }
 
 impl From<mk_core::DocumentRow> for DocumentItem {
@@ -588,6 +594,7 @@ impl From<mk_core::DocumentRow> for DocumentItem {
             failure_detail: r.failure_detail,
             other_paths: count(r.other_paths),
             card_like_count: count(r.card_like_count),
+            mapping_state: r.mapping_state.map(|m| m.as_str().to_string()),
         }
     }
 }
@@ -666,8 +673,165 @@ impl From<Settings> for mk_core::ProjectSettings {
             phone_region: s.phone_region,
             ocr_languages: s.ocr_languages,
             domain_stop_list: s.domain_stop_list,
+            // Patterns are saved through their own commands; the core keeps the stored ones.
+            custom_patterns: Vec::new(),
         }
     }
+}
+
+/// A saved custom pattern (US-04.7 AC4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CustomPatternItem {
+    pub name: String,
+    pub expression: String,
+    #[ts(type = "number")]
+    pub match_count: u64,
+    /// "This pattern matches a lot. It may be too broad."
+    pub too_broad: bool,
+}
+
+impl From<mk_core::CustomPatternInfo> for CustomPatternItem {
+    fn from(p: mk_core::CustomPatternInfo) -> Self {
+        Self {
+            name: p.name,
+            expression: p.expression,
+            match_count: p.match_count,
+            too_broad: p.too_broad,
+        }
+    }
+}
+
+/// The live test of a pattern on a sample (US-04.7 AC1/AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum PatternTest {
+    /// The sample with the matches marked.
+    Matches { count: u32, sample: Vec<TextPiece> },
+    /// The plain reason the pattern cannot be used.
+    Error { message: String },
+}
+
+impl From<Result<mk_core::PatternTest, mk_core::ProjectError>> for PatternTest {
+    fn from(r: Result<mk_core::PatternTest, mk_core::ProjectError>) -> Self {
+        match r {
+            Ok(t) => Self::Matches {
+                count: u32::try_from(t.matches).unwrap_or(u32::MAX),
+                sample: t
+                    .runs
+                    .into_iter()
+                    .map(|r| TextPiece {
+                        text: r.text,
+                        hit: r.hit,
+                    })
+                    .collect(),
+            },
+            Err(e) => Self::Error {
+                message: e.to_string(),
+            },
+        }
+    }
+}
+
+/// One column on the mapping screen (US-05.1 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ColumnView {
+    /// What `confirm_mapping` takes: the CSV header, or the JSON path with `*` for indices.
+    pub key: String,
+    pub header: String,
+    /// Up to 5 sample values.
+    pub samples: Vec<String>,
+    /// The suggested type: `email`, `phone`, `url_domain`, `iban`, `crypto`, `person`, `org`,
+    /// `date` or `ignore`.
+    pub suggested: String,
+    /// The confirmed type, if any.
+    pub assigned: Option<String>,
+}
+
+/// "Use the same mapping as <file>" (US-05.2 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReuseOption {
+    #[ts(type = "number")]
+    pub ref_id: i64,
+    pub path: String,
+}
+
+/// The mapping screen of one CSV or JSON file (US-05.1, US-05.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MappingView {
+    #[ts(type = "number")]
+    pub ref_id: i64,
+    pub path: String,
+    pub file_type: String,
+    /// `suggested`, `confirmed` or `needs_review`.
+    pub state: String,
+    /// All columns of the file; only the first ones are shown and suggested.
+    pub column_count: u32,
+    pub columns: Vec<ColumnView>,
+    pub reuse: Vec<ReuseOption>,
+}
+
+impl From<mk_core::MappingView> for MappingView {
+    fn from(v: mk_core::MappingView) -> Self {
+        Self {
+            ref_id: v.ref_id,
+            path: v.path,
+            file_type: v.file_type,
+            state: v.state.as_str().to_string(),
+            column_count: count(v.column_count),
+            columns: v
+                .columns
+                .into_iter()
+                .map(|c| ColumnView {
+                    key: c.key,
+                    header: c.header,
+                    samples: c.samples,
+                    suggested: c.suggested.as_str().to_string(),
+                    assigned: c.assigned.map(|t| t.as_str().to_string()),
+                })
+                .collect(),
+            reuse: v
+                .reuse
+                .into_iter()
+                .map(|r| ReuseOption {
+                    ref_id: r.ref_id,
+                    path: r.path,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// One column's confirmed type (US-05.2 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ColumnAssignment {
+    pub key: String,
+    pub column_type: String,
+}
+
+/// The assignments `confirm_mapping` takes; an unknown type is refused.
+pub fn assignments(list: Vec<ColumnAssignment>) -> Result<mk_core::Assignments, IpcError> {
+    let mut map = std::collections::BTreeMap::new();
+    for a in list {
+        let t = mk_core::ColumnType::from_name(&a.column_type).ok_or_else(|| {
+            IpcError::new(
+                "project",
+                format!("Unknown column type \"{}\"", a.column_type),
+            )
+        })?;
+        map.insert(a.key, t);
+    }
+    Ok(mk_core::Assignments(map))
 }
 
 /// The settings and what the settings screen offers.
@@ -774,9 +938,15 @@ pub struct ConnectionItem {
     /// The identifier key, `type:value`; what `occurrences` takes.
     pub key: String,
     /// The identifier type: `email`, `phone`, `phone_unnormalized` (no region, exact digits),
-    /// `url`, `domain`, `iban`, `btc`, `evm`, `sol` or `tron`.
+    /// `url`, `domain`, `iban`, `btc`, `evm`, `sol`, `tron`, `custom` (a custom pattern,
+    /// US-04.7), `person` or `org` (a name from a mapped table, US-05.3).
     pub kind: String,
+    /// The value shown: an entity's display name (INV-ER-07).
     pub value: String,
+    /// The pattern name of a `custom` connection.
+    pub label: Option<String>,
+    /// "Name (from table)" (US-05.3 AC2).
+    pub from_table: bool,
     pub source_count: u32,
     pub file_type_count: u32,
     pub mention_count: u32,
@@ -784,15 +954,27 @@ pub struct ConnectionItem {
     pub low_confidence: bool,
 }
 
-impl From<mk_core::ConnectionRow> for ConnectionItem {
-    fn from(r: mk_core::ConnectionRow) -> Self {
-        let (kind, value) = r
+impl ConnectionItem {
+    fn new(r: mk_core::ConnectionRow, entity: Option<&mk_core::EntityRow>) -> Self {
+        let (kind, mut value) = r
             .subject_key
             .split_once(':')
             .map_or((String::new(), r.subject_key.clone()), |(k, v)| {
                 (k.to_string(), v.to_string())
             });
+        let mut label = None;
+        if kind == "custom"
+            && let Some((name, v)) = value.split_once(':')
+        {
+            label = Some(name.to_string());
+            value = v.to_string();
+        }
+        if let Some(e) = entity {
+            value.clone_from(&e.display_name);
+        }
         Self {
+            label,
+            from_table: entity.is_some_and(|e| e.from_table),
             key: r.subject_key,
             kind,
             value,
@@ -816,7 +998,14 @@ pub struct ConnectionsPage {
 impl From<mk_core::ConnectionsPage> for ConnectionsPage {
     fn from(p: mk_core::ConnectionsPage) -> Self {
         Self {
-            rows: p.rows.into_iter().map(Into::into).collect(),
+            rows: p
+                .rows
+                .into_iter()
+                .map(|r| {
+                    let entity = p.entities.get(&r.subject_key);
+                    ConnectionItem::new(r, entity)
+                })
+                .collect(),
             next: p.next.map(Into::into),
         }
     }

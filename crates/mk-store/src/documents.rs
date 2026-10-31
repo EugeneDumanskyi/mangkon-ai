@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use mk_corpus::IngestionState;
 use mk_jobs::{ItemState, JobState};
-use mk_workspace::{DEFAULT_OCR_LANGUAGE, ProjectSettings};
+use mk_mapping::MappingState;
+use mk_workspace::{DEFAULT_OCR_LANGUAGE, PatternSetting, ProjectSettings};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::StoreError;
@@ -53,6 +54,8 @@ pub struct DocumentRow {
     pub other_paths: u64,
     /// Card-like numbers in the content (US-04.6 AC1): "Contains card-like number".
     pub card_like_count: u64,
+    /// A CSV or JSON file read as a table: its mapping state (US-05.1, domain §7.3).
+    pub mapping_state: Option<MappingState>,
 }
 
 impl DocumentRow {
@@ -150,6 +153,7 @@ pub(crate) fn documents_page(
                 failure_detail: r.get(11)?,
                 other_paths: r.get::<_, i64>(12)?.max(0) as u64,
                 card_like_count: r.get::<_, i64>(13)? as u64,
+                mapping_state: None,
             })
         },
     )?;
@@ -158,6 +162,7 @@ pub(crate) fn documents_page(
         if row.status == IngestionState::Done.as_str() || row.status == STATUS_MISSING {
             row.units = units(conn, row.content_id, &row.file_type)?;
         }
+        row.mapping_state = crate::mapping::mapping_state(conn, row.content_id)?;
     }
     Ok(out)
 }
@@ -210,8 +215,16 @@ pub(crate) fn removal_impact(conn: &Connection, refs: &[i64]) -> Result<u64, Sto
          JOIN connection k ON k.subject_key = m.identifier_key
          WHERE m.content_id = ?1",
     )?;
+    let mut entities = conn.prepare_cached(
+        "SELECT DISTINCT m.name_key FROM entity_mention m
+         JOIN connection k ON k.subject_key = m.name_key
+         WHERE m.content_id = ?1",
+    )?;
     for c in contents {
         for k in stmt.query_map([c], |r| r.get::<_, String>(0))? {
+            keys.insert(k?);
+        }
+        for k in entities.query_map([c], |r| r.get::<_, String>(0))? {
             keys.insert(k?);
         }
     }
@@ -295,7 +308,6 @@ pub(crate) fn meta(conn: &Connection, key: &str) -> Result<Option<String>, Store
 
 /// The project's settings; the defaults for what was never set (INV-WS-05).
 pub(crate) fn settings(conn: &Connection) -> Result<ProjectSettings, StoreError> {
-    let d = ProjectSettings::default();
     let ocr = meta(conn, "ocr_languages")?.unwrap_or_else(|| DEFAULT_OCR_LANGUAGE.to_string());
     Ok(ProjectSettings {
         phone_region: meta(conn, "phone_region")?.filter(|r| !r.is_empty()),
@@ -304,15 +316,34 @@ pub(crate) fn settings(conn: &Connection) -> Result<ProjectSettings, StoreError>
             .filter(|c| !c.is_empty())
             .map(str::to_string)
             .collect(),
-        domain_stop_list: match meta(conn, "domain_stop_list")? {
-            Some(list) => list
-                .split('\n')
-                .filter(|d| !d.is_empty())
-                .map(str::to_string)
-                .collect(),
-            None => d.domain_stop_list,
-        },
+        domain_stop_list: domain_stop_list(conn)?,
+        custom_patterns: custom_patterns(conn)?,
     })
+}
+
+/// The project's domain stop list (US-04.3 AC3): the stored one, or the default list.
+pub(crate) fn domain_stop_list(conn: &Connection) -> Result<Vec<String>, StoreError> {
+    Ok(match meta(conn, "domain_stop_list")? {
+        Some(list) => list
+            .split('\n')
+            .filter(|d| !d.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => ProjectSettings::default().domain_stop_list,
+    })
+}
+
+/// The project's custom patterns in the order they were added (US-04.7).
+pub(crate) fn custom_patterns(conn: &Connection) -> Result<Vec<PatternSetting>, StoreError> {
+    let mut stmt =
+        conn.prepare_cached("SELECT name, expression FROM custom_pattern ORDER BY id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok(PatternSetting::new(
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+        ))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Paths removed from a root (US-01.5).

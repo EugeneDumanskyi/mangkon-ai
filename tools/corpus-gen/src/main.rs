@@ -11,6 +11,7 @@
 //! ```
 
 mod afm;
+mod columns;
 mod corpus;
 mod fonts;
 mod formats;
@@ -32,7 +33,7 @@ use std::process::ExitCode;
 use mk_bench::Generator;
 
 /// Bump when any output byte changes for the same seed.
-pub const GENERATOR_VERSION: u32 = 5;
+pub const GENERATOR_VERSION: u32 = 6;
 pub const SEED: u64 = 20261022;
 
 /// SHA-256 of every generated file, committed so that drift shows up without committing data.
@@ -177,7 +178,8 @@ fn generate(out: &Path) -> Result<usize, Vec<String>> {
     let mut c = truth::Collector::new(&story, &out.join("td1"));
     corpus::build(&mut c, &noto, SEED);
     public::build(&mut c, &out.join("td1"))?;
-    let gt = c.finish(generator(), "page-text.jsonl")?;
+    let mut gt = c.finish(generator(), "page-text.jsonl")?;
+    columns::label(&mut gt)?;
     gt.validate(Some(&out.join("td1"))).map_err(|e| {
         e.into_iter()
             .map(|e| format!("validate: {e}"))

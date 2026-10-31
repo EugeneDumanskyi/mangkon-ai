@@ -12,13 +12,15 @@ workspace = true
 [dependencies]
 mk-corpus.workspace = true
 mk-graph.workspace = true
+mk-identifiers.workspace = true
 mk-jobs.workspace = true
 mk-kernel.workspace = true
+mk-mapping.workspace = true
+mk-search.workspace = true
 mk-workspace.workspace = true
 rusqlite = { version = "0.41.0", features = ["bundled"] }
 
 [dev-dependencies]
-mk-search.workspace = true
 mk-workspace.workspace = true
 proptest = "1.12.0"
 tempfile = "3.27.0"

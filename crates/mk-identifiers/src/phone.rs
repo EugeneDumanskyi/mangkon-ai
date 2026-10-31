@@ -280,6 +280,7 @@ mod tests {
     fn region(code: &str) -> Rules {
         Rules {
             phone_region: Region::parse(code),
+            ..Rules::default()
         }
     }
 

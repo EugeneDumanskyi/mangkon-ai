@@ -10,9 +10,22 @@ export type ConnectionItem = {
 key: string, 
 /**
  * The identifier type: `email`, `phone`, `phone_unnormalized` (no region, exact digits),
- * `url`, `domain`, `iban`, `btc`, `evm`, `sol` or `tron`.
+ * `url`, `domain`, `iban`, `btc`, `evm`, `sol`, `tron`, `custom` (a custom pattern,
+ * US-04.7), `person` or `org` (a name from a mapped table, US-05.3).
  */
-kind: string, value: string, sourceCount: number, fileTypeCount: number, mentionCount: number, 
+kind: string, 
+/**
+ * The value shown: an entity's display name (INV-ER-07).
+ */
+value: string, 
+/**
+ * The pattern name of a `custom` connection.
+ */
+label: string | null, 
+/**
+ * "Name (from table)" (US-05.3 AC2).
+ */
+fromTable: boolean, sourceCount: number, fileTypeCount: number, mentionCount: number, 
 /**
  * Every mention is below 0.5 confidence (US-07.1 AC4).
  */

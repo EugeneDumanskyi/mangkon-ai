@@ -248,7 +248,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 
 | Context | Crate | Runs in |
 |---|---|---|
-| Shared kernel (Locator, Span, keys, Mention) | `mk-kernel` | Core + workers |
+| Shared kernel (Locator, Span, keys, Mention) | `mk-kernel` (since M4c also `NameKey` and `EntityType`, the name rules of US-11.1; worker protocol v5 carries the custom patterns) | Core + workers |
 | BC-01 Workspace | `mk-workspace` | Core |
 | BC-02 Corpus (model, re-scan, presence) | `mk-corpus` | Core |
 | BC-02 Corpus (parsers, OCR) | `mk-parsers` | Workers |
@@ -256,7 +256,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-02 Corpus (OCR engine build) | `mk-tesseract-sys`: Tesseract + Leptonica from pinned sources, the only crate with `unsafe` (FFI, ADR-0002 rule 6, ADR-0014) | Workers (through `mk-parsers`) |
 | BC-03 Processing | `mk-jobs` | Core |
 | BC-04 Identifier extraction | `mk-identifiers` (pure functions; since M4b the finders use `phonenumber` and `psl`, whose libphonenumber metadata and Public Suffix List are compiled in, plus `bs58`, `bech32` and `sha3` for the crypto checksums) | Workers (Stage A), core (identifier re-runs after a region change, custom-pattern re-runs), CLI |
-| BC-05 Structured mapping | `mk-mapping` | Core |
+| BC-05 Structured mapping | `mk-mapping` (pure, since M4c: column keys and signature, suggestions, record of a cell, mapping state; the table step that applies it runs in `mk-store` inside the Stage A commit, the identifier re-runs and a confirm) | Core |
 | BC-06 AI extraction | `mk-ai` | Core |
 | BC-07 Entity resolution, BC-08 Linking, BC-09 Curation | `mk-graph` (one crate: they rebuild together, ADR-0005) | Core |
 | BC-10 Search | `mk-search` (pure: query syntax to a safe FTS5 query, snippets, card-like masking; the FTS5 table and its reads are in `mk-store`, since M4a) | Core |

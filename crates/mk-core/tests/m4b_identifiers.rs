@@ -89,7 +89,8 @@ fn us_04_2_ac2_region_change_reruns() {
         what,
         Reprocess {
             ocr: false,
-            identifiers: true
+            identifiers: true,
+            custom: false,
         }
     );
     assert!(!p.identifiers_pending().unwrap(), "nothing until accepted");
@@ -228,6 +229,7 @@ fn paused_queue_holds_the_rerun() {
     p.reprocess(Reprocess {
         ocr: false,
         identifiers: true,
+        custom: false,
     })
     .unwrap();
     p.pause().unwrap();
@@ -306,6 +308,7 @@ fn us_04_6_card_like_is_a_masked_flag() {
     p.reprocess(Reprocess {
         ocr: false,
         identifiers: true,
+        custom: false,
     })
     .unwrap();
     assert_eq!(p.ingest().unwrap().identifiers.contents, 3);

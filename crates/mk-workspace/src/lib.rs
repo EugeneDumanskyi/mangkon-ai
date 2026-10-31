@@ -13,7 +13,8 @@ pub use registry::{
     MAX_NAME, NameError, ProjectName, RegistryEntry, name_key, name_taken, newest_first,
 };
 pub use settings::{
-    DEFAULT_OCR_LANGUAGE, DEFAULT_STOP_LIST, ProjectSettings, Reprocess, SettingsError,
+    DEFAULT_OCR_LANGUAGE, DEFAULT_STOP_LIST, PatternSetting, ProjectSettings, Reprocess,
+    SettingsError,
 };
 
 /// Whether a source root is a folder (walked recursively) or one file (domain §5.1).

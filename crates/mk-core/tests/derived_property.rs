@@ -5,12 +5,15 @@
 //!
 //! The sequences go through the real pipeline (files on disk, re-scan, Stage A, one commit per
 //! item), so they cover new, changed (replaced), missing, found-again and duplicate content,
-//! ignore / un-ignore, superseded and orphaned decisions.
+//! ignore / un-ignore, superseded and orphaned decisions. M4c adds custom patterns and their
+//! re-run, mapping confirms of the CSV files ("Name (from table)" entities, record links) and
+//! ignores on entities.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use mk_core::Project;
+use mk_core::{Assignments, ColumnType, DocumentFilter, Project};
+use mk_kernel::{EntityType, NameKey};
 use proptest::prelude::*;
 
 /// A small key alphabet so keys collide often. Keys 5 and 6 are never written: decisions on
@@ -43,6 +46,23 @@ enum Op {
     StageA,
     Ignore(usize),
     Unignore(usize),
+    /// Adds the custom pattern `kref` (`k<n>@`) if missing, else removes it (US-04.7).
+    TogglePattern,
+    /// The pending identifier re-runs (built-in and custom-pattern steps).
+    Rerun,
+    /// Confirms the `name` column of `f<n>.csv` as this type (`None`: Ignore), US-05.2.
+    Confirm(u8, Option<EntityType>),
+    /// Ignores or un-ignores the entity of name `n` (US-07.4 on entities).
+    IgnoreEntity(usize, EntityType, bool),
+}
+
+/// The name in a CSV row of key `k`: names collide across keys and files.
+fn name(k: usize) -> String {
+    format!("Name{} Ltd", k % 3)
+}
+
+fn entity_type() -> impl Strategy<Value = EntityType> {
+    prop_oneof![Just(EntityType::Person), Just(EntityType::Org)]
 }
 
 fn op() -> impl Strategy<Value = Op> {
@@ -56,6 +76,11 @@ fn op() -> impl Strategy<Value = Op> {
         3 => Just(Op::StageA),
         1 => (0..KEYS).prop_map(Op::Ignore),
         1 => (0..KEYS).prop_map(Op::Unignore),
+        1 => Just(Op::TogglePattern),
+        1 => Just(Op::Rerun),
+        2 => (0..FILES, proptest::option::of(entity_type())).prop_map(|(f, t)| Op::Confirm(f, t)),
+        1 => (0..4usize, entity_type(), any::<bool>())
+            .prop_map(|(n, t, on)| Op::IgnoreEntity(n, t, on)),
     ]
 }
 
@@ -96,7 +121,10 @@ impl World {
                     std::fs::remove_file(old).unwrap();
                 }
                 let (ext, body) = if *csv {
-                    let rows: String = keys.iter().map(|k| format!("x,{}\n", email(*k))).collect();
+                    let rows: String = keys
+                        .iter()
+                        .map(|k| format!("{},{}\n", name(*k), email(*k)))
+                        .collect();
                     ("csv", format!("name,email\nsalt,{salt}\n{rows}"))
                 } else {
                     let lines: String = keys
@@ -153,6 +181,44 @@ impl World {
                     .set_ignored(&format!("email:{}", email(*k)), false)
                     .unwrap();
             }
+            Op::TogglePattern => {
+                if project.custom_patterns().unwrap().is_empty() {
+                    project.add_pattern("kref", r"k\d@").unwrap();
+                } else {
+                    project.remove_pattern("kref").unwrap();
+                }
+            }
+            Op::Rerun => {
+                project.rerun_identifiers().unwrap();
+            }
+            Op::Confirm(file, t) => {
+                let rows = project
+                    .documents_page(&DocumentFilter::default(), None, 100)
+                    .unwrap()
+                    .rows;
+                let path = format!("f{file}.csv");
+                if let Some(row) = rows.iter().find(|r| r.rel_path == path)
+                    && project.mapping_view(row.ref_id).unwrap().is_some()
+                {
+                    let ty = match t {
+                        Some(EntityType::Person) => ColumnType::PersonName,
+                        Some(EntityType::Org) => ColumnType::OrgName,
+                        None => ColumnType::Ignore,
+                    };
+                    let assignments = Assignments(
+                        [
+                            ("name".to_string(), ty),
+                            ("email".to_string(), ColumnType::Email),
+                        ]
+                        .into(),
+                    );
+                    project.confirm_mapping(row.ref_id, assignments).unwrap();
+                }
+            }
+            Op::IgnoreEntity(n, t, on) => {
+                let key = NameKey::new(*t, &format!("Name{n} Ltd")).unwrap();
+                project.set_ignored(&key.to_string(), *on).unwrap();
+            }
         }
     }
 }
@@ -181,6 +247,7 @@ proptest! {
         // Finish the work, then compare with a rebuild from scratch.
         project.rescan(false).unwrap();
         project.run_stage_a().unwrap();
+        project.rerun_identifiers().unwrap();
         let incremental = project.store().derived_state().unwrap();
         project.store().rebuild_all().unwrap();
         let rebuilt = project.store().derived_state().unwrap();

@@ -27,6 +27,7 @@ const doc = (over: Partial<DocumentItem>): DocumentItem => ({
   failureDetail: null,
   otherPaths: 0,
   cardLikeCount: 0,
+  mappingState: null,
   ...over,
 });
 
@@ -38,6 +39,8 @@ const connection = (over: Partial<ConnectionItem>): ConnectionItem => ({
   fileTypeCount: 1,
   mentionCount: 3,
   lowConfidence: false,
+  label: null,
+  fromTable: false,
   ...over,
 });
 

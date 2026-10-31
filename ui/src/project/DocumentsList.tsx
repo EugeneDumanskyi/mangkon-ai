@@ -6,7 +6,8 @@ import type { DocumentCursor } from "../ipc/bindings/DocumentCursor";
 import type { DocumentFilter } from "../ipc/bindings/DocumentFilter";
 import type { DocumentItem } from "../ipc/bindings/DocumentItem";
 import { PAGE_SIZE } from "../lib/keyset";
-import { fileName, plural } from "../lib/labels";
+import { fileName, mappingStateLabel, plural } from "../lib/labels";
+import { MappingScreen } from "./MappingScreen";
 import { STATUS_LABELS, canRetry, sizeLabel, statusLabel, unitsLabel } from "../lib/progress";
 import { useKeysetList } from "../lib/useKeysetList";
 
@@ -19,11 +20,14 @@ export function DocumentRowView({
   checked,
   onCheck,
   onDetails,
+  onMap,
 }: {
   row: DocumentItem;
   checked: boolean;
   onCheck: (checked: boolean) => void;
   onDetails: () => void;
+  /** Opens "Map columns" of a CSV or JSON file (US-05.1). */
+  onMap?: () => void;
 }) {
   const name = fileName(row.path);
   return (
@@ -52,6 +56,11 @@ export function DocumentRowView({
               Contains card-like number
             </span>
           )}
+          {row.mappingState !== null && (
+            <span className="shrink-0 rounded border border-current px-1 text-xs">
+              Columns: {mappingStateLabel(row.mappingState)}
+            </span>
+          )}
         </div>
         <div className="truncate font-mono text-xs text-muted" title={row.path}>
           {row.path}
@@ -73,6 +82,11 @@ export function DocumentRowView({
           </span>
         )}
       </span>
+      {row.mappingState !== null && onMap && (
+        <button type="button" className={`${button} shrink-0`} onClick={onMap}>
+          Map columns
+        </button>
+      )}
       {(canRetry(row.status) || row.warnings.length > 0) && (
         <button type="button" className={`${button} shrink-0`} onClick={onDetails}>
           Show details
@@ -139,6 +153,7 @@ export function DocumentsList() {
   const [lastVisible, setLastVisible] = useState(0);
   const [selected, setSelected] = useState<Map<number, DocumentItem>>(new Map());
   const [details, setDetails] = useState<DocumentItem | null>(null);
+  const [mapping, setMapping] = useState<number | null>(null);
   const [impact, setImpact] = useState<number | null>(null);
   const types = useQuery({ queryKey: ["documents", "types"], queryFn: commands.documentTypes });
   const list = useKeysetList<DocumentItem, DocumentCursor>({
@@ -307,7 +322,12 @@ export function DocumentsList() {
                       setImpact(null);
                     }}
                     onDetails={() => {
+                      setMapping(null);
                       setDetails(row);
+                    }}
+                    onMap={() => {
+                      setDetails(null);
+                      setMapping(row.refId);
                     }}
                   />
                 ) : (
@@ -318,6 +338,15 @@ export function DocumentsList() {
           })}
         </div>
       </div>
+      {mapping !== null && (
+        <MappingScreen
+          key={mapping}
+          refId={mapping}
+          onClose={() => {
+            setMapping(null);
+          }}
+        />
+      )}
       {details !== null && (
         <DocumentDetails
           row={details}

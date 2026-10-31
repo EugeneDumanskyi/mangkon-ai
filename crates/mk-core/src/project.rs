@@ -10,11 +10,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mk_corpus::fs::{FileTypes, Skipped};
 use mk_corpus::{RescanPlan, Resolved, RootId};
-use mk_graph::DecisionKind;
+use mk_graph::{DecisionKind, SubjectKind};
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_parsers::Format;
-use mk_store::{OpenReport, Progress, Recovery, RescanChange, RescanOutcome, Store, StoreError};
+use mk_store::{
+    OpenReport, Progress, Recovery, RerunStep, RescanChange, RescanOutcome, Store, StoreError,
+};
 use mk_worker::Settings;
 use mk_workspace::{ProjectLayout, RootKind};
 
@@ -32,6 +34,8 @@ pub enum ProjectError {
     Worker(WorkerError),
     /// A setting was refused; the plain reason.
     Invalid(String),
+    /// A custom pattern was refused (US-04.7 AC2, INV-ID-07); the plain reason.
+    Pattern(String),
 }
 
 impl fmt::Display for ProjectError {
@@ -40,7 +44,7 @@ impl fmt::Display for ProjectError {
             ProjectError::Store(e) => e.fmt(f),
             ProjectError::Io(p, e) => write!(f, "{}: {e}", p.display()),
             ProjectError::Worker(e) => e.fmt(f),
-            ProjectError::Invalid(m) => f.write_str(m),
+            ProjectError::Invalid(m) | ProjectError::Pattern(m) => f.write_str(m),
         }
     }
 }
@@ -108,11 +112,14 @@ pub struct StageASummary {
     pub interrupted: usize,
 }
 
-/// What [`Project::ingest`] did: the re-scan, the identifier re-run, then the Stage A run.
+/// What [`Project::ingest`] did: the re-scan, the identifier re-runs, then the Stage A run.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct IngestSummary {
     pub rescan: RescanSummary,
+    /// The built-in identifier re-run (M4b).
     pub identifiers: RerunSummary,
+    /// The custom-pattern re-run (US-04.7 AC3).
+    pub custom: RerunSummary,
     pub stage_a: StageASummary,
     /// The run stopped early for this request (US-03.2, US-03.3, US-03.4).
     pub interrupted: Option<Stop>,
@@ -184,7 +191,7 @@ pub struct Project {
     /// Item → display path, for "current file" (US-03.1 AC1).
     in_flight: Mutex<BTreeMap<i64, String>>,
     /// Contents done and total of an identifier re-run going on (M4b).
-    rerun: Mutex<Option<(u64, u64)>>,
+    rerun: Mutex<Option<(RerunStep, u64, u64)>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -295,8 +302,8 @@ impl Project {
         &self.control
     }
 
-    /// Contents done and total of an identifier re-run going on.
-    pub(crate) fn rerun_progress(&self) -> &Mutex<Option<(u64, u64)>> {
+    /// The step, contents done and total of an identifier re-run going on.
+    pub(crate) fn rerun_progress(&self) -> &Mutex<Option<(RerunStep, u64, u64)>> {
         &self.rerun
     }
 
@@ -343,15 +350,23 @@ impl Project {
         Ok(mk_parsers::ocr::installed_languages(dir))
     }
 
-    /// What the workers of this run need: the phone region (US-04.2) and, with `ocr`, the
-    /// project's OCR languages and the language folder, with English written there first.
-    /// Without a folder, or if English cannot be written, OCR is off and files that need it
-    /// fail with a plain reason.
+    /// What the workers of this run need: the phone region (US-04.2), the custom patterns
+    /// (US-04.7) and, with `ocr`, the project's OCR languages and the language folder, with
+    /// English written there first. Without a folder, or if English cannot be written, OCR is
+    /// off and files that need it fail with a plain reason.
     fn worker_settings(&self, ocr: bool) -> Result<Settings, ProjectError> {
         let phone_region = self.identifier_rules()?.phone_region.map(|r| r.code());
+        let custom_patterns = self
+            .store
+            .settings()?
+            .custom_patterns
+            .into_iter()
+            .map(|p| (p.name, p.expression))
+            .collect();
         if !ocr {
             return Ok(Settings {
                 phone_region,
+                custom_patterns,
                 ..Settings::default()
             });
         }
@@ -363,6 +378,7 @@ impl Project {
             ocr_languages: self.store.ocr_languages()?,
             tessdata,
             phone_region,
+            custom_patterns,
             ..Settings::default()
         })
     }
@@ -470,12 +486,12 @@ impl Project {
         Ok(summary)
     }
 
-    /// Re-scan, then a pending identifier re-run ([`Project::rerun_identifiers`]), then Stage
-    /// A until nothing is pending: what both apps run after a folder is added (US-01.3), on
-    /// reopen (a killed run is finished, ADR-0006) and after "Re-process affected files now?".
-    /// A paused queue only re-scans. Pause, cancel and close end it early
-    /// ([`IngestSummary::interrupted`]). A re-run asked for while Stage A ran (a region change)
-    /// runs after it.
+    /// Re-scan, then the pending identifier re-runs ([`Project::rerun_identifiers`]), then
+    /// Stage A until nothing is pending: what both apps run after a folder is added (US-01.3),
+    /// on reopen (a killed run is finished, ADR-0006), after "Re-process affected files now?"
+    /// and after a custom pattern is saved. A paused queue only re-scans. Pause, cancel and
+    /// close end it early ([`IngestSummary::interrupted`]). A re-run asked for while Stage A
+    /// ran (a region or pattern change) runs after it.
     pub fn ingest(&self) -> Result<IngestSummary, ProjectError> {
         let _run = self.begin_run();
         let rescan = self.rescan(false)?;
@@ -484,15 +500,13 @@ impl Project {
             ..IngestSummary::default()
         };
         if !summary.rescan.interrupted {
-            summary.identifiers = self.rerun_identifiers_locked()?;
-            if !summary.identifiers.interrupted {
+            (summary.identifiers, summary.custom) = self.reruns_locked()?;
+            if !summary.identifiers.interrupted && !summary.custom.interrupted {
                 summary.stage_a = self.stage_a_locked()?;
                 if !self.control.stopping() {
-                    let after = self.rerun_identifiers_locked()?;
-                    summary.identifiers.contents += after.contents;
-                    summary.identifiers.mentions += after.mentions;
-                    summary.identifiers.card_flags += after.card_flags;
-                    summary.identifiers.interrupted = after.interrupted;
+                    let (builtin, custom) = self.reruns_locked()?;
+                    summary.identifiers.add(builtin);
+                    summary.custom.add(custom);
                 }
             }
         }
@@ -944,14 +958,12 @@ impl Project {
         })
     }
 
-    /// Ignores (or un-ignores) an identifier connection: appends the decision and rebuilds its
-    /// anchor in one transaction (US-07.4, INV-CU-01). Returns the decision's `seq`.
+    /// Ignores (or un-ignores) an identifier or entity connection: appends the decision and
+    /// rebuilds its anchor in one transaction (US-07.4, INV-CU-01). Returns the decision's
+    /// `seq`.
     pub fn set_ignored(&self, key: &str, ignored: bool) -> Result<i64, ProjectError> {
-        let kind = if ignored {
-            DecisionKind::IgnoreIdentifier
-        } else {
-            DecisionKind::UnignoreIdentifier
-        };
+        let [ignore, unignore] = DecisionKind::ignore_pair(SubjectKind::of_key(key));
+        let kind = if ignored { ignore } else { unignore };
         let (seq, changed) = self.store.append_decision(
             kind,
             key,

@@ -327,6 +327,7 @@ pub(crate) fn remove_file_refs(
     }
     let mut touched = BTreeSet::new();
     out.contents = settle_contents(conn, &contents, &mut touched)?;
+    crate::ops::rerun_table_steps(conn, &contents, &mut touched)?;
     out.connections_changed = rebuild_keys(conn, &touched)?;
     Ok(out)
 }
@@ -354,6 +355,7 @@ pub(crate) fn remove_root(conn: &Connection, root: i64) -> Result<RemoveOutcome,
     }
     let mut touched = BTreeSet::new();
     out.contents = settle_contents(conn, &contents, &mut touched)?;
+    crate::ops::rerun_table_steps(conn, &contents, &mut touched)?;
     out.connections_changed = rebuild_keys(conn, &touched)?;
     Ok(out)
 }
@@ -402,8 +404,10 @@ pub(crate) fn clear_exclusions(
 }
 
 /// Stores the settings (US-01.6). The caller checked them ([`ProjectSettings::normalized`]).
-/// Stores settings. A stop-list edit rebuilds the domains added to or taken off the list in the
-/// same transaction (INV-LK-03, ADR-0005). Returns whether a connection row changed.
+/// Custom patterns are not stored here: they change only with `ops::set_custom_patterns`, which
+/// starts their re-run in the same transaction. A stop-list edit rebuilds the domains added to
+/// or taken off the list in the same transaction (INV-LK-03, ADR-0005). Returns whether a
+/// connection row changed.
 pub(crate) fn set_settings(conn: &Connection, s: &ProjectSettings) -> Result<bool, StoreError> {
     if s.ocr_languages.is_empty() {
         return Err(invalid("a project needs at least one OCR language"));

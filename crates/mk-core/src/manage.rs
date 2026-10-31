@@ -204,9 +204,14 @@ impl Project {
     /// change applies at once: the domains added or dropped get their connections rebuilt in
     /// the same transaction (US-04.3 AC3, INV-LK-03).
     pub fn save_settings(&self, settings: ProjectSettings) -> Result<Reprocess, ProjectError> {
-        let new = settings
-            .normalized()
-            .map_err(|e| ProjectError::Invalid(e.to_string()))?;
+        let old = self.settings()?;
+        // Custom patterns are saved on their own (`Project::add_pattern` and the rest).
+        let new = ProjectSettings {
+            custom_patterns: old.custom_patterns.clone(),
+            ..settings
+        }
+        .normalized()
+        .map_err(|e| ProjectError::Invalid(e.to_string()))?;
         if let Some(r) = &new.phone_region
             && mk_identifiers::Region::parse(r).is_none()
         {
@@ -214,7 +219,6 @@ impl Project {
                 "Not a known phone region: {r} (use a country code, such as DE)"
             )));
         }
-        let old = self.settings()?;
         let reprocess = ProjectSettings::affected_by(&old, &new);
         if self.store().set_settings(new)? {
             self.changed();
@@ -254,9 +258,12 @@ impl Project {
             .rerun_progress()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some((done, total)) = rerun {
+        if let Some((step, done, total)) = rerun {
             return Ok(ProgressView {
-                stage: Some("identifiers"),
+                stage: Some(match step {
+                    mk_store::RerunStep::Builtin => "identifiers",
+                    mk_store::RerunStep::Custom => "custom patterns",
+                }),
                 files_done: done,
                 files_total: total,
                 current_files: Vec::new(),

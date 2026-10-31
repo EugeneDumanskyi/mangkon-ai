@@ -144,7 +144,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
 | NFR-QA-11 | LLM mentions with evidence not found in source text | 0 shown | Automated span check | Brief ("never invent") · M1: the span check discarded 0–4 mentions per run (≤ 1.0%) |
 | NFR-QA-12 | Highlight lands on the right text | ≥ 99% of 200 random clicks | Semi-automated check | ASSUMPTION · M3d (RM-1): 200 of 200 seeded clicks on TD-1 right in the core (`nfr_qa_12_highlight_lands_on_right_text`; 71 also on ground-truth boxes; TD-1 has 86 email mentions, so the 200 draws cover 75 distinct ones); 108 of 108 in the release app, highlighted DOM text checked (`11-ingestion.md` §9) |
-| NFR-QA-13 | CSV column-mapping suggestions correct | ≥ 90% of columns in TD-1 | Benchmark | ASSUMPTION |
+| NFR-QA-13 | CSV column-mapping suggestions correct | ≥ 90% of columns in TD-1 | Benchmark | ASSUMPTION. M4c: 100% of 23 CSV columns (JSON 38/38), `12-layer1.md` §4 |
 
 ---
 

@@ -60,6 +60,24 @@
       "found": 73,
       "correct": 73
     },
+    "custom/all": {
+      "expected": 39,
+      "recalled": 39,
+      "found": 39,
+      "correct": 39
+    },
+    "custom/ocr": {
+      "expected": 7,
+      "recalled": 7,
+      "found": 7,
+      "correct": 7
+    },
+    "custom/text": {
+      "expected": 32,
+      "recalled": 32,
+      "found": 32,
+      "correct": 32
+    },
     "domain/all": {
       "expected": 185,
       "recalled": 181,
@@ -132,6 +150,24 @@
       "found": 55,
       "correct": 55
     },
+    "mapping/all": {
+      "expected": 61,
+      "recalled": 61,
+      "found": 61,
+      "correct": 61
+    },
+    "mapping/csv": {
+      "expected": 23,
+      "recalled": 23,
+      "found": 23,
+      "correct": 23
+    },
+    "mapping/json": {
+      "expected": 38,
+      "recalled": 38,
+      "found": 38,
+      "correct": 38
+    },
     "other/all": {
       "expected": 475,
       "recalled": 457,
@@ -173,6 +209,12 @@
       "recalled": 1,
       "found": 1,
       "correct": 1
+    },
+    "table-names/all": {
+      "expected": 42,
+      "recalled": 42,
+      "found": 42,
+      "correct": 42
     },
     "tron/all": {
       "expected": 3,
@@ -237,6 +279,13 @@
       "id": "NFR-QA-06",
       "what": "recall, OCR'd clean scans",
       "goal": 85.0,
+      "value": 100.0,
+      "met": true
+    },
+    {
+      "id": "NFR-QA-13",
+      "what": "mapping suggestions correct, CSV columns",
+      "goal": 90.0,
       "value": 100.0,
       "met": true
     }
