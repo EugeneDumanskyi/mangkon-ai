@@ -52,6 +52,8 @@ Columns as in S2a: date, description, IBAN, amount, and an email in 30 % of rows
 
 Re-scan of the 500 MB file: 0.14–0.15 s. The desktop binary as worker (`MK_WORKER_PROGRAM=target/release/mangkon`) adds ≈ 30 MB of resident shared libraries (WebKitGTK, GTK), as in S2a, and nothing else.
 
+**Update (M4, 2026-11-03).** These are the M3a numbers. With the M4 identifier, entity and keyword indexes the same 500 MB file takes 70.7 s (102.9 s with three heavy custom patterns), commit 54.5 s, peak 140 MB, database 3,051 MB; the 120 s mark holds (`12-layer1.md` §4).
+
 ### What the numbers say
 
 - **Memory no longer grows with the file.** S2a needed 740 MB (core + worker) for the 75 MB CSV, ≈ 10 × its size. The streamed path needs 62 MB for it and 44 MB for a file 6.7 × larger. The core holds at most the 32 MB staging buffer; the rest goes to the spill file.

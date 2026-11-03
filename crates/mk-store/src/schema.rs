@@ -122,6 +122,10 @@ pub fn open_write(
     let mut conn = Connection::open(path)?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     configure(&conn)?;
+    // 64 MiB of page cache for the one writer. The identifier-key index is filled in random key
+    // order, so the default 2 MiB made a 500 MB CSV commit (10.7M mentions) take 65 s instead
+    // of 54 s (NFR-CAP-05). Readers keep the default; `shrink_memory` frees it when idle.
+    conn.pragma_update(None, "cache_size", -65536)?;
     let from = user_version(&conn)?;
 
     let mut report = OpenReport {

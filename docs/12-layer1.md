@@ -237,7 +237,18 @@ The column types are labelled by hand in the generator (v6, `07-test-corpus.md` 
 
 ### Measurements
 
-Pending: the custom-pattern re-run on TD-2, Stage A with 3 patterns on the 500 MB CSV (NFR-CAP-05, NFR-PERF-22) and the confirm on `s2a/rows-1m.csv`. They need an idle machine.
+Idle machine, release build, `w3a_streaming` with `MK_W3A_PATTERNS` (none, or 3 heavy patterns: `ORD-\d{6}`, `INV[-/]…`, an IBAN-like pattern; about 6.7M extra matches on the large file).
+
+| Run | Stage A | Commit | Peak core + worker | Database | Mark |
+|---|---|---|---|---|---|
+| 500 MB CSV, no patterns | 70.7 s | 54.5 s | 140 MB | 3,051 MB | ≤ 120 s met |
+| 500 MB CSV, 3 heavy patterns | 102.9 s | 81.3 s | 149 MB | 4,273 MB | ≤ 120 s met (NFR-CAP-05) |
+| `rows-1m.csv`, no patterns | 102,540 rows/s | | | | ≥ 50,000 met (NFR-PERF-22) |
+| `rows-1m.csv`, 3 heavy patterns | 73,956 rows/s | | | | ≥ 50,000 met |
+
+**A regression found and fixed.** The first heavy-pattern run took 127.0 s and failed the 120 s mark. The 500 MB file had gone from 16 s at M3a (32 s with the keyword index) to 80.9 s without patterns, because M4b and M4c add identifier, entity and record-link rows for every row (10.7M mentions per file; the database grew from 1.27 GB to 3.05 GB). A trace of the commit (65 s) gave 36.6 s for the mention inserts, 16.3 s for the keyword index, 5.1 s for segments and 2.0 s for the key rebuild. The identifier-key index is filled in random key order, and the writer's default 2 MiB page cache could not hold it. The writer now has a 64 MiB page cache (`schema.rs`); readers keep the default, and `shrink_memory` frees it when idle. Effect: 80.9 s → 70.7 s without patterns, 127.0 s → 102.9 s with three.
+
+**Open.** The heavy-pattern margin is 17 s. If it shrinks, the next step is to drop and rebuild the key index around very large commits. The TD-2 custom-pattern re-run was not made separately.
 
 ### Tests
 

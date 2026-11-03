@@ -80,6 +80,26 @@ fn run(file: &Path, units: u64, unit: &str, min_rate: f64, max_time: Option<Dura
     let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
     *project.worker_config_mut() = worker();
     project.set_stage_a_workers(1);
+    // `MK_W3A_PATTERNS=3` runs Stage A with three custom patterns (M4c timing, NFR-CAP-05).
+    if std::env::var("MK_W3A_PATTERNS").is_ok_and(|v| v == "rare") {
+        // Three patterns that match nothing in the file: the scanning cost alone.
+        project.add_pattern("order", r"\bORD-\d{6}\b").unwrap();
+        project
+            .add_pattern("invoice", r"\bINV[-/]\d{4}[-/]\d{4,6}\b")
+            .unwrap();
+        project
+            .add_pattern("ticket", r"\bTKT-[A-Z]{3}\d{5}\b")
+            .unwrap();
+    }
+    if std::env::var("MK_W3A_PATTERNS").is_ok_and(|v| v == "3") {
+        project.add_pattern("order", r"\bORD-\d{6}\b").unwrap();
+        project
+            .add_pattern("invoice", r"\bINV[-/]\d{4}[-/]\d{4,6}\b")
+            .unwrap();
+        project
+            .add_pattern("iban-like", r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b")
+            .unwrap();
+    }
     project.add_source_root(&src).unwrap();
     let t = Instant::now();
     project.rescan(false).unwrap();

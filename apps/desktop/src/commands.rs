@@ -5,8 +5,8 @@
 
 use std::path::PathBuf;
 
-use tauri::ipc::Channel;
 use tauri::State;
+use tauri::ipc::Channel;
 
 use crate::ipc::{self, IpcError};
 use crate::state::{AppState, Target};
