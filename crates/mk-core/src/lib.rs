@@ -21,8 +21,12 @@
 //! - M4c: custom patterns and their own re-run step ([`Project::add_pattern`]), column
 //!   mapping ([`Project::mapping_view`], [`Project::confirm_mapping`]) and "Name (from table)"
 //!   entities in the connections list.
+//! - M5a: external endpoints ([`Workspace::save_endpoint`], [`Workspace::test_endpoint`]), keys
+//!   in the OS secret store, per-project permissions and egress records, and
+//!   [`Workspace::model_client`], the only way to a model client (ADR-0009).
 
 mod control;
+mod egress;
 mod events;
 mod identifiers;
 mod links;
@@ -43,10 +47,20 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 pub use control::{PAUSE_GRACE, Stop};
+pub use egress::{
+    Access, AllowPrompt, DestinationInfo, EgressConfig, EgressRecordInfo, EndpointError,
+    EndpointInfo, EndpointInput, EndpointTestInfo, KeyChange, KeyState, ProjectEndpoint,
+    SecretStoreStatus, refusal_text, test_endpoint_at,
+};
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
 pub use identifiers::RerunSummary;
 pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
+pub use mk_egress::{
+    ChatMessage, ChatReply, ChatRequest, Destination, DestinationClass, EgressError, Embeddings,
+    GateError, ModelClient, NO_STRUCTURED_OUTPUT, Purpose, SecretStoreKind, SecretString,
+    TestReport, TlsRoots,
+};
 pub use mk_graph::model::EntityRow;
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey, SubjectKind};
 pub use mk_jobs::ItemState;

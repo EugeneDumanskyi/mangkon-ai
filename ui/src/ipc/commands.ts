@@ -1,6 +1,7 @@
 // The only module that calls into the core (ADR-0003). Every argument and result type comes from
 // the generated bindings, so a change on the Rust side breaks the TypeScript build.
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { AllowPrompt } from "./bindings/AllowPrompt";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ColumnAssignment } from "./bindings/ColumnAssignment";
 import type { ConnectionCursor } from "./bindings/ConnectionCursor";
@@ -8,10 +9,16 @@ import type { ConnectionFilter } from "./bindings/ConnectionFilter";
 import type { ConnectionsPage } from "./bindings/ConnectionsPage";
 import type { ConnectionsSummary } from "./bindings/ConnectionsSummary";
 import type { CustomPatternItem } from "./bindings/CustomPatternItem";
+import type { Destination } from "./bindings/Destination";
+import type { DestinationClass } from "./bindings/DestinationClass";
 import type { DocumentCursor } from "./bindings/DocumentCursor";
 import type { DocumentFilter } from "./bindings/DocumentFilter";
 import type { DocumentsPage } from "./bindings/DocumentsPage";
 import type { DocumentType } from "./bindings/DocumentType";
+import type { EgressRecord } from "./bindings/EgressRecord";
+import type { EndpointItem } from "./bindings/EndpointItem";
+import type { EndpointSave } from "./bindings/EndpointSave";
+import type { EndpointTestReport } from "./bindings/EndpointTestReport";
 import type { FrameStats } from "./bindings/FrameStats";
 import type { IpcError } from "./bindings/IpcError";
 import type { MappingView } from "./bindings/MappingView";
@@ -19,6 +26,7 @@ import type { Occurrence } from "./bindings/Occurrence";
 import type { PageView } from "./bindings/PageView";
 import type { PatternTest } from "./bindings/PatternTest";
 import type { Progress } from "./bindings/Progress";
+import type { ProjectEndpoint } from "./bindings/ProjectEndpoint";
 import type { ProjectInfo } from "./bindings/ProjectInfo";
 import type { QueueWalk } from "./bindings/QueueWalk";
 import type { RecentProject } from "./bindings/RecentProject";
@@ -28,6 +36,7 @@ import type { RowsRequest } from "./bindings/RowsRequest";
 import type { SearchCursor } from "./bindings/SearchCursor";
 import type { SearchPage } from "./bindings/SearchPage";
 import type { SearchQuery } from "./bindings/SearchQuery";
+import type { SecretStoreInfo } from "./bindings/SecretStoreInfo";
 import type { SegmentHit } from "./bindings/SegmentHit";
 import type { Settings } from "./bindings/Settings";
 import type { SettingsInfo } from "./bindings/SettingsInfo";
@@ -145,6 +154,26 @@ export const commands = {
   showInFolder: (documentId: number) => invoke<null>("show_in_folder", { documentId }),
   /** Opens a link the user confirmed; the core checks it again (US-08.4 AC3). */
   openLink: (url: string) => invoke<null>("open_link", { url }),
+  /** Every endpoint with where its host points now (US-09.6, US-09.7 AC4). */
+  endpointsList: () => invoke<EndpointItem[]>("endpoints_list"),
+  /** Adds or edits an endpoint; a typed key goes to the system keychain only (US-09.6 AC1). */
+  endpointSave: (endpoint: EndpointSave) => invoke<EndpointItem>("endpoint_save", { endpoint }),
+  endpointDelete: (id: string) => invoke<null>("endpoint_delete", { id }),
+  /** Tests an endpoint with fixed texts; sends no project data (US-09.6 AC2/AC3). */
+  endpointTest: (id: string) => invoke<EndpointTestReport>("endpoint_test", { id }),
+  /** Where a base URL points now: host, class, addresses. */
+  resolveDestination: (baseUrl: string) => invoke<Destination>("resolve_destination", { baseUrl }),
+  secretStoreStatus: () => invoke<SecretStoreInfo>("secret_store_status"),
+  /** The open project's permission for every endpoint (US-09.7). */
+  projectEndpoints: () => invoke<ProjectEndpoint[]>("project_endpoints"),
+  /** What the "Allow for this project" dialog shows, resolved now (US-09.7 AC2). */
+  endpointAllowPrepare: (id: string) => invoke<AllowPrompt>("endpoint_allow_prepare", { id }),
+  /** Stores the permission for exactly this origin and class; fails if the host moved. */
+  endpointAllowConfirm: (id: string, origin: string, cls: DestinationClass) =>
+    invoke<null>("endpoint_allow_confirm", { id, origin, class: cls }),
+  endpointRevoke: (id: string) => invoke<null>("endpoint_revoke", { id }),
+  /** "Data sent from this project" (US-09.8 AC2). */
+  egressRecords: () => invoke<EgressRecord[]>("egress_records"),
   /** Core events go to `onEvent` until the page reloads (no `core:event` permission). */
   subscribe: (onEvent: (event: UiEvent) => void) => {
     const channel = new Channel<UiEvent>();

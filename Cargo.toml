@@ -16,6 +16,7 @@ members = [
     "crates/mk-core",
     "crates/mk-bench",
     "crates/mk-models",
+    "crates/mk-egress",
     "apps/desktop",
     "apps/cli",
     "tools/corpus-gen",
@@ -51,6 +52,7 @@ mk-search = { path = "crates/mk-search" }
 mk-store = { path = "crates/mk-store" }
 mk-worker = { path = "crates/mk-worker" }
 mk-core = { path = "crates/mk-core" }
+mk-egress = { path = "crates/mk-egress" }
 
 [profile.dev]
 debug = "line-tables-only"

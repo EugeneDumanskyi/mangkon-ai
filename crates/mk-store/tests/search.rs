@@ -276,7 +276,7 @@ fn migration_v4_to_v5_fills_the_index() {
     let backups = dir.path().join("backups");
     {
         // A v4 project with segments: a commit writes the index, so build at the latest
-        // version and take the index (and the v6 and v7 objects) back out.
+        // version and take the index (and the v6, v7 and v8 objects) back out.
         let store = open(dir.path());
         ingest(&store, 1, "txt", &["before search existed", "second line"]);
         store
@@ -287,6 +287,7 @@ fn migration_v4_to_v5_fills_the_index() {
                      DROP INDEX identifier_mention_content; DROP TABLE custom_pattern;
                      DROP TABLE record_link; DROP TABLE entity_mention;
                      DROP TABLE column_suggestion; DROP TABLE table_document;
+                     DROP TABLE endpoint_permission; DROP TABLE egress_record;
                      PRAGMA user_version = 4;",
                 )?;
                 Ok(())
@@ -294,7 +295,7 @@ fn migration_v4_to_v5_fills_the_index() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 7));
+    assert_eq!((report.from_version, report.to_version), (4, 8));
     assert!(report.backup.unwrap().exists());
     assert_eq!(store.search_index_rows().unwrap(), 2);
     assert_eq!(

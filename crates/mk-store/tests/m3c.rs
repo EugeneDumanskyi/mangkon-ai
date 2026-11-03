@@ -50,20 +50,20 @@ fn inv_ws_01_registry_names_unique_ignoring_case() {
 #[test]
 fn inv_ws_03_newer_app_db_is_never_opened() {
     let dir = tempfile::tempdir().unwrap();
-    let v2 = Migration {
-        version: 2,
+    let v3 = Migration {
+        version: 3,
         name: "later",
         sql: "CREATE TABLE later (x);",
     };
-    AppStore::open_with(dir.path(), &[APP_MIGRATIONS, &[v2]].concat()).unwrap();
+    AppStore::open_with(dir.path(), &[APP_MIGRATIONS, &[v3]].concat()).unwrap();
     let before = std::fs::read(dir.path().join("app.db")).unwrap();
     let err = AppStore::open(dir.path()).err().expect("refused");
     assert!(
         matches!(
             err,
             StoreError::TooNew {
-                found: 2,
-                supported: 1,
+                found: 3,
+                supported: 2,
                 ..
             }
         ),
@@ -114,7 +114,7 @@ fn nfr_rel_11_migration_v3_to_v4() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (3, 7));
+    assert_eq!((report.from_version, report.to_version), (3, 8));
     assert!(report.backup.unwrap().exists());
     let (pending, detail, excluded) = store
         .read_raw(|c| {

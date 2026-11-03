@@ -235,7 +235,7 @@ flowchart TB
 | Container | Technology | Does | Never does | Bounded contexts | Key NFRs | ADR |
 |---|---|---|---|---|---|---|
 | **UI** | React 19, TypeScript (strict), Vite, TanStack Virtual, Tauri webview | Shows screens. Sends commands. Asks the core for pages of rows. Listens for "something changed" events. | Hold domain rules. Call the network. Read files. | Screens over all contexts | PERF-03/04, USE-04/06–09, SEC-09/10 | [0003](adr/0003-desktop-shell-and-ui.md), [0011](adr/0011-source-viewer.md) |
-| **Core** | Rust, Tokio, Tauri 2 main process | All domain logic. Job scheduler. Only DB writer. Applies decisions. Egress gate. Supervises workers and `llama-server`. Downloads. | Parse untrusted file formats itself. | BC-01, 03, 05–12 | REL-02–05, PERF-30–34, SEC-02–07 | [0001](adr/0001-architecture-style.md), [0002](adr/0002-headless-core-workspace.md), [0005](adr/0005-derived-data-and-decisions.md), [0006](adr/0006-background-jobs.md), [0009](adr/0009-egress-gate.md) |
+| **Core** | Rust (plain `std` threads, no async runtime), Tauri 2 main process | All domain logic. Job scheduler. Only DB writer. Applies decisions. Egress gate. Supervises workers and `llama-server`. Downloads. | Parse untrusted file formats itself. | BC-01, 03, 05–12 | REL-02–05, PERF-30–34, SEC-02–07 | [0001](adr/0001-architecture-style.md), [0002](adr/0002-headless-core-workspace.md), [0005](adr/0005-derived-data-and-decisions.md), [0006](adr/0006-background-jobs.md), [0009](adr/0009-egress-gate.md) |
 | **Parser workers** | Rust, same binary in `--worker` mode, a small pool | Stage A for one source content: parse, segment, OCR, identifiers, sensitive flags. Renders PDF pages for the viewer. | Open the database. Use the network. Write any file. | BC-02 (parsing), BC-04 | REL-01/06/07, PERF-20–23, QA-03–07 | [0007](adr/0007-parser-worker-isolation.md), [0014](adr/0014-pdf-and-ocr-engines.md) |
 | **Local model runtime** | User-installed `llama-server` (minimum build checked), one process per loaded model | Serves `/v1/chat/completions` and `/v1/embeddings`. | Listen on anything but `127.0.0.1`. | BC-12 (runtime) | REL-12, RES-06, SEC-06, COMP-03 | [0015](adr/0015-user-installed-llama-server.md) |
 | **Project store** | SQLite (bundled), WAL, FTS5 | Source of truth for one project: corpus, mentions, jobs, decision log, egress records, derived tables, keyword index. | — | All project contexts | REL-02/09/11, CAP-08, COMP-07 | [0004](adr/0004-project-storage.md) |
@@ -260,7 +260,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-06 AI extraction | `mk-ai` | Core |
 | BC-07 Entity resolution, BC-08 Linking, BC-09 Curation | `mk-graph` (one crate: they rebuild together, ADR-0005) | Core |
 | BC-10 Search | `mk-search` (pure: query syntax to a safe FTS5 query, snippets, card-like masking; the FTS5 table and its reads are in `mk-store`, since M4a) | Core |
-| BC-11 Egress policy | `mk-egress` | Core |
+| BC-11 Egress policy | `mk-egress` (since M5a: address classes and the permission check, pure; the gate, the only maker of a model client; the client pinned to the checked addresses with `ureq` + rustls; the fixed-text endpoint test; the OS keychain through `keyring`. Ports for the stores and the resolver are implemented in `mk-core`) | Core |
 | BC-12 Model management | `mk-models` | Core |
 | BC-13 Evaluation | `mk-bench` (ground truth, pure scoring and the baseline gate, since M4b) | CLI only |
 | Storage adapters, migrations | `mk-store` | Core |
@@ -355,9 +355,8 @@ This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB 
     project-v<schema>-<date>.db       ← written before every migration (INV-WS-04)
 
 <OS app-data folder>/mangkon-ai/
-  app.db                              ← registry (M3c); endpoints, installed models, hardware profile later
+  app.db                              ← registry (M3c), endpoints and their tests (M5a); installed models, hardware profile later
   models/<model-id>.gguf
-  runtime/llama-server-<version>-<backend>/
   logs/mangkon.log (+ rotated)        ← no document content, ≤ 50 MB (NFR-SEC-08)
   tessdata/<code>.traineddata         ← OCR languages: eng written by the app, others put there by the user (ADR-0018)
 ```
@@ -367,6 +366,7 @@ Rules:
 - `app.db` has its own forward-only migrations, with the same backup and newer-schema rules as `project.db` (INV-WS-03/04). Its `registry_entry` table holds name, case-folded name (unique, INV-WS-01), path (unique) and last-opened time.
 - `project.db` schema v4 (M3c) adds `root_exclusion` (paths removed from a source folder, US-01.5), the failure detail behind "Show details" (US-02.7 AC2), item start and finish times (ETA, US-03.1 AC2) and the job pause time. The project's name and the app version that last wrote it are in `project_meta`.
 - Everything under `index/` and `cache/` can be deleted. The app rebuilds it. `cache/staging/` is emptied when a project opens. Details: [ADR-0016](adr/0016-streamed-file-limits.md).
+- `app.db` v2 (M5a) adds `endpoint` (name, base URL, model, the secret-store account of its key, the structured-output flag of the last test) and `endpoint_test` (the last 20 per endpoint). `project.db` schema v8 (M5a) adds `endpoint_permission` (no row = Not allowed, INV-EG-01) and `egress_record` (host, class, purpose, first and last sent, INV-EG-05). Neither is derived: a rebuild leaves them alone.
 - API keys are never in either folder (ADR-0012).
 
 ---

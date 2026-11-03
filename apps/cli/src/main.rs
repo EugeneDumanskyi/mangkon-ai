@@ -1,8 +1,9 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
-//! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b) and
-//! the `--worker` entry.
+//! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b),
+//! `endpoint test` (M5a) and the `--worker` entry.
 
 mod bench;
+mod endpoint;
 mod ingest;
 mod kill_test;
 mod manage;
@@ -25,6 +26,7 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
        mangkon-cli bench [--testdata DIR] [--baseline FILE [--update-baseline]] [--json FILE]
                          [--tessdata DIR] [--work DIR]
+       mangkon-cli endpoint test BASE_URL --model NAME [--api-key-env VAR] [--json]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -72,7 +74,14 @@ Commands:
               --update-baseline  write this run's report to the --baseline file instead
               --json             also write this run's report to FILE
               --tessdata         the OCR language folder, as for ingest
-              --work             keep the projects in DIR (default: a temporary folder)";
+              --work             keep the projects in DIR (default: a temporary folder)
+  endpoint    test: check the OpenAI-compatible endpoint at BASE_URL (for example
+              http://192.168.1.20:8080, /v1 is added when there is no path) with the app's
+              fixed test texts: a chat call, structured output and embeddings. Prints where
+              the host points, the model it reports and the times. Saves nothing and sends no
+              project data. Exits 1 if the chat call fails.
+              --model        the model name to ask for
+              --api-key-env  the environment variable that holds the API key (never printed)";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -122,6 +131,10 @@ fn main() -> ExitCode {
             Ok(opts) => kill_test::run(&opts),
             Err(e) => usage_error(&e),
         },
+        Some("endpoint") => match endpoint_options(&args[1..]) {
+            Ok(opts) => endpoint::test(&opts),
+            Err(e) => usage_error(&e),
+        },
         Some("bench") => match bench_options(&args[1..]) {
             Ok(opts) => bench::run(&opts),
             Err(e) => usage_error(&e),
@@ -163,6 +176,33 @@ fn kill_test_options(args: &[String]) -> Result<kill_test::Options, String> {
     }
     opts.source = source.ok_or("kill-test needs --source DIR")?;
     Ok(opts)
+}
+
+fn endpoint_options(args: &[String]) -> Result<endpoint::TestOptions, String> {
+    let (mut model, mut api_key_env, mut json) = (None, None, false);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--model" => model = Some(value()?.clone()),
+            "--api-key-env" => api_key_env = Some(value()?.clone()),
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown endpoint argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let ["test", base_url] = words.as_slice() else {
+        return Err("endpoint takes test BASE_URL --model NAME".into());
+    };
+    Ok(endpoint::TestOptions {
+        base_url: (*base_url).to_string(),
+        model: model.ok_or("endpoint test needs --model NAME")?,
+        api_key_env,
+        json,
+    })
 }
 
 fn bench_options(args: &[String]) -> Result<bench::Options, String> {

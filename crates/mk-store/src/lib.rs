@@ -13,6 +13,7 @@ mod app_store;
 mod codec;
 mod derive;
 mod documents;
+mod egress;
 mod manage;
 mod mapping;
 mod ops;
@@ -34,8 +35,9 @@ use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_workspace::ProjectSettings;
 
-pub use app_store::{APP_MIGRATIONS, AppStore};
+pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
+pub use egress::{EgressRecordRow, PermissionRow};
 pub use manage::{CancelOutcome, RemoveOutcome};
 pub use mapping::{ColumnRow, MappingView, ReuseCandidate};
 pub use ops::{
@@ -446,6 +448,39 @@ impl Store {
         self.writer.call(|tx| ops::recover_after_restart(tx))
     }
 
+    // ---- egress (schema v8, BC-11) ----
+
+    /// Stores a confirmed permission for a non-local endpoint (US-09.7 AC2).
+    pub fn allow_endpoint(&self, id: &str, origin: &str, class: &str) -> Result<(), StoreError> {
+        let (id, origin, class) = (id.to_string(), origin.to_string(), class.to_string());
+        self.writer
+            .call(move |tx| egress::allow(tx, &id, &origin, &class))
+    }
+
+    /// Moves an allowed permission to "needs reconfirmation" (domain §7.6).
+    pub fn permission_needs_reconfirmation(
+        &self,
+        id: &str,
+        reason: &str,
+    ) -> Result<bool, StoreError> {
+        let (id, reason) = (id.to_string(), reason.to_string());
+        self.writer
+            .call(move |tx| egress::needs_reconfirmation(tx, &id, &reason))
+    }
+
+    /// Revokes a permission: Not allowed again.
+    pub fn revoke_endpoint(&self, id: &str) -> Result<bool, StoreError> {
+        let id = id.to_string();
+        self.writer.call(move |tx| egress::revoke(tx, &id))
+    }
+
+    /// Upserts the egress record before a send (INV-EG-05).
+    pub fn record_egress(&self, host: &str, class: &str, purpose: &str) -> Result<(), StoreError> {
+        let (host, class, purpose) = (host.to_string(), class.to_string(), purpose.to_string());
+        self.writer
+            .call(move |tx| egress::record(tx, &host, &class, &purpose))
+    }
+
     /// Runs `f` in one writer transaction. For tests that need a raw write, such as checking
     /// the decision log triggers.
     pub fn write_raw<R, F>(&self, f: F) -> Result<R, StoreError>
@@ -715,6 +750,20 @@ impl Store {
     /// Rows in the keyword index; equals the segment count while it is in step.
     pub fn search_index_rows(&self) -> Result<u64, StoreError> {
         self.readers.with(search::index_rows)
+    }
+
+    /// The stored permission for an endpoint; `None` is Not allowed (INV-EG-01).
+    pub fn endpoint_permission(&self, id: &str) -> Result<Option<PermissionRow>, StoreError> {
+        self.readers.with(|c| egress::permission(c, id))
+    }
+
+    pub fn endpoint_permissions(&self) -> Result<Vec<PermissionRow>, StoreError> {
+        self.readers.with(egress::permissions)
+    }
+
+    /// Every destination that received this project's data, the most recent first.
+    pub fn egress_records(&self) -> Result<Vec<EgressRecordRow>, StoreError> {
+        self.readers.with(egress::records)
     }
 
     /// Runs `f` on a read connection. For tests.

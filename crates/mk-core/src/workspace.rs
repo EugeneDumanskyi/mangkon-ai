@@ -4,10 +4,12 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use mk_store::{AppStore, StoreError};
 use mk_workspace::{NameError, ProjectLayout, ProjectName, RegistryEntry};
 
+use crate::egress::{EgressConfig, EgressParts};
 use crate::project::{OpenSummary, Project, ProjectError, project_exists};
 
 /// Why a project could not be created or opened, in plain words (NFR-USE-05).
@@ -103,8 +105,10 @@ pub struct RecentProject {
 
 /// The app's projects: the registry in `<app data>/app.db`.
 pub struct Workspace {
-    app: AppStore,
+    app: Arc<AppStore>,
     dir: PathBuf,
+    /// Endpoints, secrets and the egress gate (M5a).
+    pub(crate) egress: EgressParts,
 }
 
 /// Whether the app can create files in `dir`: it creates and removes a probe file
@@ -126,10 +130,21 @@ fn path_string(p: &Path) -> Result<String, WorkspaceError> {
 impl Workspace {
     /// Opens the registry in `dir` (the app's data folder; tests pass a temp folder).
     pub fn open(dir: &Path) -> Result<Workspace, WorkspaceError> {
+        Self::open_with(dir, EgressConfig::default())
+    }
+
+    /// [`open`](Self::open) with another resolver, secret store or trust store (tests).
+    pub fn open_with(dir: &Path, egress: EgressConfig) -> Result<Workspace, WorkspaceError> {
+        let app = Arc::new(AppStore::open(dir)?);
         Ok(Workspace {
-            app: AppStore::open(dir)?,
+            egress: EgressParts::new(app.clone(), egress),
+            app,
             dir: dir.to_path_buf(),
         })
+    }
+
+    pub(crate) fn app(&self) -> &AppStore {
+        &self.app
     }
 
     /// Opens the registry in [`crate::app_data_dir`].

@@ -1,0 +1,44 @@
+[package]
+name = "mk-egress"
+description = "BC-11: the one gate for project data leaving the app (ADR-0009) and API keys in the OS secret store (ADR-0012)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# ADR-0009: the only crate that sends project data. rustls with ring, roots from the OS through
+# rustls-platform-verifier; no bundled root list. The resolver API is unversioned in ureq, so the
+# version is pinned exactly.
+ureq = { version = "=3.5.0", default-features = false, features = ["rustls-no-provider", "platform-verifier", "json"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+url = "2.5.8"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# ADR-0012: keys never print, and are wiped from memory when dropped.
+secrecy = "0.10.3"
+
+# ADR-0012: the OS secret store. Linux uses the Secret Service over libdbus, which the desktop
+# shell links already (WebKitGTK); keys are encrypted on the bus with pure Rust crypto.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6.3", features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6.3", features = ["apple-native"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[features]
+# Fake servers, a scripted resolver and in-memory ports for tests (dev-dependencies only).
+testkit = ["dep:rcgen"]
+
+[dependencies.rcgen]
+version = "0.14.10"
+optional = true
+
+[dev-dependencies]
+mk-egress = { path = ".", features = ["testkit"] }

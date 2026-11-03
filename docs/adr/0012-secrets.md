@@ -46,4 +46,4 @@ Use **option 1**.
 - On a new machine, the user enters keys again. This is intended.
 
 **Follow-ups**
-- Test on Ubuntu 22.04 with GNOME Keyring, and on a setup without it.
+- Test on Ubuntu 22.04 with GNOME Keyring, and on a setup without it. **M5a:** `keyring` 3.6 (`sync-secret-service` + `crypto-rust` on Linux, `apple-native`, `windows-native`); service `mangkon-ai`, account `endpoint:<id>`; the store is probed on first use by reading an entry that is not there (no write, no unlock prompt). With no Secret Service, keys are kept in memory and the AI models screen shows the notice; after a restart the endpoint shows "API key missing: enter it again". Covered by `crates/mk-core/tests/m5a_egress.rs` with an in-memory keychain and a session store; the runs on Linux with the real keychain and with none are in `13-model-manager.md` §3.

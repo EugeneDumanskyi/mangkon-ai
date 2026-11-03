@@ -1,6 +1,7 @@
 //! `app.db` (architecture §6, ADR-0004): the app's own database, next to the projects. M3c: the
-//! project registry (domain §5.2, US-01.1, US-01.2). Few, small writes from one thread at a
-//! time: a plain connection behind a mutex, no writer thread.
+//! project registry (domain §5.2, US-01.1, US-01.2). M5a: external model endpoints and their
+//! tests (US-09.6); their API keys are in the OS secret store, never here (INV-EG-07). Few,
+//! small writes from one thread at a time: a plain connection behind a mutex, no writer thread.
 //!
 //! Its schema has its own migrations ([`APP_MIGRATIONS`]); a newer one is refused unchanged and
 //! an older one is backed up before it migrates, as for `project.db` (INV-WS-03/04).
@@ -16,11 +17,62 @@ use crate::schema::{Migration, configure};
 use crate::time::{now_compact, now_ms};
 
 /// The app database's migrations, in order.
-pub const APP_MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "registry",
-    sql: include_str!("../app_migrations/0001_registry.sql"),
-}];
+pub const APP_MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "registry",
+        sql: include_str!("../app_migrations/0001_registry.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "endpoints",
+        sql: include_str!("../app_migrations/0002_endpoints.sql"),
+    },
+];
+
+/// Tests kept per endpoint; older ones are dropped.
+const KEPT_TESTS: i64 = 20;
+
+/// An external model endpoint (domain §5.2 ENDPOINT). No key: `secret_ref` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EndpointRow {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model_name: String,
+    pub secret_ref: Option<String>,
+    /// `None` until tested (US-09.6 AC3).
+    pub structured_output: Option<bool>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// One endpoint test (domain §5.2 ENDPOINT_TEST).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EndpointTestRow {
+    pub endpoint_id: String,
+    pub tested_at: i64,
+    pub ok: bool,
+    pub message: String,
+    pub response_ms: Option<i64>,
+    pub reported_model: Option<String>,
+}
+
+const ENDPOINT_COLUMNS: &str =
+    "id, name, base_url, model_name, secret_ref, structured_output, created_at, updated_at";
+
+fn endpoint_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<EndpointRow> {
+    Ok(EndpointRow {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        base_url: r.get(2)?,
+        model_name: r.get(3)?,
+        secret_ref: r.get(4)?,
+        structured_output: r.get::<_, Option<i64>>(5)?.map(|v| v != 0),
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
 
 /// The app database, `app.db` in the app's data folder.
 pub struct AppStore {
@@ -217,5 +269,141 @@ impl AppStore {
             .prepare_cached("DELETE FROM registry_entry WHERE id = ?1")?
             .execute([id])?;
         Ok(())
+    }
+
+    // ---- endpoints (M5a) ----
+
+    /// Every endpoint, by name.
+    pub fn endpoints(&self) -> Result<Vec<EndpointRow>, StoreError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT {ENDPOINT_COLUMNS} FROM endpoint ORDER BY name COLLATE NOCASE, id"
+        ))?;
+        let rows = stmt.query_map([], endpoint_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn endpoint(&self, id: &str) -> Result<Option<EndpointRow>, StoreError> {
+        let conn = self.lock();
+        Ok(conn
+            .prepare_cached(&format!(
+                "SELECT {ENDPOINT_COLUMNS} FROM endpoint WHERE id = ?1"
+            ))?
+            .query_row([id], endpoint_row)
+            .optional()?)
+    }
+
+    pub fn insert_endpoint(&self, e: &EndpointRow) -> Result<(), StoreError> {
+        self.lock()
+            .prepare_cached(&format!(
+                "INSERT INTO endpoint ({ENDPOINT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
+            ))?
+            .execute(params![
+                e.id,
+                e.name,
+                e.base_url,
+                e.model_name,
+                e.secret_ref,
+                e.structured_output.map(i64::from),
+                e.created_at,
+                e.updated_at
+            ])?;
+        Ok(())
+    }
+
+    /// Updates an endpoint. A new URL or model forgets the structured-output result, which
+    /// was found for the old one. Returns whether the endpoint exists.
+    pub fn update_endpoint(
+        &self,
+        id: &str,
+        name: &str,
+        base_url: &str,
+        model_name: &str,
+        secret_ref: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        Ok(self
+            .lock()
+            .prepare_cached(
+                "UPDATE endpoint SET name = ?2, base_url = ?3, model_name = ?4, secret_ref = ?5,
+                     structured_output = CASE WHEN base_url = ?3 AND model_name = ?4
+                         THEN structured_output END,
+                     updated_at = ?6
+                 WHERE id = ?1",
+            )?
+            .execute(params![
+                id,
+                name,
+                base_url,
+                model_name,
+                secret_ref,
+                now_ms()
+            ])?
+            > 0)
+    }
+
+    /// Deletes an endpoint and its tests. Returns whether it existed.
+    pub fn delete_endpoint(&self, id: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .lock()
+            .prepare_cached("DELETE FROM endpoint WHERE id = ?1")?
+            .execute([id])?
+            > 0)
+    }
+
+    /// Stores a test and, when the test got that far, whether structured output works.
+    pub fn record_endpoint_test(
+        &self,
+        t: &EndpointTestRow,
+        structured_output: Option<bool>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        tx.prepare_cached(
+            "INSERT INTO endpoint_test
+                 (endpoint_id, tested_at, ok, message, response_ms, reported_model)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?
+        .execute(params![
+            t.endpoint_id,
+            t.tested_at,
+            t.ok,
+            t.message,
+            t.response_ms,
+            t.reported_model
+        ])?;
+        tx.prepare_cached(
+            "DELETE FROM endpoint_test WHERE endpoint_id = ?1 AND id NOT IN
+                 (SELECT id FROM endpoint_test WHERE endpoint_id = ?1
+                  ORDER BY tested_at DESC, id DESC LIMIT ?2)",
+        )?
+        .execute(params![t.endpoint_id, KEPT_TESTS])?;
+        if let Some(s) = structured_output {
+            tx.prepare_cached("UPDATE endpoint SET structured_output = ?2 WHERE id = ?1")?
+                .execute(params![t.endpoint_id, i64::from(s)])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The newest test of an endpoint.
+    pub fn last_endpoint_test(&self, id: &str) -> Result<Option<EndpointTestRow>, StoreError> {
+        let conn = self.lock();
+        Ok(conn
+            .prepare_cached(
+                "SELECT endpoint_id, tested_at, ok, message, response_ms, reported_model
+                 FROM endpoint_test WHERE endpoint_id = ?1
+                 ORDER BY tested_at DESC, id DESC LIMIT 1",
+            )?
+            .query_row([id], |r| {
+                Ok(EndpointTestRow {
+                    endpoint_id: r.get(0)?,
+                    tested_at: r.get(1)?,
+                    ok: r.get(2)?,
+                    message: r.get(3)?,
+                    response_ms: r.get(4)?,
+                    reported_model: r.get(5)?,
+                })
+            })
+            .optional()?)
     }
 }

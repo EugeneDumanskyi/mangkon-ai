@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "./ipc/commands";
 import { connectCoreEvents, onCoreEvent } from "./lib/coreEvents";
+import { ModelsScreen } from "./models/ModelsScreen";
 import { ProjectScreen } from "./project/ProjectScreen";
 import { runQueueWalk } from "./project/queueWalk";
 import { StartScreen } from "./project/StartScreen";
@@ -12,6 +13,7 @@ export function App() {
   const info = useQuery({ queryKey: ["app_info"], queryFn: commands.appInfo });
   const project = useQuery({ queryKey: ["project"], queryFn: commands.currentProject });
   const [notice, setNotice] = useState<string | null>(null);
+  const [models, setModels] = useState(false);
 
   useEffect(() => {
     connectCoreEvents(client).catch((e: unknown) => {
@@ -42,6 +44,18 @@ export function App() {
           </span>
         )}
         {info.error && <span className="text-sm text-muted">Core not reachable</span>}
+        {!info.data?.spikeS2d && (
+          <button
+            type="button"
+            className="ml-auto rounded border border-border px-2 py-0.5 text-sm"
+            aria-pressed={models}
+            onClick={() => {
+              setModels(!models);
+            }}
+          >
+            AI models
+          </button>
+        )}
       </header>
       {notice !== null && (
         <div
@@ -60,7 +74,17 @@ export function App() {
           </button>
         </div>
       )}
-      <main className="min-h-0 flex-1">
+      {models && (
+        <main className="min-h-0 flex-1">
+          <ModelsScreen
+            onClose={() => {
+              setModels(false);
+            }}
+          />
+        </main>
+      )}
+      {/* Kept mounted behind the AI models screen, so the project keeps its tab and place. */}
+      <main className={models ? "hidden" : "min-h-0 flex-1"}>
         {info.data?.spikeS2d ? (
           <S2dScreen autorun={info.data.spikeS2d.autorun} />
         ) : project.data ? (

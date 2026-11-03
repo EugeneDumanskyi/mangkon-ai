@@ -1821,3 +1821,403 @@ pub enum UiEvent {
         message: String,
     },
 }
+
+// ---- M5a: endpoints, permissions, egress records (US-09.6, US-09.7, US-09.8) ----
+
+impl From<mk_core::EndpointError> for IpcError {
+    fn from(e: mk_core::EndpointError) -> Self {
+        IpcError::new(e.code, e.message)
+    }
+}
+
+/// Where a destination is, as US-09.7 AC4 names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DestinationClass {
+    ThisMachine,
+    LocalNetwork,
+    Internet,
+}
+
+impl From<mk_core::DestinationClass> for DestinationClass {
+    fn from(c: mk_core::DestinationClass) -> Self {
+        match c {
+            mk_core::DestinationClass::ThisMachine => Self::ThisMachine,
+            mk_core::DestinationClass::LocalNetwork => Self::LocalNetwork,
+            mk_core::DestinationClass::Internet => Self::Internet,
+        }
+    }
+}
+
+impl From<DestinationClass> for mk_core::DestinationClass {
+    fn from(c: DestinationClass) -> Self {
+        match c {
+            DestinationClass::ThisMachine => Self::ThisMachine,
+            DestinationClass::LocalNetwork => Self::LocalNetwork,
+            DestinationClass::Internet => Self::Internet,
+        }
+    }
+}
+
+/// Where an endpoint's host points now.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Destination {
+    /// `scheme://host:port`: what a permission is confirmed for.
+    pub origin: String,
+    pub host: String,
+    pub port: u16,
+    pub class: DestinationClass,
+    /// Every address the host resolved to.
+    pub addresses: Vec<String>,
+    /// `false` for plain `http`: the key and the data go unencrypted.
+    pub encrypted: bool,
+}
+
+impl From<mk_core::DestinationInfo> for Destination {
+    fn from(d: mk_core::DestinationInfo) -> Self {
+        Self {
+            origin: d.origin,
+            host: d.host,
+            port: d.port,
+            class: d.class.into(),
+            addresses: d.addresses.iter().map(ToString::to_string).collect(),
+            encrypted: d.encrypted,
+        }
+    }
+}
+
+fn destination(
+    d: Result<mk_core::DestinationInfo, String>,
+) -> (Option<Destination>, Option<String>) {
+    match d {
+        Ok(d) => (Some(d.into()), None),
+        Err(e) => (None, Some(e)),
+    }
+}
+
+/// Whether an endpoint has its key. The key itself never crosses IPC to the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum KeyState {
+    None,
+    Stored,
+    /// It had a key, but the secret store has none now (a session-only key after a restart).
+    Missing,
+}
+
+/// The last test of an endpoint.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EndpointTest {
+    /// Milliseconds since the Unix epoch, UTC.
+    #[ts(type = "number")]
+    pub tested_at: i64,
+    pub ok: bool,
+    pub message: String,
+    #[ts(type = "number | null")]
+    pub response_ms: Option<i64>,
+    pub reported_model: Option<String>,
+}
+
+/// An endpoint on the AI models screen (US-09.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EndpointItem {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub key: KeyState,
+    /// From the last test; `null` until tested (US-09.6 AC3).
+    pub structured_output: Option<bool>,
+    pub last_test: Option<EndpointTest>,
+    pub destination: Option<Destination>,
+    /// Why the host could not be resolved now.
+    pub destination_error: Option<String>,
+}
+
+impl From<mk_core::EndpointInfo> for EndpointItem {
+    fn from(e: mk_core::EndpointInfo) -> Self {
+        let (destination, destination_error) = destination(e.destination);
+        Self {
+            id: e.id,
+            name: e.name,
+            base_url: e.base_url,
+            model: e.model,
+            key: match e.key {
+                mk_core::KeyState::None => KeyState::None,
+                mk_core::KeyState::Stored => KeyState::Stored,
+                mk_core::KeyState::Missing => KeyState::Missing,
+            },
+            structured_output: e.structured_output,
+            last_test: e.last_test.map(|t| EndpointTest {
+                tested_at: t.tested_at_ms,
+                ok: t.ok,
+                message: t.message,
+                response_ms: t.response_ms,
+                reported_model: t.reported_model,
+            }),
+            destination,
+            destination_error,
+        }
+    }
+}
+
+/// What to do with the key on save. A typed key goes straight to the secret store.
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum KeyInput {
+    Keep,
+    Set { value: String },
+    Remove,
+}
+
+// Never prints the key.
+impl std::fmt::Debug for KeyInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            KeyInput::Keep => "Keep",
+            KeyInput::Set { .. } => "Set(..)",
+            KeyInput::Remove => "Remove",
+        })
+    }
+}
+
+/// A new endpoint (`id: null`) or an edit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EndpointSave {
+    pub id: Option<String>,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub key: KeyInput,
+}
+
+impl From<EndpointSave> for mk_core::EndpointInput {
+    fn from(s: EndpointSave) -> Self {
+        Self {
+            id: s.id,
+            name: s.name,
+            base_url: s.base_url,
+            model: s.model,
+            key: match s.key {
+                KeyInput::Keep => mk_core::KeyChange::Keep,
+                KeyInput::Set { value } => {
+                    mk_core::KeyChange::Set(mk_core::SecretString::from(value))
+                }
+                KeyInput::Remove => mk_core::KeyChange::Remove,
+            },
+        }
+    }
+}
+
+/// Where keys are kept (ADR-0012).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SecretStoreInfo {
+    /// `false`: no system keychain; keys last only until the app quits.
+    pub keyring: bool,
+    /// The plain words to show when keys are kept for this session only.
+    pub notice: Option<String>,
+}
+
+impl From<mk_core::SecretStoreStatus> for SecretStoreInfo {
+    fn from(s: mk_core::SecretStoreStatus) -> Self {
+        Self {
+            keyring: s.kind == mk_core::SecretStoreKind::Keyring,
+            notice: s.notice.map(str::to_string),
+        }
+    }
+}
+
+/// What the endpoint test found (US-09.6 AC2/AC3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EndpointTestReport {
+    /// The chat call worked.
+    pub ok: bool,
+    /// One line: the model and time, or the plain error.
+    pub summary: String,
+    pub origin: String,
+    pub addresses: Vec<String>,
+    pub class: Option<DestinationClass>,
+    pub reported_model: Option<String>,
+    #[ts(type = "number | null")]
+    pub response_ms: Option<u64>,
+    /// The stable code of the chat error.
+    pub error_code: Option<String>,
+    /// `null` when the chat call failed and it was not tried.
+    pub structured_output: Option<bool>,
+    /// Reported, not required.
+    pub embeddings_dimensions: Option<u32>,
+    pub embeddings_error: Option<String>,
+}
+
+impl From<mk_core::TestReport> for EndpointTestReport {
+    fn from(r: mk_core::TestReport) -> Self {
+        let summary = r.summary();
+        let (reported_model, response_ms, error_code) = match &r.chat {
+            Ok(c) => (c.reported_model.clone(), Some(c.response_ms), None),
+            Err(e) => (None, None, Some(e.code.as_str().to_string())),
+        };
+        let (embeddings_dimensions, embeddings_error) = match &r.embeddings {
+            None => (None, None),
+            Some(Ok(e)) => (Some(u32::try_from(e.dimensions).unwrap_or(u32::MAX)), None),
+            Some(Err(e)) => (None, Some(e.message.clone())),
+        };
+        Self {
+            ok: r.ok(),
+            summary,
+            origin: r.origin.key(),
+            addresses: r.addresses.iter().map(ToString::to_string).collect(),
+            class: r.class.map(Into::into),
+            reported_model,
+            response_ms,
+            error_code,
+            structured_output: r.structured_output,
+            embeddings_dimensions,
+            embeddings_error,
+        }
+    }
+}
+
+/// A project's permission for one endpoint (domain §7.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum EndpointAccess {
+    /// Resolves to this machine: no permission needed.
+    ThisMachine,
+    NotAllowed,
+    #[serde(rename_all = "camelCase")]
+    Allowed {
+        class: DestinationClass,
+        origin: String,
+        /// ISO 8601, UTC.
+        confirmed_at: String,
+    },
+    NeedsReconfirmation {
+        reason: String,
+    },
+}
+
+impl From<mk_core::Access> for EndpointAccess {
+    fn from(a: mk_core::Access) -> Self {
+        match a {
+            mk_core::Access::ThisMachine => Self::ThisMachine,
+            mk_core::Access::NotAllowed => Self::NotAllowed,
+            mk_core::Access::Allowed {
+                class,
+                origin,
+                confirmed_at,
+            } => Self::Allowed {
+                class: class.into(),
+                origin,
+                confirmed_at,
+            },
+            mk_core::Access::NeedsReconfirmation { reason } => Self::NeedsReconfirmation { reason },
+        }
+    }
+}
+
+/// An endpoint in the project's "AI endpoints" settings (US-09.7).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProjectEndpoint {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub model: String,
+    pub destination: Option<Destination>,
+    pub destination_error: Option<String>,
+    pub access: EndpointAccess,
+}
+
+impl From<mk_core::ProjectEndpoint> for ProjectEndpoint {
+    fn from(p: mk_core::ProjectEndpoint) -> Self {
+        let (destination, destination_error) = destination(p.destination);
+        Self {
+            id: p.id,
+            name: p.name,
+            base_url: p.base_url,
+            model: p.model,
+            destination,
+            destination_error,
+            access: p.access.into(),
+        }
+    }
+}
+
+/// What the "Allow for this project" dialog shows (US-09.7 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AllowPrompt {
+    pub endpoint_id: String,
+    pub name: String,
+    pub destination: Destination,
+    /// `false` for this machine: nothing to confirm.
+    pub needs_confirmation: bool,
+}
+
+impl From<mk_core::AllowPrompt> for AllowPrompt {
+    fn from(p: mk_core::AllowPrompt) -> Self {
+        Self {
+            endpoint_id: p.endpoint_id,
+            name: p.name,
+            destination: p.destination.into(),
+            needs_confirmation: p.needs_confirmation,
+        }
+    }
+}
+
+/// What project data was sent for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum Purpose {
+    Extraction,
+    Embeddings,
+    SearchQuery,
+}
+
+/// One destination that received this project's data (US-09.8 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EgressRecord {
+    pub host: String,
+    pub class: DestinationClass,
+    pub purpose: Purpose,
+    /// ISO 8601, UTC.
+    pub first_sent_at: String,
+    pub last_sent_at: String,
+}
+
+impl From<mk_core::EgressRecordInfo> for EgressRecord {
+    fn from(r: mk_core::EgressRecordInfo) -> Self {
+        Self {
+            host: r.host,
+            class: r.class.into(),
+            purpose: match r.purpose {
+                mk_core::Purpose::Extraction => Purpose::Extraction,
+                mk_core::Purpose::Embeddings => Purpose::Embeddings,
+                mk_core::Purpose::SearchQuery => Purpose::SearchQuery,
+            },
+            first_sent_at: r.first_sent_at,
+            last_sent_at: r.last_sent_at,
+        }
+    }
+}

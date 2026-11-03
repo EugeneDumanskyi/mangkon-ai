@@ -660,6 +660,107 @@ pub async fn open_link(url: String) -> Result<(), IpcError> {
     crate::os_open::open(std::ffi::OsStr::new(&url)).map_err(os_error)
 }
 
+// ---- M5a: endpoints (app level) and their use per project (US-09.6, US-09.7, US-09.8) ----
+
+/// Every endpoint with where its host points now (US-09.6, US-09.7 AC4).
+#[tauri::command]
+pub async fn endpoints_list(
+    state: State<'_, AppState>,
+) -> Result<Vec<ipc::EndpointItem>, IpcError> {
+    let list = state.workspace()?.endpoints()?;
+    Ok(list.into_iter().map(Into::into).collect())
+}
+
+/// Adds or edits an endpoint. A typed key goes to the secret store only (US-09.6 AC1).
+#[tauri::command]
+pub async fn endpoint_save(
+    state: State<'_, AppState>,
+    endpoint: ipc::EndpointSave,
+) -> Result<ipc::EndpointItem, IpcError> {
+    Ok(state.workspace()?.save_endpoint(endpoint.into())?.into())
+}
+
+/// Deletes an endpoint and its key.
+#[tauri::command]
+pub async fn endpoint_delete(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    Ok(state.workspace()?.delete_endpoint(&id)?)
+}
+
+/// Tests an endpoint with fixed texts (US-09.6 AC2/AC3). Sends no project data.
+#[tauri::command]
+pub async fn endpoint_test(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ipc::EndpointTestReport, IpcError> {
+    Ok(state.workspace()?.test_endpoint(&id)?.into())
+}
+
+/// Where a base URL being typed points: host, class and addresses.
+#[tauri::command]
+pub async fn resolve_destination(
+    state: State<'_, AppState>,
+    base_url: String,
+) -> Result<ipc::Destination, IpcError> {
+    Ok(state.workspace()?.resolve_destination(&base_url)?.into())
+}
+
+/// Where keys are kept, with the notice when only for this session (ADR-0012).
+#[tauri::command]
+pub async fn secret_store_status(
+    state: State<'_, AppState>,
+) -> Result<ipc::SecretStoreInfo, IpcError> {
+    Ok(state.workspace()?.secret_store_status().into())
+}
+
+/// The open project's view of every endpoint (US-09.7 AC1).
+#[tauri::command]
+pub async fn project_endpoints(
+    state: State<'_, AppState>,
+) -> Result<Vec<ipc::ProjectEndpoint>, IpcError> {
+    let open = state.current()?;
+    let list = state.workspace()?.project_endpoints(&open.project)?;
+    Ok(list.into_iter().map(Into::into).collect())
+}
+
+/// What the "Allow for this project" dialog shows, resolved now (US-09.7 AC2).
+#[tauri::command]
+pub async fn endpoint_allow_prepare(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<ipc::AllowPrompt, IpcError> {
+    state.current()?;
+    Ok(state.workspace()?.prepare_allow(&id)?.into())
+}
+
+/// The user confirmed the exact origin and class shown (US-09.7 AC2, INV-EG-02).
+#[tauri::command]
+pub async fn endpoint_allow_confirm(
+    state: State<'_, AppState>,
+    id: String,
+    origin: String,
+    class: ipc::DestinationClass,
+) -> Result<(), IpcError> {
+    let open = state.current()?;
+    Ok(state
+        .workspace()?
+        .confirm_allow(&open.project, &id, &origin, class.into())?)
+}
+
+#[tauri::command]
+pub async fn endpoint_revoke(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    let open = state.current()?;
+    Ok(state.workspace()?.revoke_endpoint(&open.project, &id)?)
+}
+
+/// "Data sent from this project" (US-09.8 AC2).
+#[tauri::command]
+pub async fn egress_records(
+    state: State<'_, AppState>,
+) -> Result<Vec<ipc::EgressRecord>, IpcError> {
+    let list = state.current()?.project.egress_records()?;
+    Ok(list.into_iter().map(Into::into).collect())
+}
+
 /// Sets the channel core events go to (`UiEvent`). Replaces the previous one.
 #[tauri::command]
 pub async fn subscribe(

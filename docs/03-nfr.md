@@ -155,10 +155,10 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-SEC-01 | No telemetry, analytics, or crash reporting | 0 such code paths or dependencies | Code review + dependency check | Brief |
 | NFR-SEC-02 | Network use | Only model download hosts (Hugging Face and its CDN) and user-set endpoints | Network capture during a full TD-1 run + model download | Brief |
 | NFR-SEC-03 | Works offline after setup | Full TD-1 run with network off passes (local model) | Offline test | Brief |
-| NFR-SEC-04 | Non-local endpoints off by default per project | 100% of new projects | Automated test | Brief |
+| NFR-SEC-04 | Non-local endpoints off by default per project | 100% of new projects | Automated test | Brief · M5a: met, `nfr_sec_04_new_project_allows_no_non_local_endpoint` (local network, IPv6 ULA, CGNAT and a mixed host: all Not allowed, the gate refuses before any request) (`13-model-manager.md` §1) |
 | NFR-SEC-05 | Destination always visible during AI work | 100% of AI runs | UI test | Brief |
 | NFR-SEC-06 | `llama-server` network binding | `127.0.0.1` only, random free port | Port scan from another machine | ASSUMPTION |
-| NFR-SEC-07 | API keys | Stored in OS keychain only; never in project DB, config files, or logs | Grep project folder + logs for key | ASSUMPTION |
+| NFR-SEC-07 | API keys | Stored in OS keychain only; never in project DB, config files, or logs | Grep project folder + logs for key. Since M5a: every file under the app-data and project folders (WAL and SHM included), the webview data folder, and the app's stdout and stderr; there is no log file yet (architecture §8) | ASSUMPTION · M5a: met with fakes, the real GNOME Keyring and with no Secret Service; the release-app check of the webview data folder is still to do by hand (`13-model-manager.md` §3) |
 | NFR-SEC-08 | Logs | No document content in logs by default; max 50 MB, rotated | Log review | ASSUMPTION |
 | NFR-SEC-09 | Viewer safety | 0 network requests and 0 script runs when viewing TD-1 emails/HTML | Network capture + CSP check | ASSUMPTION |
 | NFR-SEC-10 | Tauri security | Strict content security policy; only needed IPC commands exposed; no remote URLs loaded in the app window | Config review | ASSUMPTION |
@@ -194,7 +194,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-COMP-02 | CPU architectures | macOS arm64; Windows x64; Linux x64. Others best effort | CI matrix | ASSUMPTION |
 | NFR-COMP-03 | GPU support | NVIDIA (CUDA) full; Apple (Metal) full; AMD/Intel (Vulkan) best effort | Maintainer + community tests | Brief |
 | NFR-COMP-04 | NVIDIA driver | CUDA 12-capable driver | Hardware check message | ASSUMPTION |
-| NFR-COMP-05 | External endpoints | OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`; tested with llama-server, Ollama, LM Studio | Endpoint test suite | Brief · ASSUMPTION (test list) |
+| NFR-COMP-05 | External endpoints | OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`; tested with llama-server, Ollama, LM Studio | Endpoint test suite | Brief · ASSUMPTION (test list) · M5a: suite is `mangkon-cli endpoint test`; passes against the fake server; real runtimes not run yet (`13-model-manager.md` §2) |
 | NFR-COMP-06 | Text encodings | UTF-8, UTF-16 (BOM), Windows-1252 | Test files | ASSUMPTION · M3a: met for TXT/MD, CSV, JSON and HTML (`nfr_comp_06_encodings`): a BOM picks UTF-8 or UTF-16; else valid UTF-8; else Windows-1252, unless the bytes look binary ("Unknown text encoding"). `<meta charset>` is not read (ASSUMPTION). Email parts use their MIME charset |
 | NFR-COMP-07 | Project portability | A project folder copied to another supported OS opens and works (given original files at same or relocated path) | Cross-OS test | ASSUMPTION |
 
