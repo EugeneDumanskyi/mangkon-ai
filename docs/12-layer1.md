@@ -320,5 +320,5 @@ All under the mark, so no index on the sort columns and no `connection_find` tab
 ### Not done yet (needs a person)
 
 - **Timings:** done above. Open: the 4.2 s commit outlier on TD-2.
-- **Hand walk on Linux (NFR-USE-06):** Tab through filter bar → list → evidence → viewer; `/`, `i`, arrows; scroll the list or open a connection, add files, see "N new connections — Show", click Show.
+- **Hand walk on Linux (NFR-USE-06): done 2026-11-03** (COSMIC, Wayland, release build). Tab order filter bar → list → evidence → viewer, `/`, `i`, list keys, filters and sort by keyboard, evidence to source, Back, Ignore / Show ignored / Un-ignore, and the "N new connections — Show" bar after adding a second folder ("3 new connections") all worked as expected. The walk found one defect, fixed: the native folder and file dialogs froze the window and closed the app (the blocking `rfd` call on the main thread deadlocked with GTK's main loop). `pick_folder` and `pick_files` now use the async `rfd` API.
 - **First demo (criterion 8):** drop TD-1 → connections → pick a cross-source email → evidence by document → one click to the source → Ignore → Show ignored → Un-ignore. The recording moved to M9 (2026-11-03) and is the maintainer's.

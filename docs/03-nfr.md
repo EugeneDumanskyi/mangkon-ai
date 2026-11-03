@@ -178,7 +178,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION · M2a: `cargo xtask build --release` from `cargo clean` 54.8 s on RM-1, incl. source download, `npm ci`, Tesseract (`10-walking-skeleton.md` §2) |
 | NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief · M4d: click count tested for connection → evidence → source; click sweep 50 / 50 and 200 / 200 right |
 | NFR-USE-05 | Error messages | Every failed file has a plain-English reason + path; no raw stack traces in the main UI | TD-3 review | Brief · ASSUMPTION (wording rule) |
-| NFR-USE-06 | Keyboard | Connections screen, source viewer, and review queue fully usable by keyboard | Manual test | ASSUMPTION |
+| NFR-USE-06 | Keyboard | Connections screen, source viewer, and review queue fully usable by keyboard | Manual test | ASSUMPTION · M4d: hand walk on Linux passed 2026-11-03 (connections screen and viewer); review queue not built yet |
 | NFR-USE-07 | Window size | Usable at 1280 × 800; supports 100–200% display scaling | Manual test | ASSUMPTION |
 | NFR-USE-08 | Light and dark theme | Both, following OS setting | Manual test | ASSUMPTION |
 | NFR-USE-09 | Contrast | WCAG 2.1 AA contrast on main screens | Contrast checker | ASSUMPTION |

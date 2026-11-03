@@ -1,12 +1,12 @@
 //! IPC commands. Each one is listed in `build.rs` and granted in a capability file.
 //!
 //! Project commands are `async`, so Tauri runs them off the main thread: a read never holds up
-//! the window, and `pick_folder` can wait for the dialog it runs on the main thread.
+//! the window.
 
 use std::path::PathBuf;
 
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::State;
 
 use crate::ipc::{self, IpcError};
 use crate::state::{AppState, Target};
@@ -19,47 +19,31 @@ pub fn app_info() -> ipc::AppInfo {
     mk_core::app_info().into()
 }
 
-/// Runs a native dialog (`rfd`, GTK 3 on Linux) on the main thread with the main window as its
-/// parent, and waits for it off the main thread. The UI gets no file-system permission
+/// Native dialogs use the async `rfd` API. The blocking one waits for GTK's main context, which
+/// the Tauri event loop owns, so calling it from the main thread deadlocks (window frozen, then
+/// gone). The async one lets the event loop keep running. The UI gets no file-system permission
 /// (ADR-0003).
-async fn dialog<R: Runtime, T: Send + 'static>(
-    app: &AppHandle<R>,
-    show: impl FnOnce(rfd::FileDialog) -> Option<T> + Send + 'static,
-) -> Result<Option<T>, IpcError> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| IpcError::new("internal", "The main window is gone."))?;
-    let (tx, rx) = std::sync::mpsc::channel();
-    app.run_on_main_thread(move || {
-        let _ = tx.send(show(rfd::FileDialog::new().set_parent(&window)));
-    })
-    .map_err(|e| IpcError::new("internal", e.to_string()))?;
-    tauri::async_runtime::spawn_blocking(move || rx.recv().ok().flatten())
-        .await
-        .map_err(|e| IpcError::new("internal", e.to_string()))
-}
-
 /// The native folder dialog. `null` when the user cancels.
 #[tauri::command]
-pub async fn pick_folder<R: Runtime>(
-    app: AppHandle<R>,
-    title: String,
-) -> Result<Option<String>, IpcError> {
-    let picked = dialog(&app, move |d| d.set_title(title).pick_folder()).await?;
-    Ok(picked.map(|p| p.display().to_string()))
+pub async fn pick_folder(title: String) -> Result<Option<String>, IpcError> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .pick_folder()
+        .await;
+    Ok(picked.map(|h| h.path().display().to_string()))
 }
 
 /// The native file dialog, several files at once (Add files…). Empty when the user cancels.
 #[tauri::command]
-pub async fn pick_files<R: Runtime>(
-    app: AppHandle<R>,
-    title: String,
-) -> Result<Vec<String>, IpcError> {
-    let picked = dialog(&app, move |d| d.set_title(title).pick_files()).await?;
+pub async fn pick_files(title: String) -> Result<Vec<String>, IpcError> {
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .pick_files()
+        .await;
     Ok(picked
         .unwrap_or_default()
         .into_iter()
-        .map(|p| p.display().to_string())
+        .map(|h| h.path().display().to_string())
         .collect())
 }
 
