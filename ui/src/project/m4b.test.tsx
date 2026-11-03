@@ -39,6 +39,8 @@ const connection = (over: Partial<ConnectionItem>): ConnectionItem => ({
   fileTypeCount: 1,
   mentionCount: 3,
   lowConfidence: false,
+  fileTypes: [],
+  ignored: false,
   label: null,
   fromTable: false,
   ...over,

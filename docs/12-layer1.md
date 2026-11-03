@@ -253,3 +253,72 @@ Pending: the custom-pattern re-run on TD-2, Stage A with 3 patterns on the 500 M
 | US-05.3 | `us_05_3_ac1_entity_span_inside_cell`, `us_05_3_json_names_from_table` (CsvCell / JsonValue locators, record links) |
 | Decisions survive | `ignore_on_an_entity_survives_rescan_and_rebuild`; `derived_property.rs` gains pattern, re-run, confirm and entity-ignore operations (48 cases in CI, 400 run once) |
 | UI | `m4c.test.tsx`: pattern label, locked name, too-broad text, mapping pill, mapping form, "Name (from table)" |
+
+## 5. M4d — Connections screen and acceptance
+
+### What changed
+
+- **Derived `connection` columns** (`DERIVED_VERSION` 4, no schema migration, ADR-0005): `kind`, `value` (an entity's display name; a custom pattern's value without its label) and `file_types` (counted file types, sorted, `,csv,eml,pdf,`). Filter, find, sort and the row need no join. They are computed in the same rebuild step as the counts, so a full rebuild gives the same rows. A project made by an older app is rebuilt on first open.
+- **Query.** `ConnectionQuery { kinds, min_sources, file_types, find, sort, descending, include_ignored }`. The default order is domain §9.2. Any other column (value without case, type, sources, mentions, file types) breaks ties by the subject key, and the keyset cursor carries the last row's value and type. `find` is a case-insensitive `LIKE` contains with `%`, `_` and `\` escaped. `connection_count(query)` and `ignored_count()` feed the list length and the "Show ignored (N)" label.
+- **Evidence.** Each occurrence carries a snippet (`mk_search::snippet` over the card-masked segment text, the value marked) and its document id; the panel groups by document (name, file type, count, then place and snippet per mention).
+- **Screen.** Filter bar (type incl. "Name (from table)", minimum sources, file type, find with a 250 ms delay, Show ignored), sortable headers with `aria-sort` (click, flip, back to the ranking), Ignore / Un-ignore per row, empty states, and the "N new connections — Show" bar. The list holds still while the user has scrolled or has a connection open: `useKeysetList` stops refetching the pages (the count keeps following) and `refresh()` loads them on "Show" or after an ignore.
+- **Keyboard.** List: ↑ ↓ Home End PageUp PageDown Enter (as before), `i` ignore / un-ignore the active row, `/` focuses Find from anywhere on the screen, Esc in Find returns to the list. Tab order is DOM order: filter bar, sort headers, list, evidence, viewer. Ignore buttons inside rows are not tab stops (`i` does the same).
+- **NFR-QA-10 in `check_health`.** `HealthReport.weak_connections` lists connection keys with fewer than two counted documents; the kill test uses `is_healthy`, so it now checks this too.
+
+### Deviations from the plan
+
+- `kind`, `value` and `file_types` are stored in the `connection` table only, not in the `mk-graph` `ConnectionRow` or reference model. They are functions of the same stored mentions, and the rebuild-equals-incremental check still compares the ranking row; the new columns are rebuilt by the same code in both paths and are covered by `us_07_1_filters_and_find` and `nfr_rel_09_decisions_survive`.
+- No index was added for the sort columns yet; see Measurements.
+- "N documents" in the empty state counts files read (done), not skipped or failed ones.
+
+### Tests
+
+| Check | Test |
+|---|---|
+| US-07.1 AC2/AC3, find | `us_07_1_filters_and_find` (core), `connections.test.tsx` (row, filter bar) |
+| US-07.2 sort and paging | `us_07_2_sort_pages_without_gaps` (every column, both directions, page sizes 1–3 equal one page), `connections.test.tsx` (header cycle, `aria-sort`) |
+| US-07.3 AC1 snippets | `us_07_3_occurrence_snippets` (value marked; card-like number masked, NFR-SEC-14), `connections.test.tsx` (grouping, one button per mention) |
+| US-07.4 | `us_07_4_ignore_and_show_ignored`, `connections.test.tsx` |
+| US-07.5 | `connections.test.tsx` (bar, count). The hold itself (`useKeysetList` with `paused`) has no automated test: the UI tests have no DOM. Check it by hand (below). |
+| US-07.6 | `us_07_6_summary_counts_documents`, `connections.test.tsx` (messages) |
+| NFR-QA-10 | `nfr_qa_10_synthetic`, `nfr_qa_10_td1` (health check and ≥ 2 mentions in ≥ 2 documents per connection, ignored ones too) |
+| NFR-REL-09 | `nfr_rel_09_decisions_survive`: ignore / un-ignore of an identifier and of a mapped entity survive a re-scan with a changed file, "Re-process" of identifiers, a full rebuild, and a re-open after an older derived version (rebuilt on open) |
+
+Rebuild: equals the incremental rows and the sources on TD-1 + TD-3 (`mangkon-cli rebuild`: 138 identifiers, 51 connections in this run; the search index is in step).
+
+### Measurements (RM-1, idle, 2026-11-03, `cargo xtask build --release`, Wayland)
+
+**Kill test and bench.** `mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1`: **20 / 20** passed. `mangkon-cli bench --baseline crates/mk-bench/baseline/td1.json`: gate passed, NFR-QA-03..06 and 13 unchanged (100 / 99.7 / 98.6 / 100 / 100), 0 failed files.
+
+**NFR-PERF-10 (TD-1, first cross-source identifier ≤ 10 s).** The app (`MK_UI_TIMING=1`, fresh project, source `testdata/td1/synthetic`) started, read the whole folder and finished the run in **3.0 s** by the wall clock, so the first row is on screen well before that. This is an upper bound, not a timed first row. **Met.**
+
+**NFR-PERF-34 (≤ 2 s after a file finishes).** Screen side on a TD-2 ingest in the release app: 343 events, p50 8 ms, **p95 19 ms**, max 33 ms. The commit side (p95 29.7 ms at M4a) was not measured again in this build; with the 500 ms debounce the total stays far under 2 s unless the commit has grown 50-fold. **Met on the screen side; commit side carried over from M4a.**
+
+**NFR-PERF-02 (TD-2 opens to a usable connections screen ≤ 2 s).** `cargo run --release -p mk-core --example m4d_timing -- <project> 10` on a TD-2 project (10,000 files, 255,600 connections): open + summary + count + first page of 60, 10 runs, p50 28 ms, **p95 48 ms**. This is the core path with a warm file cache; the UI adds one render and the 60-row page. **Met** (not the window start-up, which is the shell's).
+
+**Filter / find / sort at 255,600 connections (pass mark ≤ 100 ms p95).** Count + first page of 60, 10 runs each, same project:
+
+| Query | Matches | p95 |
+|---|---|---|
+| default order | 255,600 | 9.2 ms |
+| type = email | 4,954 | 11.6 ms |
+| ≥ 3 sources | 255,416 | 9.1 ms |
+| file type = pdf | 160 | 17.6 ms |
+| find "acme" (no match, full scan) | 0 | 37.9 ms |
+| find "1" (broad) | 167,839 | 16.6 ms |
+| sort value ↑ / ↓ | 255,600 | 24.9 / 23.9 ms |
+| sort type | 255,600 | 24.4 ms |
+| sort sources ↓ / mentions ↓ / file types | 255,600 | 22.0 / 22.2 / 22.8 ms |
+| type + find + sort value | 4,947 | 24.8 ms |
+
+All under the mark, so no index on the sort columns and no `connection_find` table. **Met.**
+
+**NFR-PERF-04 / NFR-QA-12 on the new list (`MK_VIEW_SWEEP=clicks`, 50 seeded clicks).** TD-1 (81 files, in-app ingest): p50 33 ms, **p95 67 ms**, max 100 ms; 50 / 50 highlighted the right text; Next then Back restored the scroll in 11 / 11; kinds email 14, page 18, paragraphs 6, text 7, table 4, json 1. TD-2 project: 50 clicks (all table), p95 50 ms, 50 / 50. **Met.**
+
+**Observation (not fixed here, not M4d).** The click sweep on a TD-1 project made with `mangkon-cli ingest` and opened in a fresh app data folder, without `MK_UI_TIMING_SOURCE`, never finished (killed after 120 s, no output). The same project finishes at once when `MK_UI_TIMING_SOURCE` is set, and a project made by the app finishes when reopened. I did not find the cause; a first guess is the page render on a project with no page cache, in an app data folder that has no `tessdata/` yet. It needs a look before a user can hit it.
+
+### Not done yet (needs a person)
+
+- **Timings:** done above; open: the commit side of NFR-PERF-34 and a timed first row for NFR-PERF-10.
+- **Hand walk on Linux (NFR-USE-06):** Tab through filter bar → list → evidence → viewer; `/`, `i`, arrows; scroll the list or open a connection, add files, see "N new connections — Show", click Show.
+- **First demo (criterion 8):** drop TD-1 → connections → pick a cross-source email → evidence by document → one click to the source → Ignore → Show ignored → Un-ignore. The recording is the maintainer's.

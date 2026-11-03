@@ -50,7 +50,9 @@ fn us_07_3_ac2_occurrence_opens_its_line_and_cell() {
     let mut rows = Vec::new();
     let mut next = None;
     loop {
-        let page = project.connections_page(next.as_ref(), 1).unwrap();
+        let page = project
+            .connections_page(&Default::default(), next.as_ref(), 1)
+            .unwrap();
         assert!(page.rows.len() <= 1);
         rows.extend(page.rows);
         match page.next {

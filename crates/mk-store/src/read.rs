@@ -162,38 +162,198 @@ pub(crate) fn pending_items(conn: &Connection) -> Result<Vec<PendingWork>, Store
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// One page of connections in ranking order (domain §9.2), after `after` (keyset paging).
-/// Ignored rows only when `include_ignored` (US-07.4).
+/// The column the connections list is ordered by (US-07.2). [`SortColumn::Rank`] is the
+/// default ranking of domain §9.2, ascending only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SortColumn {
+    #[default]
+    Rank,
+    Value,
+    Kind,
+    Sources,
+    Mentions,
+    FileTypes,
+}
+
+/// What the Connections screen asks for (US-07.1 AC3, US-07.2, US-07.4).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ConnectionQuery {
+    /// Type names (`email`, `person`, ...); empty = all.
+    pub kinds: Vec<String>,
+    /// At least this many sources.
+    pub min_sources: u64,
+    /// Connections found in any of these file types; empty = all.
+    pub file_types: Vec<String>,
+    /// Case-insensitive "contains" on the shown value; blank = no filter.
+    pub find: String,
+    pub sort: SortColumn,
+    pub descending: bool,
+    pub include_ignored: bool,
+}
+
+/// A connection row with what the list shows of it (M4d).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ListedConnection {
+    pub row: ConnectionRow,
+    pub kind: String,
+    pub value: String,
+    /// Counted file types, sorted.
+    pub file_types: Vec<String>,
+}
+
+/// Where a connections page continues: the last row loaded.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ListCursor {
+    pub rank: RankKey,
+    pub kind: String,
+    pub value: String,
+}
+
+impl std::ops::Deref for ListedConnection {
+    type Target = ConnectionRow;
+    fn deref(&self) -> &ConnectionRow {
+        &self.row
+    }
+}
+
+impl ListedConnection {
+    pub fn cursor(&self) -> ListCursor {
+        ListCursor {
+            rank: self.row.rank_key(),
+            kind: self.kind.clone(),
+            value: self.value.clone(),
+        }
+    }
+}
+
+/// Escapes `%`, `_` and the escape character for `LIKE ... ESCAPE '\\'`.
+fn like_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The WHERE conditions of a query and their parameters (the parameters are `?1..`).
+fn connection_filter(query: &ConnectionQuery) -> (String, Vec<rusqlite::types::Value>) {
+    use rusqlite::types::Value;
+    let mut sql = String::from("(?1 OR ignored = 0) AND source_count >= ?2");
+    let mut args: Vec<Value> = vec![
+        Value::Integer(i64::from(query.include_ignored)),
+        Value::Integer(i64::try_from(query.min_sources).unwrap_or(i64::MAX)),
+    ];
+    if !query.kinds.is_empty() {
+        let marks: Vec<String> = query
+            .kinds
+            .iter()
+            .map(|k| {
+                args.push(Value::Text(k.clone()));
+                format!("?{}", args.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND kind IN ({})", marks.join(",")));
+    }
+    if !query.file_types.is_empty() {
+        let likes: Vec<String> = query
+            .file_types
+            .iter()
+            .map(|t| {
+                args.push(Value::Text(format!("%,{},%", like_escape(t))));
+                format!("file_types LIKE ?{} ESCAPE '\\'", args.len())
+            })
+            .collect();
+        sql.push_str(&format!(" AND ({})", likes.join(" OR ")));
+    }
+    let find = query.find.trim();
+    if !find.is_empty() {
+        args.push(Value::Text(format!("%{}%", like_escape(find))));
+        sql.push_str(&format!(" AND value LIKE ?{} ESCAPE '\\'", args.len()));
+    }
+    (sql, args)
+}
+
+/// One page of connections in the query's order, after `after` (keyset paging, ADR-0003). The
+/// default order is domain §9.2; any other column ties on the subject key.
 pub(crate) fn connections_page(
     conn: &Connection,
-    after: Option<&RankKey>,
+    query: &ConnectionQuery,
+    after: Option<&ListCursor>,
     limit: usize,
-    include_ignored: bool,
-) -> Result<Vec<ConnectionRow>, StoreError> {
-    let sql = "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                      ignored, subject_kind
-               FROM connection
-               WHERE (?1 OR ignored = 0)
-                 AND (?2 IS NULL OR
-                      (low_confidence, -source_count, -file_type_count, -mention_count, subject_key)
-                      > (?2, -?3, -?4, -?5, ?6))
-               ORDER BY low_confidence, source_count DESC, file_type_count DESC,
-                        mention_count DESC, subject_key
-               LIMIT ?7";
-    let mut stmt = conn.prepare_cached(sql)?;
-    let a = after;
-    let rows = stmt.query_map(
-        params![
-            include_ignored,
-            a.map(|k| k.low_confidence),
-            a.map(|k| k.source_count as i64),
-            a.map(|k| k.file_type_count as i64),
-            a.map(|k| k.mention_count as i64),
-            a.map(|k| k.subject_key.as_str()),
-            limit as i64
-        ],
-        row_to_connection,
-    )?;
+) -> Result<Vec<ListedConnection>, StoreError> {
+    use rusqlite::types::Value;
+    let (mut sql, mut args) = connection_filter(query);
+    let mut next = |v: Value| {
+        args.push(v);
+        format!("?{}", args.len())
+    };
+    let order = if query.sort == SortColumn::Rank {
+        if let Some(c) = after {
+            let k = &c.rank;
+            let ps = [
+                next(Value::Integer(i64::from(k.low_confidence))),
+                next(Value::Integer(k.source_count as i64)),
+                next(Value::Integer(k.file_type_count as i64)),
+                next(Value::Integer(k.mention_count as i64)),
+                next(Value::Text(k.subject_key.clone())),
+            ];
+            sql.push_str(&format!(
+                " AND (low_confidence, -source_count, -file_type_count, -mention_count, subject_key)
+                   > ({}, -{}, -{}, -{}, {})",
+                ps[0], ps[1], ps[2], ps[3], ps[4]
+            ));
+        }
+        "low_confidence, source_count DESC, file_type_count DESC, mention_count DESC, subject_key"
+            .to_string()
+    } else {
+        let col = match query.sort {
+            SortColumn::Value => "value COLLATE NOCASE",
+            SortColumn::Kind => "kind",
+            SortColumn::Sources => "source_count",
+            SortColumn::Mentions => "mention_count",
+            _ => "file_type_count",
+        };
+        if let Some(c) = after {
+            let v = match query.sort {
+                SortColumn::Value => Value::Text(c.value.clone()),
+                SortColumn::Kind => Value::Text(c.kind.clone()),
+                SortColumn::Sources => Value::Integer(c.rank.source_count as i64),
+                SortColumn::Mentions => Value::Integer(c.rank.mention_count as i64),
+                _ => Value::Integer(c.rank.file_type_count as i64),
+            };
+            let (v1, v2) = (next(v.clone()), next(v));
+            let k = next(Value::Text(c.rank.subject_key.clone()));
+            let cmp = if query.descending { "<" } else { ">" };
+            sql.push_str(&format!(
+                " AND ({col} {cmp} {v1} OR ({col} = {v2} AND subject_key > {k}))"
+            ));
+        }
+        let dir = if query.descending { "DESC" } else { "ASC" };
+        format!("{col} {dir}, subject_key")
+    };
+    let limit_param = next(Value::Integer(limit as i64));
+    let sql = format!(
+        "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
+                ignored, subject_kind, kind, value, file_types
+         FROM connection WHERE {sql} ORDER BY {order} LIMIT {limit_param}"
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(args), |r| {
+        Ok(ListedConnection {
+            row: row_to_connection(r)?,
+            kind: r.get(7)?,
+            value: r.get(8)?,
+            file_types: r
+                .get::<_, String>(9)?
+                .split(',')
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect(),
+        })
+    })?;
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -450,15 +610,44 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
     Ok(out)
 }
 
-/// Number of connection rows, for the list length (US-07.1). Ignored rows only when
-/// `include_ignored` (US-07.4).
+/// Number of connection rows that match `query`, for the list length (US-07.1).
 pub(crate) fn connection_count(
     conn: &Connection,
-    include_ignored: bool,
+    query: &ConnectionQuery,
 ) -> Result<u64, StoreError> {
+    let (filter, args) = connection_filter(query);
     let n: i64 = conn
-        .prepare_cached("SELECT COUNT(*) FROM connection WHERE (?1 OR ignored = 0)")?
-        .query_row([include_ignored], |r| r.get(0))?;
+        .prepare_cached(&format!("SELECT COUNT(*) FROM connection WHERE {filter}"))?
+        .query_row(rusqlite::params_from_iter(args), |r| r.get(0))?;
+    Ok(n as u64)
+}
+
+/// Connections that break NFR-QA-10: fewer than two counted documents behind them (their
+/// mentions all have a segment, hence a locator). Keys only, at most `limit`.
+pub(crate) fn weak_connections(conn: &Connection, limit: usize) -> Result<Vec<String>, StoreError> {
+    let missing = IngestionState::Missing.as_str();
+    let mut stmt = conn.prepare(
+        "SELECT subject_key FROM connection k WHERE
+           CASE k.subject_kind WHEN 'entity' THEN
+             (SELECT COUNT(DISTINCT m.document_id) FROM entity_mention m
+                JOIN content c ON c.id = m.content_id
+                WHERE m.name_key = k.subject_key AND c.state != ?1 AND m.confidence >= 0.5)
+           ELSE
+             (SELECT COUNT(DISTINCT m.document_id) FROM identifier_mention m
+                JOIN content c ON c.id = m.content_id
+                WHERE m.identifier_key = k.subject_key AND c.state != ?1)
+           END < 2
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![missing, limit as i64], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Number of ignored connection rows (the "Show ignored" label, US-07.4).
+pub(crate) fn ignored_count(conn: &Connection) -> Result<u64, StoreError> {
+    let n: i64 = conn
+        .prepare_cached("SELECT COUNT(*) FROM connection WHERE ignored = 1")?
+        .query_row([], |r| r.get(0))?;
     Ok(n as u64)
 }
 
@@ -478,6 +667,9 @@ pub struct OccurrenceRow {
     pub locator: Locator,
     pub raw: String,
     pub confidence: f32,
+    /// The text around the value with the value marked, card-like numbers masked (US-07.3 AC1,
+    /// NFR-SEC-14).
+    pub snippet: Vec<mk_search::Run>,
     /// The identifier key, such as `email:a@x.example`, or the entity's name key.
     pub key: String,
 }
@@ -519,6 +711,18 @@ pub(crate) fn display_path(root: Option<String>, rel: Option<String>) -> Option<
     )
 }
 
+/// The snippet of a mention: its segment's text, card-like numbers masked, the mention marked.
+/// Masking keeps character positions, so the span still fits.
+fn occurrence_snippet(text: &str, locator: &Locator) -> Vec<mk_search::Run> {
+    let shown = mk_search::mask_card_like(text);
+    let hits: Vec<(usize, usize)> = locator
+        .span()
+        .map(|s| (s.start(), s.end()))
+        .into_iter()
+        .collect();
+    mk_search::snippet(&shown, &hits, 120)
+}
+
 /// An occurrence row and whether its content counts for connections (INV-CO-07).
 fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), StoreError> {
     let state: String = r.get(5)?;
@@ -528,6 +732,20 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
     let text: String = r.get(8)?;
     let ocr: Option<Vec<u8>> = r.get(18)?;
     let path = display_path(r.get(15)?, r.get(16)?);
+    let locator = codec::mention_from(
+        &r.get::<_, String>(6)?,
+        r.get(7)?,
+        r.get(17)?,
+        &text,
+        ocr.as_deref(),
+        MentionCols {
+            start: r.get(9)?,
+            end: r.get(10)?,
+            column_index: r.get(11)?,
+            column_name: r.get(12)?,
+        },
+    )?;
+    let snippet = occurrence_snippet(&text, &locator);
     Ok((
         OccurrenceRow {
             mention_id: r.get(0)?,
@@ -536,21 +754,10 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
             segment_id: r.get(3)?,
             file_type: r.get(4)?,
             path,
-            locator: codec::mention_from(
-                &r.get::<_, String>(6)?,
-                r.get(7)?,
-                r.get(17)?,
-                &text,
-                ocr.as_deref(),
-                MentionCols {
-                    start: r.get(9)?,
-                    end: r.get(10)?,
-                    column_index: r.get(11)?,
-                    column_name: r.get(12)?,
-                },
-            )?,
+            locator,
             raw: r.get(13)?,
             confidence: r.get::<_, f64>(14)? as f32,
+            snippet,
             key: r.get(19)?,
         },
         counted,

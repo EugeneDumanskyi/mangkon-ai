@@ -974,6 +974,8 @@ Marks on a connection row:
 4. Number of mentions, high first.
 5. ASSUMPTION: then by value, A→Z, so the order is stable.
 
+The user can sort the list by another column (value without case, type, sources, mentions, file types; US-07.2). That is a view: it does not change the ranking above, which stays the default and the tie order is the subject key. The derived `connection` row also holds the type name, the value as shown and the counted file types (M4d), so the list filters, finds and sorts without a join.
+
 ### 9.3 How entities are built (in this order)
 
 1. Each entity mention starts alone.

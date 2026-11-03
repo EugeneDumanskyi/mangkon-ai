@@ -414,7 +414,9 @@ fn nfr_rel_10_td1_unchanged_after_full_run() {
     let mut docs = std::collections::BTreeSet::new();
     let mut after = None;
     loop {
-        let page = p.connections_page(after.as_ref(), 500).unwrap();
+        let page = p
+            .connections_page(&Default::default(), after.as_ref(), 500)
+            .unwrap();
         for c in &page.rows {
             for o in p.occurrences(&c.subject_key).unwrap() {
                 let v = p.source_context(o.mention_id).unwrap().unwrap();

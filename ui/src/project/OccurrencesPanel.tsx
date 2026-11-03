@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
+import { groupByDocument } from "../lib/connections";
 import { fileName, locationLabel, plural } from "../lib/labels";
+import { Snippet } from "./SearchPanel";
 
 /** Where one connection's identifier was found (US-07.3 AC2): one click opens the spot. */
 export function OccurrencesPanel({
@@ -14,7 +16,7 @@ export function OccurrencesPanel({
   selected: number | null;
   onSelect: (mentionId: number) => void;
 }) {
-  const listRef = useRef<HTMLUListElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const key = connection?.key ?? null;
   const occurrences = useQuery({
     queryKey: ["occurrences", key],
@@ -54,41 +56,62 @@ export function OccurrencesPanel({
           {errorMessage(occurrences.error)}
         </p>
       )}
-      <ul ref={listRef} className="min-h-0 flex-1 overflow-auto" data-scroll="occurrences">
-        {rows.map((o) => {
-          const isSelected = o.mentionId === selected;
-          return (
-            <li key={o.mentionId} className="border-b border-border">
-              <button
-                type="button"
-                className={`w-full px-3 py-1.5 text-left text-sm focus:outline-2 focus:-outline-offset-2 focus:outline-accent ${
-                  isSelected ? "bg-accent text-accent-text" : ""
-                }`}
-                aria-pressed={isSelected}
-                title={o.path ?? undefined}
-                data-mention-id={o.mentionId}
-                onClick={() => {
-                  onSelect(o.mentionId);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                    e.preventDefault();
-                    focusSibling(e.currentTarget, e.key === "ArrowDown" ? 1 : -1);
-                  }
-                }}
-              >
-                <div className="truncate">
-                  {fileName(o.path)} <span className="uppercase">({o.fileType})</span>
-                </div>
-                <div className={isSelected ? "text-xs" : "text-xs text-muted"}>
-                  {locationLabel(o.location)}
-                  {o.lowConfidence ? " · low confidence" : ""}
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div ref={listRef} className="min-h-0 flex-1 overflow-auto" data-scroll="occurrences">
+        {groupByDocument(rows).map((g) => (
+          <section
+            key={g.documentId}
+            aria-label={`In ${fileName(g.path)}`}
+            className="border-b border-border"
+          >
+            <h3
+              className="flex items-baseline gap-2 bg-surface px-3 py-1 text-sm"
+              title={g.path ?? undefined}
+            >
+              <span className="truncate font-semibold">{fileName(g.path)}</span>
+              <span className="shrink-0 rounded border border-current px-1 text-xs uppercase">
+                {g.fileType}
+              </span>
+              <span className="shrink-0 text-xs text-muted">
+                {plural(g.occurrences.length, "mention")}
+              </span>
+            </h3>
+            <ul>
+              {g.occurrences.map((o) => {
+                const isSelected = o.mentionId === selected;
+                return (
+                  <li key={o.mentionId}>
+                    <button
+                      type="button"
+                      className={`w-full px-3 py-1.5 text-left text-sm focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${
+                        isSelected ? "bg-accent text-accent-text" : ""
+                      }`}
+                      aria-pressed={isSelected}
+                      aria-label={`${locationLabel(o.location)} in ${fileName(o.path)}`}
+                      title={o.path ?? undefined}
+                      data-mention-id={o.mentionId}
+                      onClick={() => {
+                        onSelect(o.mentionId);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                          e.preventDefault();
+                          focusSibling(e.currentTarget, e.key === "ArrowDown" ? 1 : -1);
+                        }
+                      }}
+                    >
+                      <div className={isSelected ? "text-xs" : "text-xs text-muted"}>
+                        {locationLabel(o.location)}
+                        {o.lowConfidence ? " · low confidence" : ""}
+                      </div>
+                      <Snippet pieces={o.snippet} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
     </section>
   );
 }

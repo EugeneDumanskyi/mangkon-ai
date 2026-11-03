@@ -13,6 +13,8 @@
     "allow-progress",
     "allow-connection-count",
     "allow-connections-page",
+    "allow-connections-summary",
+    "allow-set-ignored",
     "allow-occurrences",
     "allow-source-context",
     "allow-source-document",

@@ -12,6 +12,8 @@ const COMMANDS: &[&str] = &[
     "progress",
     "connection_count",
     "connections_page",
+    "connections_summary",
+    "set_ignored",
     "occurrences",
     "source_context",
     "source_document",

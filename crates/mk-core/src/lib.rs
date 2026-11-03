@@ -54,9 +54,10 @@ pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_mapping::{Assignments, ColumnType, MappingState};
 pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
-    CancelOutcome, CardFlagRow, ColumnRow, DocumentCursor, DocumentFilter, DocumentInfo,
-    DocumentRow, FailedFile, KnownFile, MappingView, OccurrenceRow, RemoveOutcome, ReuseCandidate,
-    SHOWN_SAMPLES, STATUS_MISSING, SearchCursor, SearchFilter,
+    CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,
+    DocumentInfo, DocumentRow, FailedFile, KnownFile, ListCursor, ListedConnection, MappingView,
+    OccurrenceRow, RemoveOutcome, ReuseCandidate, SHOWN_SAMPLES, STATUS_MISSING, SearchCursor,
+    SearchFilter, SortColumn,
 };
 pub use mk_workspace::{PatternSetting, ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
@@ -67,9 +68,10 @@ pub use project::{
 };
 pub use search::{SEARCH_PAGE, SearchHit, SearchPage, SegmentHit};
 pub use view::{
-    CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ContextLine, ContextRow, DocumentLink,
-    EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original, PageKind,
-    Piece, Position, Run, SourceBody, SourceContext, WHOLE_EMAIL_SEGMENTS, not_found_note,
+    CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ConnectionsSummary, ContextLine, ContextRow,
+    DocumentLink, EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original,
+    PageKind, Piece, Position, Run, SourceBody, SourceContext, WHOLE_EMAIL_SEGMENTS,
+    not_found_note,
 };
 pub use workers::{
     Stopped, WorkerConfig, WorkerError, WorkerStop, restart_with_malloc_tunables, worker_processes,

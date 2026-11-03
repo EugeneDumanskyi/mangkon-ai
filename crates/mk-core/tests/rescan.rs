@@ -40,10 +40,17 @@ fn write(path: &Path, text: &str, t: u64) {
 
 fn connections(p: &Project) -> Vec<(String, u64)> {
     p.store()
-        .connections_page(None, 100, true)
+        .connections_page(
+            &mk_core::ConnectionQuery {
+                include_ignored: true,
+                ..Default::default()
+            },
+            None,
+            100,
+        )
         .unwrap()
         .into_iter()
-        .map(|c| (c.subject_key, c.source_count))
+        .map(|c| (c.row.subject_key, c.row.source_count))
         .collect()
 }
 
@@ -286,6 +293,10 @@ fn connections_changed_is_raised() {
     while events.recv_timeout(Duration::from_millis(700)).is_ok() {}
     f.project.set_ignored("email:bob@y.example", true).unwrap();
     assert!(events.recv_timeout(Duration::from_secs(2)).is_ok());
-    let rows = f.project.store().connections_page(None, 10, false).unwrap();
+    let rows = f
+        .project
+        .store()
+        .connections_page(&Default::default(), None, 10)
+        .unwrap();
     assert_eq!(rows.len(), 3, "ann and the two domains");
 }

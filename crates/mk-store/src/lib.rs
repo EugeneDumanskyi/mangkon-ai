@@ -28,8 +28,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use mk_corpus::StoredRef;
+use mk_graph::DecisionKind;
 use mk_graph::model::{DerivedState, EntityRow, Facts};
-use mk_graph::{ConnectionRow, DecisionKind, RankKey};
 use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_workspace::ProjectSettings;
@@ -44,9 +44,9 @@ pub use ops::{
     StageAOutput, StagedPart, StartedItem, StoredSegment,
 };
 pub use read::{
-    CardFlagRow, ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile, KnownFile,
-    MentionRow, OccurrenceRow, PendingWork, Progress, RecordLinkRow, RootRow, SegmentRow,
-    SegmentWindow, WindowSegment,
+    CardFlagRow, ConnectionQuery, ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile,
+    KnownFile, ListCursor, ListedConnection, MentionRow, OccurrenceRow, PendingWork, Progress,
+    RecordLinkRow, RootRow, SegmentRow, SegmentWindow, SortColumn, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 pub use search::{SearchCursor, SearchFilter, SearchRow};
@@ -581,21 +581,30 @@ impl Store {
         self.readers.with(read::pending_items)
     }
 
-    /// Connections in ranking order (domain §9.2), keyset-paged after `after`.
+    /// Connections in the query's order (default: domain §9.2), keyset-paged after `after`.
     pub fn connections_page(
         &self,
-        after: Option<&RankKey>,
+        query: &read::ConnectionQuery,
+        after: Option<&read::ListCursor>,
         limit: usize,
-        include_ignored: bool,
-    ) -> Result<Vec<ConnectionRow>, StoreError> {
+    ) -> Result<Vec<read::ListedConnection>, StoreError> {
         self.readers
-            .with(|c| read::connections_page(c, after, limit, include_ignored))
+            .with(|c| read::connections_page(c, query, after, limit))
     }
 
-    /// Number of connection rows (the list length).
-    pub fn connection_count(&self, include_ignored: bool) -> Result<u64, StoreError> {
-        self.readers
-            .with(|c| read::connection_count(c, include_ignored))
+    /// Number of connection rows that match the query (the list length).
+    pub fn connection_count(&self, query: &read::ConnectionQuery) -> Result<u64, StoreError> {
+        self.readers.with(|c| read::connection_count(c, query))
+    }
+
+    /// Connection keys with fewer than two counted documents (NFR-QA-10), at most `limit`.
+    pub fn weak_connections(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        self.readers.with(|c| read::weak_connections(c, limit))
+    }
+
+    /// Number of ignored connection rows.
+    pub fn ignored_count(&self) -> Result<u64, StoreError> {
+        self.readers.with(read::ignored_count)
     }
 
     /// The counted mentions of an identifier key or an entity name key, at most `limit`

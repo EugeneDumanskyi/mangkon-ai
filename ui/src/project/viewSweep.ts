@@ -6,6 +6,7 @@
 //   check what it highlights, and go Next then Back to check the scroll comes back.
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionCursor } from "../ipc/bindings/ConnectionCursor";
+import { DEFAULT_FILTER } from "../lib/connections";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import type { ClickSample } from "../ipc/bindings/ClickSample";
 import type { ClickSweepInfo } from "../ipc/bindings/ClickSweepInfo";
@@ -81,7 +82,7 @@ export async function runViewSweep(
   let cursor: ConnectionCursor | null = null;
   try {
     do {
-      const page = await commands.connectionsPage(cursor, 500);
+      const page = await commands.connectionsPage(DEFAULT_FILTER, cursor, 500);
       for (const connection of page.rows) {
         for (const o of await commands.occurrences(connection.key)) {
           select(connection, o.mentionId);
@@ -215,7 +216,7 @@ export async function runClickSweep(
     const connections: ConnectionItem[] = [];
     let cursor: ConnectionCursor | null = null;
     do {
-      const page = await commands.connectionsPage(cursor, 1_000);
+      const page = await commands.connectionsPage(DEFAULT_FILTER, cursor, 1_000);
       connections.push(...page.rows);
       cursor = page.next;
     } while (cursor !== null);

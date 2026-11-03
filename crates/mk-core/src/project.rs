@@ -149,6 +149,8 @@ pub struct HealthReport {
     pub foreign_key_errors: usize,
     /// The derived tables equal a rebuild from the facts (ADR-0005).
     pub derived_consistent: bool,
+    /// Connections with fewer than two documents behind them (NFR-QA-10); none when healthy.
+    pub weak_connections: Vec<String>,
     /// The FTS5 'integrity-check' error, if the keyword index and the segment text differ.
     pub search_index_error: Option<String>,
     pub progress: Progress,
@@ -160,6 +162,7 @@ impl HealthReport {
             && self.foreign_key_errors == 0
             && self.derived_consistent
             && self.search_index_error.is_none()
+            && self.weak_connections.is_empty()
     }
 }
 
@@ -953,6 +956,7 @@ impl Project {
             integrity_errors,
             foreign_key_errors,
             derived_consistent: derived == reference,
+            weak_connections: self.store.weak_connections(20)?,
             search_index_error: self.store.check_search_index().err().map(|e| e.to_string()),
             progress: self.store.progress()?,
         })

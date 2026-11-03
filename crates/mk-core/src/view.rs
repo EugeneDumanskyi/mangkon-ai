@@ -11,11 +11,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use mk_corpus::IngestionState;
+use mk_graph::SubjectKind;
 use mk_graph::model::EntityRow;
-use mk_graph::{ConnectionRow, RankKey, SubjectKind};
 use mk_kernel::{Column, Locator, Span};
 use mk_parsers::Format;
-use mk_store::{DocumentInfo, FailedFile, OccurrenceRow, WindowSegment};
+use mk_store::{
+    ConnectionQuery, DocumentInfo, FailedFile, ListCursor, ListedConnection, OccurrenceRow,
+    WindowSegment,
+};
 
 use crate::project::{Project, ProjectError};
 use crate::search::SegmentHit;
@@ -48,12 +51,23 @@ pub struct IngestCounts {
 /// One page of the connections list and the cursor of the page after it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectionsPage {
-    pub rows: Vec<ConnectionRow>,
+    pub rows: Vec<ListedConnection>,
     /// The entity rows of this page's entity connections, by name key: the display name and
     /// the "Name (from table)" mark (US-05.3 AC2, INV-ER-07).
     pub entities: BTreeMap<String, EntityRow>,
     /// `None` on the last page.
-    pub next: Option<RankKey>,
+    pub next: Option<ListCursor>,
+}
+
+/// What the empty states and the "Show ignored" label need (US-07.4, US-07.6).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ConnectionsSummary {
+    /// Connections not ignored.
+    pub visible: u64,
+    pub ignored: u64,
+    /// Files whose text is read (done) and files in the project.
+    pub documents_done: u64,
+    pub documents_total: u64,
 }
 
 /// A text with one marked part (the hit). `hit` is empty for a text without one, and then the
@@ -381,24 +395,42 @@ impl Project {
 
     /// Visible connections (not ignored, US-07.4), for the list length.
     pub fn connection_count(&self) -> Result<u64, ProjectError> {
-        Ok(self.store().connection_count(false)?)
+        self.connection_count_for(&ConnectionQuery::default())
     }
 
-    /// One page of visible connections in ranking order (domain §9.2), after `after`.
+    /// Connections that match `query` (US-07.1 AC3, US-07.2).
+    pub fn connection_count_for(&self, query: &ConnectionQuery) -> Result<u64, ProjectError> {
+        Ok(self.store().connection_count(query)?)
+    }
+
+    /// Counts for the empty states and the "Show ignored" label (US-07.4, US-07.6).
+    pub fn connections_summary(&self) -> Result<ConnectionsSummary, ProjectError> {
+        let counts = self.counts()?;
+        Ok(ConnectionsSummary {
+            visible: self.store().connection_count(&ConnectionQuery::default())?,
+            ignored: self.store().ignored_count()?,
+            documents_done: counts.done,
+            documents_total: counts.total,
+        })
+    }
+
+    /// One page of connections that match `query`, in its order (default: domain §9.2), after
+    /// `after`.
     pub fn connections_page(
         &self,
-        after: Option<&RankKey>,
+        query: &ConnectionQuery,
+        after: Option<&ListCursor>,
         limit: usize,
     ) -> Result<ConnectionsPage, ProjectError> {
         let limit = limit.max(1);
-        let rows = self.store().connections_page(after, limit, false)?;
+        let rows = self.store().connections_page(query, after, limit)?;
         let next = (rows.len() == limit)
-            .then(|| rows.last().map(ConnectionRow::rank_key))
+            .then(|| rows.last().map(ListedConnection::cursor))
             .flatten();
         let entity_keys: Vec<String> = rows
             .iter()
-            .filter(|r| r.subject_kind == SubjectKind::Entity)
-            .map(|r| r.subject_key.clone())
+            .filter(|r| r.row.subject_kind == SubjectKind::Entity)
+            .map(|r| r.row.subject_key.clone())
             .collect();
         let entities = self.store().entities(&entity_keys)?;
         Ok(ConnectionsPage {

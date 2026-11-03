@@ -443,24 +443,53 @@ pub async fn reuse_mapping(
 }
 
 #[tauri::command]
-pub async fn connection_count(state: State<'_, AppState>) -> Result<u32, IpcError> {
-    let n = state.current()?.project.connection_count()?;
+pub async fn connection_count(
+    state: State<'_, AppState>,
+    filter: ipc::ConnectionFilter,
+) -> Result<u32, IpcError> {
+    let n = state
+        .current()?
+        .project
+        .connection_count_for(&filter.into())?;
     Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
-/// One page of connections in ranking order after `cursor` (keyset paging, ADR-0003).
+/// Counts for the empty states and the "Show ignored" label (US-07.4, US-07.6).
+#[tauri::command]
+pub async fn connections_summary(
+    state: State<'_, AppState>,
+) -> Result<ipc::ConnectionsSummary, IpcError> {
+    Ok(state.current()?.project.connections_summary()?.into())
+}
+
+/// One page of connections that match `filter`, in its order, after `cursor` (keyset paging,
+/// ADR-0003).
 #[tauri::command]
 pub async fn connections_page(
     state: State<'_, AppState>,
+    filter: ipc::ConnectionFilter,
     cursor: Option<ipc::ConnectionCursor>,
     limit: u32,
 ) -> Result<ipc::ConnectionsPage, IpcError> {
-    let after = cursor.map(mk_core::RankKey::from);
-    let page = state
-        .current()?
-        .project
-        .connections_page(after.as_ref(), limit.min(MAX_PAGE) as usize)?;
+    let after = cursor.map(mk_core::ListCursor::from);
+    let page = state.current()?.project.connections_page(
+        &filter.into(),
+        after.as_ref(),
+        limit.min(MAX_PAGE) as usize,
+    )?;
     Ok(page.into())
+}
+
+/// Ignores or un-ignores a connection (US-07.4). The list refreshes through the
+/// `connectionsChanged` event.
+#[tauri::command]
+pub async fn set_ignored(
+    state: State<'_, AppState>,
+    key: String,
+    ignored: bool,
+) -> Result<(), IpcError> {
+    state.current()?.project.set_ignored(&key, ignored)?;
+    Ok(())
 }
 
 /// The mentions of one connection's identifier (US-07.3 AC2).

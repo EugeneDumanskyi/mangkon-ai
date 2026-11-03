@@ -27,6 +27,14 @@ label: string | null,
  */
 fromTable: boolean, sourceCount: number, fileTypeCount: number, mentionCount: number, 
 /**
+ * The file types it was found in, sorted (US-07.1 AC2).
+ */
+fileTypes: Array<string>, 
+/**
  * Every mention is below 0.5 confidence (US-07.1 AC4).
  */
-lowConfidence: boolean, };
+lowConfidence: boolean, 
+/**
+ * Ignored by the user (US-07.4); only listed with "Show ignored".
+ */
+ignored: boolean, };

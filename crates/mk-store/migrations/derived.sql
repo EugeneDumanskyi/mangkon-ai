@@ -26,7 +26,13 @@ CREATE TABLE connection (
     file_type_count INTEGER NOT NULL,
     mention_count   INTEGER NOT NULL,
     low_confidence  INTEGER NOT NULL,
-    ignored         INTEGER NOT NULL
+    ignored         INTEGER NOT NULL,
+    -- M4d, for the Connections screen without a join (US-07.1, US-07.2): the type name, the
+    -- value as shown (an entity's display name; a custom pattern's value without its label)
+    -- and the counted file types, sorted, as ',csv,eml,pdf,'.
+    kind            TEXT NOT NULL,
+    value           TEXT NOT NULL,
+    file_types      TEXT NOT NULL
 ) STRICT;
 CREATE INDEX connection_rank ON connection (
     low_confidence, source_count DESC, file_type_count DESC, mention_count DESC, subject_key

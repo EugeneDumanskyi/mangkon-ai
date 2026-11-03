@@ -17,8 +17,9 @@ use crate::StoreError;
 
 pub(crate) const DERIVED_SQL: &str = include_str!("../migrations/derived.sql");
 /// Bump when `derived.sql` or the derived rules change: the derived tables are rebuilt on open.
-/// 2 (M4b): stop-list domains are not connections (INV-LK-03). 3 (M4c): entities.
-pub(crate) const DERIVED_VERSION: u32 = 3;
+/// 2 (M4b): stop-list domains are not connections (INV-LK-03). 3 (M4c): entities. 4 (M4d):
+/// `connection.kind`, `value` and `file_types`.
+pub(crate) const DERIVED_VERSION: u32 = 4;
 
 /// The project's domain stop list (US-04.3 AC3): the stored setting, or the default list.
 pub(crate) fn stop_list(conn: &Connection) -> Result<StopList, StoreError> {
@@ -79,7 +80,7 @@ pub(crate) fn rebuild_keys(conn: &Connection, keys: &BTreeSet<String>) -> Result
 }
 
 fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, StoreError> {
-    let before = connection_row(conn, key)?;
+    let before = connection_shown(conn, key)?;
     let kind = SubjectKind::of_key(key);
     let decisions = decisions_on(conn, key, kind)?;
     let after = match kind {
@@ -87,11 +88,12 @@ fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, St
         SubjectKind::Entity => rebuild_entity(conn, key, &decisions)?,
     };
     match &after {
-        Some(row) => {
+        Some((row, shown)) => {
             conn.prepare_cached(
                 "INSERT OR REPLACE INTO connection (subject_key, subject_kind, source_count,
-                    file_type_count, mention_count, low_confidence, ignored)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    file_type_count, mention_count, low_confidence, ignored, kind, value,
+                    file_types)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?
             .execute(params![
                 row.subject_key,
@@ -100,7 +102,10 @@ fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, St
                 row.file_type_count as i64,
                 row.mention_count as i64,
                 row.low_confidence,
-                row.ignored
+                row.ignored,
+                shown.kind,
+                shown.value,
+                shown.file_types
             ])?;
         }
         None if before.is_some() => {
@@ -153,32 +158,78 @@ fn write_statuses(
     Ok(resolution.ignored)
 }
 
+/// What the list shows of a connection beyond its ranking row (M4d).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct Shown {
+    pub kind: String,
+    pub value: String,
+    pub file_types: String,
+}
+
+/// `kind` and `value` of a subject key as the list shows them: the text before the first `:`
+/// and the rest, a custom pattern's label dropped (US-04.7).
+fn kind_and_value(key: &str) -> (String, String) {
+    let (kind, rest) = key.split_once(':').unwrap_or(("", key));
+    let value = if kind == "custom" {
+        rest.split_once(':').map_or(rest, |(_, v)| v)
+    } else {
+        rest
+    };
+    (kind.to_string(), value.to_string())
+}
+
+/// `types` (distinct, any order) as the sorted comma list stored in `connection.file_types`.
+fn file_type_list(types: Option<String>) -> String {
+    let mut all: Vec<&str> = types
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .filter(|t| !t.is_empty())
+        .collect();
+    all.sort_unstable();
+    all.dedup();
+    if all.is_empty() {
+        String::new()
+    } else {
+        format!(",{},", all.join(","))
+    }
+}
+
 fn rebuild_identifier(
     conn: &Connection,
     key: &str,
     decisions: &[DecisionFact],
     stop: &StopList,
-) -> Result<Option<ConnectionRow>, StoreError> {
+) -> Result<Option<(ConnectionRow, Shown)>, StoreError> {
     // Every mention of the key, and the counted ones: content not Missing (INV-CO-07).
     let missing = IngestionState::Missing.as_str();
-    let (total, documents, file_types, mentions, max_confidence): (
+    let (total, documents, file_types, mentions, max_confidence, types): (
         i64,
         i64,
         i64,
         i64,
         Option<f64>,
+        Option<String>,
     ) = conn
         .prepare_cached(
             "SELECT COUNT(*),
                     COUNT(DISTINCT CASE WHEN c.state != ?2 THEN m.document_id END),
                     COUNT(DISTINCT CASE WHEN c.state != ?2 THEN c.file_type END),
                     COALESCE(SUM(c.state != ?2), 0),
-                    MAX(CASE WHEN c.state != ?2 THEN m.confidence END)
+                    MAX(CASE WHEN c.state != ?2 THEN m.confidence END),
+                    GROUP_CONCAT(DISTINCT CASE WHEN c.state != ?2 THEN c.file_type END)
              FROM identifier_mention m JOIN content c ON c.id = m.content_id
              WHERE m.identifier_key = ?1",
         )?
         .query_row(params![key, missing], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?;
     let anchor_present = total > 0;
     let ignored = write_statuses(conn, key, decisions, anchor_present)?;
@@ -201,7 +252,17 @@ fn rebuild_identifier(
         mentions: mentions as u64,
         max_confidence: max_confidence.unwrap_or(0.0) as f32,
     };
-    Ok(connection_for(&parsed, &stats, ignored, stop))
+    let (kind, value) = kind_and_value(key);
+    Ok(connection_for(&parsed, &stats, ignored, stop).map(|row| {
+        (
+            row,
+            Shown {
+                kind,
+                value,
+                file_types: file_type_list(types),
+            },
+        )
+    }))
 }
 
 /// An entity's row and connection (domain §9.3 steps 1, 2, 4; INV-ER-07): counted mentions are
@@ -210,21 +271,37 @@ fn rebuild_entity(
     conn: &Connection,
     key: &str,
     decisions: &[DecisionFact],
-) -> Result<Option<ConnectionRow>, StoreError> {
+) -> Result<Option<(ConnectionRow, Shown)>, StoreError> {
     let missing = IngestionState::Missing.as_str();
-    let (total, from_table, documents, file_types, mentions): (i64, bool, i64, i64, i64) = conn
+    let (total, from_table, documents, file_types, mentions, types): (
+        i64,
+        bool,
+        i64,
+        i64,
+        i64,
+        Option<String>,
+    ) = conn
         .prepare_cached(
             "SELECT COUNT(*), COALESCE(MIN(m.producer = 'table'), 0),
                     COUNT(DISTINCT CASE WHEN c.state != ?2 AND m.confidence >= ?3
                                         THEN m.document_id END),
                     COUNT(DISTINCT CASE WHEN c.state != ?2 AND m.confidence >= ?3
                                         THEN c.file_type END),
-                    COALESCE(SUM(c.state != ?2 AND m.confidence >= ?3), 0)
+                    COALESCE(SUM(c.state != ?2 AND m.confidence >= ?3), 0),
+                    GROUP_CONCAT(DISTINCT CASE WHEN c.state != ?2 AND m.confidence >= ?3
+                                               THEN c.file_type END)
              FROM entity_mention m JOIN content c ON c.id = m.content_id
              WHERE m.name_key = ?1",
         )?
         .query_row(params![key, missing, f64::from(LOW_CONFIDENCE)], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
         })?;
     let anchor_present = total > 0;
     let ignored = write_statuses(conn, key, decisions, anchor_present)?;
@@ -256,25 +333,45 @@ fn rebuild_entity(
         total,
         from_table
     ])?;
+    let kind = parsed.entity_type().as_str().to_string();
     let stats = EntityStats {
         documents: documents as u64,
         file_types: file_types as u64,
         mentions: mentions as u64,
     };
-    Ok(entity_connection_for(&parsed, &stats, ignored))
+    Ok(entity_connection_for(&parsed, &stats, ignored).map(|row| {
+        (
+            row,
+            Shown {
+                kind,
+                value: display,
+                file_types: file_type_list(types),
+            },
+        )
+    }))
 }
 
-pub(crate) fn connection_row(
+/// A connection row with what the list shows of it; `None` if it has none.
+fn connection_shown(
     conn: &Connection,
     key: &str,
-) -> Result<Option<ConnectionRow>, StoreError> {
+) -> Result<Option<(ConnectionRow, Shown)>, StoreError> {
     Ok(conn
         .prepare_cached(
             "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                    ignored, subject_kind
+                    ignored, subject_kind, kind, value, file_types
              FROM connection WHERE subject_key = ?1",
         )?
-        .query_row([key], row_to_connection)
+        .query_row([key], |r| {
+            Ok((
+                row_to_connection(r)?,
+                Shown {
+                    kind: r.get(7)?,
+                    value: r.get(8)?,
+                    file_types: r.get(9)?,
+                },
+            ))
+        })
         .optional()?)
 }
 

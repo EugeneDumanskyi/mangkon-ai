@@ -4,7 +4,9 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { ColumnAssignment } from "./bindings/ColumnAssignment";
 import type { ConnectionCursor } from "./bindings/ConnectionCursor";
+import type { ConnectionFilter } from "./bindings/ConnectionFilter";
 import type { ConnectionsPage } from "./bindings/ConnectionsPage";
+import type { ConnectionsSummary } from "./bindings/ConnectionsSummary";
 import type { CustomPatternItem } from "./bindings/CustomPatternItem";
 import type { DocumentCursor } from "./bindings/DocumentCursor";
 import type { DocumentFilter } from "./bindings/DocumentFilter";
@@ -110,9 +112,13 @@ export const commands = {
     invoke<null>("confirm_mapping", { refId, assignments }),
   reuseMapping: (refId: number, fromRefId: number) =>
     invoke<null>("reuse_mapping", { refId, fromRefId }),
-  connectionCount: () => invoke<number>("connection_count"),
-  connectionsPage: (cursor: ConnectionCursor | null, limit: number) =>
-    invoke<ConnectionsPage>("connections_page", { cursor, limit }),
+  connectionCount: (filter: ConnectionFilter) => invoke<number>("connection_count", { filter }),
+  connectionsPage: (filter: ConnectionFilter, cursor: ConnectionCursor | null, limit: number) =>
+    invoke<ConnectionsPage>("connections_page", { filter, cursor, limit }),
+  /** Counts for the empty states and the "Show ignored" label (US-07.4, US-07.6). */
+  connectionsSummary: () => invoke<ConnectionsSummary>("connections_summary"),
+  /** Ignores or un-ignores a connection (US-07.4). */
+  setIgnored: (key: string, ignored: boolean) => invoke<null>("set_ignored", { key, ignored }),
   occurrences: (key: string) => invoke<Occurrence[]>("occurrences", { key }),
   sourceContext: (mentionId: number) => invoke<SourceView>("source_context", { mentionId }),
   /** A document from its start: an attachment, or the email it came in. */

@@ -894,7 +894,8 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
-/// Where the connections list continues: the ranking key of the last row loaded (domain §9.2).
+/// Where the connections list continues: the last row loaded (domain §9.2; with a user sort,
+/// its value and type too).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -904,28 +905,111 @@ pub struct ConnectionCursor {
     pub file_type_count: u32,
     pub mention_count: u32,
     pub subject_key: String,
+    pub kind: String,
+    pub value: String,
 }
 
-impl From<mk_core::RankKey> for ConnectionCursor {
-    fn from(k: mk_core::RankKey) -> Self {
+impl From<mk_core::ListCursor> for ConnectionCursor {
+    fn from(c: mk_core::ListCursor) -> Self {
+        let k = c.rank;
         Self {
             low_confidence: k.low_confidence,
             source_count: count(k.source_count),
             file_type_count: count(k.file_type_count),
             mention_count: count(k.mention_count),
             subject_key: k.subject_key,
+            kind: c.kind,
+            value: c.value,
         }
     }
 }
 
-impl From<ConnectionCursor> for mk_core::RankKey {
+impl From<ConnectionCursor> for mk_core::ListCursor {
     fn from(c: ConnectionCursor) -> Self {
         Self {
-            low_confidence: c.low_confidence,
-            source_count: c.source_count.into(),
-            file_type_count: c.file_type_count.into(),
-            mention_count: c.mention_count.into(),
-            subject_key: c.subject_key,
+            rank: mk_core::RankKey {
+                low_confidence: c.low_confidence,
+                source_count: c.source_count.into(),
+                file_type_count: c.file_type_count.into(),
+                mention_count: c.mention_count.into(),
+                subject_key: c.subject_key,
+            },
+            kind: c.kind,
+            value: c.value,
+        }
+    }
+}
+
+/// The column the connections list is sorted by (US-07.2). `rank` is the default order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ConnectionSort {
+    #[default]
+    Rank,
+    Value,
+    Kind,
+    Sources,
+    Mentions,
+    FileTypes,
+}
+
+/// Filters, find text and sort of the connections list (US-07.1 AC3, US-07.2, US-07.4).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct ConnectionFilter {
+    /// Type names; none = all.
+    pub kinds: Vec<String>,
+    /// At least this many sources.
+    pub min_sources: u32,
+    /// Found in any of these file types; none = all.
+    pub file_types: Vec<String>,
+    pub find: String,
+    pub sort: ConnectionSort,
+    pub descending: bool,
+    pub include_ignored: bool,
+}
+
+impl From<ConnectionFilter> for mk_core::ConnectionQuery {
+    fn from(f: ConnectionFilter) -> Self {
+        Self {
+            kinds: f.kinds,
+            min_sources: f.min_sources.into(),
+            file_types: f.file_types,
+            find: f.find,
+            sort: match f.sort {
+                ConnectionSort::Rank => mk_core::SortColumn::Rank,
+                ConnectionSort::Value => mk_core::SortColumn::Value,
+                ConnectionSort::Kind => mk_core::SortColumn::Kind,
+                ConnectionSort::Sources => mk_core::SortColumn::Sources,
+                ConnectionSort::Mentions => mk_core::SortColumn::Mentions,
+                ConnectionSort::FileTypes => mk_core::SortColumn::FileTypes,
+            },
+            descending: f.descending,
+            include_ignored: f.include_ignored,
+        }
+    }
+}
+
+/// Counts for the empty states and the "Show ignored" label (US-07.4, US-07.6).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ConnectionsSummary {
+    pub visible: u32,
+    pub ignored: u32,
+    pub documents_done: u32,
+    pub documents_total: u32,
+}
+
+impl From<mk_core::ConnectionsSummary> for ConnectionsSummary {
+    fn from(s: mk_core::ConnectionsSummary) -> Self {
+        Self {
+            visible: count(s.visible),
+            ignored: count(s.ignored),
+            documents_done: count(s.documents_done),
+            documents_total: count(s.documents_total),
         }
     }
 }
@@ -950,38 +1034,32 @@ pub struct ConnectionItem {
     pub source_count: u32,
     pub file_type_count: u32,
     pub mention_count: u32,
+    /// The file types it was found in, sorted (US-07.1 AC2).
+    pub file_types: Vec<String>,
     /// Every mention is below 0.5 confidence (US-07.1 AC4).
     pub low_confidence: bool,
+    /// Ignored by the user (US-07.4); only listed with "Show ignored".
+    pub ignored: bool,
 }
 
 impl ConnectionItem {
-    fn new(r: mk_core::ConnectionRow, entity: Option<&mk_core::EntityRow>) -> Self {
-        let (kind, mut value) = r
-            .subject_key
-            .split_once(':')
-            .map_or((String::new(), r.subject_key.clone()), |(k, v)| {
-                (k.to_string(), v.to_string())
-            });
-        let mut label = None;
-        if kind == "custom"
-            && let Some((name, v)) = value.split_once(':')
-        {
-            label = Some(name.to_string());
-            value = v.to_string();
-        }
-        if let Some(e) = entity {
-            value.clone_from(&e.display_name);
-        }
+    fn new(c: mk_core::ListedConnection, entity: Option<&mk_core::EntityRow>) -> Self {
+        let r = c.row;
+        let label = (c.kind == "custom")
+            .then(|| r.subject_key.split(':').nth(1).map(str::to_string))
+            .flatten();
         Self {
             label,
             from_table: entity.is_some_and(|e| e.from_table),
             key: r.subject_key,
-            kind,
-            value,
+            kind: c.kind,
+            value: c.value,
             source_count: count(r.source_count),
             file_type_count: count(r.file_type_count),
             mention_count: count(r.mention_count),
+            file_types: c.file_types,
             low_confidence: r.low_confidence,
+            ignored: r.ignored,
         }
     }
 }
@@ -1002,7 +1080,7 @@ impl From<mk_core::ConnectionsPage> for ConnectionsPage {
                 .rows
                 .into_iter()
                 .map(|r| {
-                    let entity = p.entities.get(&r.subject_key);
+                    let entity = p.entities.get(&r.row.subject_key);
                     ConnectionItem::new(r, entity)
                 })
                 .collect(),
@@ -1099,11 +1177,25 @@ pub struct Occurrence {
     /// The text as found.
     pub raw: String,
     pub low_confidence: bool,
+    /// The document the mention is in: occurrences are grouped by it (US-07.3 AC1).
+    #[ts(type = "number")]
+    pub document_id: i64,
+    /// Text around the value, the value marked, card-like numbers masked (US-07.3 AC1).
+    pub snippet: Vec<TextPiece>,
 }
 
 impl From<mk_core::OccurrenceRow> for Occurrence {
     fn from(o: mk_core::OccurrenceRow) -> Self {
         Self {
+            document_id: o.document_id,
+            snippet: o
+                .snippet
+                .into_iter()
+                .map(|r| TextPiece {
+                    text: r.text,
+                    hit: r.hit,
+                })
+                .collect(),
             mention_id: o.mention_id,
             key: o.key,
             file_type: o.file_type,

@@ -371,8 +371,26 @@ fn commit_rebuilds_touched_keys() {
     let d = store.derived_state().unwrap();
     assert!(d.connections["email:a@x.example"].ignored);
     assert_eq!(d.decision_status[&seq], DecisionStatus::Active);
-    assert!(store.connections_page(None, 10, false).unwrap().is_empty());
-    assert_eq!(store.connections_page(None, 10, true).unwrap().len(), 1);
+    assert!(
+        store
+            .connections_page(&Default::default(), None, 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        store
+            .connections_page(
+                &mk_store::ConnectionQuery {
+                    include_ignored: true,
+                    ..Default::default()
+                },
+                None,
+                10,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
     store.rebuild_all().unwrap();
     assert_eq!(store.derived_state().unwrap(), d);
     assert_eq!(mk_graph::model::reference(&store.facts().unwrap()), d);
@@ -386,7 +404,7 @@ fn us_07_3_ac2_mentions_of_key_have_locators() {
     let store = open(dir.path());
     ingest(&store, 1, &["a@x.example", "b@x.example"]);
     ingest(&store, 2, &["c@x.example", "a@x.example"]);
-    assert_eq!(store.connection_count(false).unwrap(), 1);
+    assert_eq!(store.connection_count(&Default::default()).unwrap(), 1);
 
     let key = key("a@x.example").to_string();
     let rows = store.mentions_of(&key, 100).unwrap();

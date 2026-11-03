@@ -150,7 +150,7 @@ fn us_05_2_confirm_and_reuse() {
     p.reuse_mapping(ledger, payments).unwrap();
     assert_eq!(row(&p, "ledger.csv").1, Some(MappingState::Confirmed));
 
-    let page = p.connections_page(None, 100).unwrap();
+    let page = p.connections_page(&Default::default(), None, 100).unwrap();
     let c = page
         .rows
         .iter()
@@ -300,7 +300,7 @@ fn ignore_on_an_entity_survives_rescan_and_rebuild() {
     p.confirm_mapping(row(&p, "ledger.csv").0, mapping).unwrap();
     let key = "org:brightwater logistics";
     let visible = |p: &Project| {
-        p.connections_page(None, 100)
+        p.connections_page(&Default::default(), None, 100)
             .unwrap()
             .rows
             .iter()
