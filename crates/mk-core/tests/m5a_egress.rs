@@ -926,7 +926,12 @@ fn nfr_sec_07_real_keychain() {
     if !session_only {
         // The entry is gone from the keychain too.
         let keychain = mk_egress::KeyringStore::probe(mk_egress::SERVICE).unwrap();
-        assert!(keychain.get(&format!("endpoint:{}", e.id)).unwrap().is_none());
+        assert!(
+            keychain
+                .get(&format!("endpoint:{}", e.id))
+                .unwrap()
+                .is_none()
+        );
     }
     drop(project);
     drop(ws);

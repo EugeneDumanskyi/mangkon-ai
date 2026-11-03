@@ -447,10 +447,10 @@ Milestones as in `06-roadmap.md`.
 | [0006](adr/0006-background-jobs.md) | Background jobs: persistent queue in the project store | Accepted |
 | [0007](adr/0007-parser-worker-isolation.md) | Parser isolation: worker processes with time and memory limits | Accepted |
 | [0008](adr/0008-local-model-runtime.md) | Local model runtime: `llama-server` sidecar from pinned releases | Superseded by ADR-0015 |
-| [0009](adr/0009-egress-gate.md) | One egress gate for all model traffic | Proposed |
+| [0009](adr/0009-egress-gate.md) | One egress gate for all model traffic | Accepted |
 | [0010](adr/0010-search.md) | Search: FTS5 + binary vector index with rescoring | Proposed |
 | [0011](adr/0011-source-viewer.md) | Source viewer: stored text first, page view from the same engine | Accepted |
-| [0012](adr/0012-secrets.md) | API keys in the OS secret store | Proposed |
+| [0012](adr/0012-secrets.md) | API keys in the OS secret store | Accepted |
 | [0013](adr/0013-parsing-and-ocr-engines.md) | Parsing and OCR engines | Superseded by ADR-0014 |
 | [0014](adr/0014-pdf-and-ocr-engines.md) | PDF and OCR engines: hayro and Tesseract | Accepted |
 | [0015](adr/0015-user-installed-llama-server.md) | Local model runtime: user-installed `llama-server` | Accepted |

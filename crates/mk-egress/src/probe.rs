@@ -25,6 +25,8 @@ pub const NO_STRUCTURED_OUTPUT: &str =
     "Structured output not supported — results may be less reliable";
 /// How long one test call may take: a local runtime may load the model on the first call.
 pub const TEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Token limit for the structured-output probe, with room for a thinking model's reasoning.
+const STRUCTURED_PROBE_MAX_TOKENS: u32 = 1024;
 
 /// The structured-output probe's schema. The prompt never mentions JSON, so a reply that
 /// follows it shows the endpoint applied the schema.
@@ -176,7 +178,10 @@ pub fn endpoint_test(
             name: "connection_test".into(),
             schema: probe_schema(),
         }),
-        max_tokens: Some(64),
+        // A thinking model spends tokens on reasoning before the reply; with a small limit
+        // the content comes back empty and the probe would wrongly say "not supported"
+        // (Qwen3.5-4B on llama-server used 222).
+        max_tokens: Some(STRUCTURED_PROBE_MAX_TOKENS),
         temperature: Some(0.0),
     };
     report.structured_output = Some(

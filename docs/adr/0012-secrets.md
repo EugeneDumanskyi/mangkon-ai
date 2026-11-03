@@ -1,6 +1,6 @@
 # ADR-0012: API keys in the OS secret store
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-SEC-07/08, NFR-COMP-01/07, INV-EG-07, US-09.6, domain §5.2 (ENDPOINT.secretRef), ADR-0009
 

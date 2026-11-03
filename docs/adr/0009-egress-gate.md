@@ -1,6 +1,6 @@
 # ADR-0009: One egress gate for all model traffic
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-12
 - **Related:** NFR-SEC-01..07, INV-EG-01..08, INV-PR-09, INV-SR-03, domain §2.7, §7.6, BC-11, ADR-0003, ADR-0008
 
