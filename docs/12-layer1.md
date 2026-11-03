@@ -321,4 +321,4 @@ All under the mark, so no index on the sort columns and no `connection_find` tab
 
 - **Timings:** done above. Open: the 4.2 s commit outlier on TD-2.
 - **Hand walk on Linux (NFR-USE-06):** Tab through filter bar → list → evidence → viewer; `/`, `i`, arrows; scroll the list or open a connection, add files, see "N new connections — Show", click Show.
-- **First demo (criterion 8):** drop TD-1 → connections → pick a cross-source email → evidence by document → one click to the source → Ignore → Show ignored → Un-ignore. The recording is the maintainer's.
+- **First demo (criterion 8):** drop TD-1 → connections → pick a cross-source email → evidence by document → one click to the source → Ignore → Show ignored → Un-ignore. The recording moved to M9 (2026-11-03) and is the maintainer's.
