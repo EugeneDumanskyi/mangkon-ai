@@ -212,7 +212,7 @@ fn origin_of(url: &Url) -> Result<Origin, BadUrl> {
 
 /// A checked endpoint base URL: http or https, a host, no user name or password (they would
 /// end up in `app.db`, INV-EG-07), no query or fragment. A URL with no path gets `/v1`, the
-/// OpenAI-compatible root; any other path is kept as typed. ASSUMPTION: a bare host means the
+/// OpenAI-compatible root; any other path is kept as typed. A bare host means the
 /// `/v1` API (llama-server, Ollama and LM Studio all serve it there).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BaseUrl {

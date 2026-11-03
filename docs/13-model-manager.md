@@ -1,7 +1,7 @@
 # 13 — Model manager and egress gate
 
 > Input: `06-roadmap.md` §2 M5 (spike S5), ADR-0009, ADR-0012, ADR-0015, `02-requirements.md` E09, `03-nfr.md` (NFR-SEC-02/04/05/07, NFR-COMP-05), `04-domain.md` BC-11 and §7.6. **If this file disagrees with them, they win.**
-> Status: §1 and §3 from M5a on RM-1 (2026-11-03). §2: llama-server on RM-1 done; Ollama, LM Studio and RM-2 wait for the maintainer's setup. Linux only; macOS and Windows are not verified here.
+> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama, LM Studio and calls from RM-2 moved to M5c. §3: the release-app webview check moved to M5c. Linux only; macOS and Windows are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -48,12 +48,14 @@ Stable over 6 runs (≈ 0.2 s each). **S5 passed on the first choice; the socket
 - A permission holds only for the origin (`scheme://host:port`) and the class confirmed. Any change of either needs a new confirmation, not only a move to a more exposed class (INV-EG-04, which wins over ADR-0009's wording). So does an edited or deleted endpoint.
 - Every call runs lookup → resolve → check → read key → record → publish → pinned send. The record is written before the send (INV-EG-05); a refused call records nothing.
 - The endpoint test sends only fixed texts and takes no project (INV-EG-08). It is not recorded as project egress.
-- ASSUMPTION: plain `http` to an internet host is allowed; the confirm dialog says "Not encrypted (http)".
-- ASSUMPTION: the base URL gets `/v1` only when it has no path; a typed path is kept, since some providers put the API elsewhere.
+- Plain `http` to an internet host is allowed; the confirm dialog says "Not encrypted (http)". Confirmed by the maintainer (2026-11-03).
+- The base URL gets `/v1` only when it has no path; a typed path is kept, since some providers put the API elsewhere. Confirmed by the maintainer (2026-11-03).
+- The endpoint test probes chat and embeddings and shows which work; an endpoint's role is chosen in M6. Confirmed by the maintainer (2026-11-03).
+- Link-local and `100.64/10` count as Internet, as US-09.7 AC4 says. Confirmed by the maintainer (2026-11-03).
 
 ## 2. External path and endpoint suite (NFR-COMP-05)
 
-Moved from M1. llama-server run on RM-1 (2026-11-03). **Ollama, LM Studio and calls from RM-2 need the maintainer:** Ollama and LM Studio are not installed on RM-1, and RM-2 is another machine.
+Moved from M1. llama-server run on RM-1 (2026-11-03). For M5a, the run against RM-1's own LAN address stands in for the Local network path. **Ollama, LM Studio and calls from RM-2 moved to M5c** (maintainer's call, 2026-11-03).
 
 The suite is `mangkon-cli endpoint test`. It sends the app's fixed test texts (a chat call, a structured-output probe with a JSON schema the prompt does not mention, and an embeddings call), prints where the host points, the model it reports and the times, and saves nothing. The key is read from an environment variable and never printed.
 
@@ -87,7 +89,7 @@ The fake-server part of the suite runs in CI: `crates/mk-core/tests/m5a_egress.r
 | CLI output | `apps/cli/tests/endpoint.rs`: stdout and stderr of `endpoint test`, text and JSON, with a right and a wrong key | Pass |
 | Real keychain (GNOME Keyring, RM-1) | `nfr_sec_07_real_keychain` (ignored in CI): the key goes to the Secret Service under `mangkon-ai` / `endpoint:<id>`, a test and a gate call send it, no file holds it, a second workspace finds it in the keychain, and after delete the keychain has no entry | Pass |
 | No Secret Service | The same test with `DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent MK_EXPECT_SESSION_ONLY=1`: session-only store with the notice, no file holds the key, a second workspace shows the key as missing | Pass |
-| Release app, webview data folder | By hand: add an endpoint with a known key in the release app, test it, quit, then search the app-data folder, the project folder and the webview data folder (`~/.local/share/<identifier>/`) for the key | **Deferred** (maintainer's call, 2026-11-03) |
+| Release app, webview data folder | By hand: add an endpoint with a known key in the release app, test it, quit, then search the app-data folder, the project folder and the webview data folder (`~/.local/share/<identifier>/`) for the key | **Moved to M5c** (maintainer's call, 2026-11-03) |
 
 There is no log file yet (architecture §8), so "logs" is checked as stdout and stderr.
 

@@ -76,7 +76,7 @@ pub struct TestReport {
     pub chat: Result<ChatProbe, EgressError>,
     /// `None` when the chat call failed and the probe was not made.
     pub structured_output: Option<bool>,
-    /// Reported, not required (ASSUMPTION: an endpoint has no role until M6).
+    /// Reported, not required: an endpoint has no role until M6.
     pub embeddings: Option<Result<EmbeddingsProbe, EgressError>>,
 }
 

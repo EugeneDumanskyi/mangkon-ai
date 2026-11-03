@@ -67,4 +67,4 @@ Use **option 2**.
 - HTTP client (M5a): `ureq` 3, pinned with `=`, built with `Agent::with_parts` and a resolver that returns only the addresses the gate checked and refuses any other host. TLS by rustls with the ring provider and the OS trust store (`rustls-platform-verifier`); the host name from the URL is used for SNI and the certificate check. Proxies are off (a proxy would break the pin) and redirects are not followed (a 3xx is an error). The socket-level fallback was not needed.
 - Class rule (M5a): any change of origin or class after a confirmation needs a new one, not only a move to a more exposed class, as INV-EG-04 says. A deleted or edited endpoint needs one too.
 - `Purpose` of a record: `extraction`, `embeddings`, `search_query`. The endpoint test is not project egress and is not recorded (INV-EG-08).
-- ASSUMPTION: plain `http` to an internet host is allowed; the confirm dialog says "Not encrypted (http)".
+- Plain `http` to an internet host is allowed; the confirm dialog says "Not encrypted (http)" (confirmed 2026-11-03).
