@@ -288,11 +288,11 @@ Rebuild: equals the incremental rows and the sources on TD-1 + TD-3 (`mangkon-cl
 
 ### Measurements (RM-1, idle, 2026-11-03, `cargo xtask build --release`, Wayland)
 
-**Kill test and bench.** `mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1`: **20 / 20** passed. `mangkon-cli bench --baseline crates/mk-bench/baseline/td1.json`: gate passed, NFR-QA-03..06 and 13 unchanged (100 / 99.7 / 98.6 / 100 / 100), 0 failed files.
+**Kill test and bench.** `mangkon-cli kill-test --source testdata/td1/synthetic --runs 20 --seed 1`: **20 / 20** passed; the same on TD-3 (hostile files, `--source testdata/td3`): **20 / 20**. `mangkon-cli bench --baseline crates/mk-bench/baseline/td1.json`: gate passed, NFR-QA-03..06 and 13 unchanged (100 / 99.7 / 98.6 / 100 / 100), 0 failed files.
 
-**NFR-PERF-10 (TD-1, first cross-source identifier ≤ 10 s).** The app (`MK_UI_TIMING=1`, fresh project, source `testdata/td1/synthetic`) started, read the whole folder and finished the run in **3.0 s** by the wall clock, so the first row is on screen well before that. This is an upper bound, not a timed first row. **Met.**
+**NFR-PERF-10 (TD-1, first cross-source identifier ≤ 10 s).** `cargo run --release -p mk-core --example m4d_ingest -- testdata/td1/synthetic` (fresh project, `MK_WORKER_PROGRAM` set to `mangkon-cli`), 3 runs: a poll of the store sees the first connection **0.02–0.04 s** after the run starts; the app shows it after the next 500 ms debounce plus one render, so about 0.55 s. The whole run takes 1.6–1.7 s (81 files). The run starts after the folder is added, so the folder dialog and the window's own start-up are not in the figure. **Met.**
 
-**NFR-PERF-34 (≤ 2 s after a file finishes).** Screen side on a TD-2 ingest in the release app: 343 events, p50 8 ms, **p95 19 ms**, max 33 ms. The commit side (p95 29.7 ms at M4a) was not measured again in this build; with the 500 ms debounce the total stays far under 2 s unless the commit has grown 50-fold. **Met on the screen side; commit side carried over from M4a.**
+**NFR-PERF-34 (≤ 2 s after a file finishes).** Commit side, same example on TD-2 (10,000 files, 247.6 s, 8,698 commits that changed connections): commit latency p50 5.9 ms, **p95 38.5 ms**, max 4,183 ms (M4a: p95 29.7, max 1,097 ms). Screen side in the release app on a TD-2 ingest: 343 events, p50 8 ms, **p95 19 ms**, max 33 ms. So p95 end to end is about 0.56 s. The pass mark is stated on p95, but the max is above 2 s: one commit waited 4 s (the writer was busy with something large, probably one of the big files); I did not trace it. **Met on p95; the outlier is open.**
 
 **NFR-PERF-02 (TD-2 opens to a usable connections screen ≤ 2 s).** `cargo run --release -p mk-core --example m4d_timing -- <project> 10` on a TD-2 project (10,000 files, 255,600 connections): open + summary + count + first page of 60, 10 runs, p50 28 ms, **p95 48 ms**. This is the core path with a warm file cache; the UI adds one render and the 60-row page. **Met** (not the window start-up, which is the shell's).
 
@@ -315,10 +315,10 @@ All under the mark, so no index on the sort columns and no `connection_find` tab
 
 **NFR-PERF-04 / NFR-QA-12 on the new list (`MK_VIEW_SWEEP=clicks`, 50 seeded clicks).** TD-1 (81 files, in-app ingest): p50 33 ms, **p95 67 ms**, max 100 ms; 50 / 50 highlighted the right text; Next then Back restored the scroll in 11 / 11; kinds email 14, page 18, paragraphs 6, text 7, table 4, json 1. TD-2 project: 50 clicks (all table), p95 50 ms, 50 / 50. **Met.**
 
-**Observation (not fixed here, not M4d).** The click sweep on a TD-1 project made with `mangkon-cli ingest` and opened in a fresh app data folder, without `MK_UI_TIMING_SOURCE`, never finished (killed after 120 s, no output). The same project finishes at once when `MK_UI_TIMING_SOURCE` is set, and a project made by the app finishes when reopened. I did not find the cause; a first guess is the page render on a project with no page cache, in an app data folder that has no `tessdata/` yet. It needs a look before a user can hit it.
+**Observation: a click-sweep run that never finished (not reproduced).** Twice during the first idle run the sweep on a TD-1 project made with `mangkon-cli ingest`, in a fresh app data folder, never produced output (killed after 60–120 s). I then ran it 7 times more on fresh data folders and CLI-made projects (first open each time) and every run finished in 5–9 s with 50 / 50 right, so a missing page cache or `tessdata/` is not the cause. A run with `MK_UI_TIMING` unset also sits idle, because the scripted open needs it; that may explain some of the first hangs. The sweep waits on animation frames, which a hidden window may not get; unconfirmed. Not an M4d change.
 
 ### Not done yet (needs a person)
 
-- **Timings:** done above; open: the commit side of NFR-PERF-34 and a timed first row for NFR-PERF-10.
+- **Timings:** done above. Open: the 4.2 s commit outlier on TD-2.
 - **Hand walk on Linux (NFR-USE-06):** Tab through filter bar → list → evidence → viewer; `/`, `i`, arrows; scroll the list or open a connection, add files, see "N new connections — Show", click Show.
 - **First demo (criterion 8):** drop TD-1 → connections → pick a cross-source email → evidence by document → one click to the source → Ignore → Show ignored → Un-ignore. The recording is the maintainer's.

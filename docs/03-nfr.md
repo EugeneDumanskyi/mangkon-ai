@@ -41,7 +41,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-PERF-01 | Cold start to project list | ≤ 3 s | Timer, RM-1, 10 runs, p95 | ASSUMPTION |
-| NFR-PERF-02 | Open a project of TD-2 size | ≤ 2 s to a usable connections screen | Timer, p95 | ASSUMPTION |
+| NFR-PERF-02 | Open a project of TD-2 size | ≤ 2 s to a usable connections screen | Timer, p95 | ASSUMPTION · M4d (RM-1, 255,600 connections): open + summary + count + first 60 rows p95 48 ms over 10 runs, core path only (`12-layer1.md` §5) |
 | NFR-PERF-03 | UI stays responsive during background jobs | UI thread never blocked > 100 ms; input response ≤ 100 ms | Frame/long-task tracing during TD-2 ingestion | ASSUMPTION |
 | NFR-PERF-04 | Scrolling long lists (connections, documents, search results) | 60 fps with 100,000 rows (virtualized lists) | Frame timing: mean frame within 1 % of an idle control, p95 ≤ 18.7 ms (one vsync + 2 ms, for webviews that time frames in whole ms), ≤ 1 % of frames over 25 ms (decided 2026-10-28) | M2a (S2d, WebKitGTK, RM-1): mean frame 16.7 ms (= idle), p95 18 ms, 0.03–0.24 % of frames > 25 ms: met (`10-walking-skeleton.md` §S2d) |
 
@@ -49,7 +49,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-PERF-10 | First cross-source identifier visible after dropping TD-1 ("within seconds") | ≤ 10 s | Timer from drop to first row on connections screen | Brief ("seconds") · ASSUMPTION (10 s) |
+| NFR-PERF-10 | First cross-source identifier visible after dropping TD-1 ("within seconds") | ≤ 10 s | Timer from drop to first row on connections screen | Brief ("seconds") · ASSUMPTION (10 s) · M4d (RM-1, TD-1): first connection in the store 0.02–0.04 s after the run starts, 0.5 s more for the debounce, so about 0.55 s before render; whole run 1.6–1.7 s (`12-layer1.md` §5) |
 | NFR-PERF-11 | Stage A complete on TD-1, incl. OCR | ≤ 3 min | Timer | ASSUMPTION · M3b (RM-1, `mangkon-cli ingest` on all 101 TD-1 files, fresh project): 2.3–2.4 s (`11-ingestion.md` §7) |
 | NFR-PERF-12 | First cross-source person/org visible after drop on TD-1 ("within minutes") | ≤ 5 min | Timer | Brief ("minutes") · ASSUMPTION (5 min) |
 | NFR-PERF-13 | Stage B complete on TD-1 (people/orgs + embeddings) | ≤ 20 min on RM-1 with the recommended minimum-tier model, 4 slots (NFR-PERF-25). Bigger models are a quality choice and show an estimate instead | Timer | M1: estimate ~11 min for Qwen3.5-4B with 4 slots (~24 min with 1); 35B-A3B ~94 min (`09-model-check.md` §5.1) · ASSUMPTION (estimate, measured in M6) |
@@ -74,7 +74,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-PERF-31 | Semantic search on TD-2 (incl. query embedding) | ≤ 1 s p95 for top 20 | 100 queries | ASSUMPTION |
 | NFR-PERF-32 | Re-scan of TD-2 with 0 changes | ≤ 60 s | Timer | ASSUMPTION · M2b (RM-1, warm page cache): app path 0.013–0.025 s (1,089 TXT/MD/CSV stored, other files skipped); walk + diff of all 10,000 files as stored references 0.019 s (`10-walking-skeleton.md` §3). Cold cache and the app path with every format stored: M3 |
 | NFR-PERF-33 | Re-scan skips unchanged files | 0 unchanged files re-processed | Count in job log | Brief (content hash) · M2b: met; unchanged size + modified time means no read and no work item (`nfr_perf_33_rescan_unchanged_creates_no_work`, and on TD-2 in `rescan_td2`). The hash is BLAKE3 (architecture §5.4) |
-| NFR-PERF-34 | Connections screen update after a file finishes | ≤ 2 s | Timer | ASSUMPTION · M2b (S2c, RM-1, 10,000 documents, ~297,000 mentions): commit incl. derived rebuild and writer wait, p95 601 ms (0 decisions) / 736 ms (10,000 decisions); + 500 ms debounce = 1.10 / 1.24 s (`10-walking-skeleton.md` §S2c). M2d: screen side (event received → list re-rendered) p95 17 ms over a TD-2 ingest, so 1.12 / 1.25 s end to end (`10-walking-skeleton.md` §6) |
+| NFR-PERF-34 | Connections screen update after a file finishes | ≤ 2 s | Timer | ASSUMPTION · M2b (S2c, RM-1, 10,000 documents, ~297,000 mentions): commit incl. derived rebuild and writer wait, p95 601 ms (0 decisions) / 736 ms (10,000 decisions); + 500 ms debounce = 1.10 / 1.24 s (`10-walking-skeleton.md` §S2c). M2d: screen side (event received → list re-rendered) p95 17 ms over a TD-2 ingest, so 1.12 / 1.25 s end to end (`10-walking-skeleton.md` §6) · M4d (TD-2 ingest, release build): commit p95 38.5 ms, max 4.18 s (one outlier, not explained); screen side p95 19 ms; p95 end to end about 0.56 s (`12-layer1.md` §5) |
 
 ---
 
@@ -119,7 +119,7 @@ Targets are measured on RM-1 at full power, and each result records the machine.
 | NFR-REL-06 | Per-file processing limit | Parse step ≤ 120 s per file; for MBOX ≤ 120 s per message, counted from the last finished message (ADR-0016); for PDFs and images ≤ 120 s per page, counted from the last finished page, and ≤ 30 s per OCR page (ADR-0017); over limit → file fails | TD-3 slow files | ASSUMPTION · M2c: deadline kill built and tested ("Took too long to read"). M3a: MBOX per message (decided 2026-10-29, ADR-0016; `adr_0016_mbox_deadline_per_message`). M3b: PDFs and images per page, OCR page cap (ADR-0017; `adr_0017_pdf_deadline_per_page`, `adr_0017_ocr_page_deadline`) |
 | NFR-REL-07 | Parser memory guard | A file whose parser uses more than 1 GB is stopped within 200 ms after passing it (memory sampled every 100 ms) and fails alone with "Needed too much memory" | TD-3 | Reworded per gap A5 (2026-10-27). M2c (S2b, Linux): stopped ≤ 160 ms after passing 1 GB |
 | NFR-REL-08 | Model download | Resumes after network loss; SHA-256 verified on 100% of downloads | Pull network cable mid-download | Brief |
-| NFR-REL-09 | User decisions kept | 100% of decisions survive re-scan, model change, and app upgrade | Automated regression test | Brief |
+| NFR-REL-09 | User decisions kept | 100% of decisions survive re-scan, model change, and app upgrade | Automated regression test | Brief · M4d: `nfr_rel_09_decisions_survive` covers re-scan, Re-process, rebuild and re-open after an older derived version; model change and app upgrade are not testable yet |
 | NFR-REL-10 | Original files untouched | 0 writes to user source folders | File-system audit (checksums before/after TD-1 run) | ASSUMPTION (follows from design) · M3d (RM-1): all 103 TD-1 files unchanged after ingest, rebuild, 86 views, 553 rendered pages, retry (`nfr_rel_10_td1_unchanged_after_full_run`), and after the release-app sweeps, strace run and kill test (`11-ingestion.md` §9) |
 | NFR-REL-11 | Schema migration | Backup before every migration; failed migration leaves project usable from backup | Migration tests | ASSUMPTION |
 | NFR-REL-12 | `llama-server` crash | AI jobs pause with reason; Layer 1 keeps working; auto-restart at most 2 times | Kill sidecar test | ASSUMPTION |
@@ -141,7 +141,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-QA-07 | OCR character accuracy (clean 300 DPI scans) | ≥ 95%: 1 − CER, whitespace-normalised, OCR lines in reference order (`08-engine-bakeoff.md` §12.3) | Benchmark on TD-1 clean-tier scans | M0: Tesseract 98.5% (ADR-0014) · M3b (production path, `nfr_qa_07_ocr_accuracy_clean_tier`): 98.46% on 6 clean pages · ASSUMPTION (definition) |
 | NFR-QA-08 | People/org extraction precision (Layer 2) | ≥ 85% (micro, per-segment name keys, `09-model-check.md` §3.1) | Benchmark | M1: confirmed. Qwen3.5-4B 82.9% (minimum tier), 35B-A3B 91.2%, Flash-Next 93.4% → Layer 2 Experimental until M6 re-measures |
 | NFR-QA-09 | People/org extraction recall (Layer 2) | ≥ 70% | Benchmark | M1: confirmed. 94.0% / 96.7% / 98.5% on reference text; OCR noise measured in M6 |
-| NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief |
+| NFR-QA-10 | Links shown without evidence | 0 | Automated check: every connection has ≥ 2 mentions in ≥ 2 documents, each with a locator | Brief · M4d: `nfr_qa_10_*` on a small synthetic project and on TD-1, and in `check_health` |
 | NFR-QA-11 | LLM mentions with evidence not found in source text | 0 shown | Automated span check | Brief ("never invent") · M1: the span check discarded 0–4 mentions per run (≤ 1.0%) |
 | NFR-QA-12 | Highlight lands on the right text | ≥ 99% of 200 random clicks | Semi-automated check | ASSUMPTION · M3d (RM-1): 200 of 200 seeded clicks on TD-1 right in the core (`nfr_qa_12_highlight_lands_on_right_text`; 71 also on ground-truth boxes; TD-1 has 86 email mentions, so the 200 draws cover 75 distinct ones); 108 of 108 in the release app, highlighted DOM text checked (`11-ingestion.md` §9) |
 | NFR-QA-13 | CSV column-mapping suggestions correct | ≥ 90% of columns in TD-1 | Benchmark | ASSUMPTION. M4c: 100% of 23 CSV columns (JSON 38/38), `12-layer1.md` §4 |
@@ -176,7 +176,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | NFR-USE-01 | `git clone` → first cross-source result | < 30 min (build + llama.cpp install + model download, normal connection, supported hardware) | Timed fresh run on RM-1 | Brief · M1: the install step is part of the run (ADR-0015, [install guide](install-llama-cpp.md)). ASSUMPTION: a few minutes with a package manager; a prebuilt Vulkan archive is 35 MB (~3 s at 100 Mbit/s), CUDA + its runtime 772 MB (~1 min). Not timed in M1 |
 | NFR-USE-02 | "Normal connection" for NFR-USE-01 | 100 Mbit/s | — | ASSUMPTION |
 | NFR-USE-03 | Clean build time | ≤ 15 min on RM-1 | Timer | ASSUMPTION · M2a: `cargo xtask build --release` from `cargo clean` 54.8 s on RM-1, incl. source download, `npm ci`, Tesseract (`10-walking-skeleton.md` §2) |
-| NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief |
+| NFR-USE-04 | Link → source | Exactly 1 click from any connection, search result, or evidence item | UI test | Brief · M4d: click count tested for connection → evidence → source; click sweep 50 / 50 and 200 / 200 right |
 | NFR-USE-05 | Error messages | Every failed file has a plain-English reason + path; no raw stack traces in the main UI | TD-3 review | Brief · ASSUMPTION (wording rule) |
 | NFR-USE-06 | Keyboard | Connections screen, source viewer, and review queue fully usable by keyboard | Manual test | ASSUMPTION |
 | NFR-USE-07 | Window size | Usable at 1280 × 800; supports 100–200% display scaling | Manual test | ASSUMPTION |
