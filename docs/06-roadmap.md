@@ -50,8 +50,11 @@ flowchart LR
     G2 --> M3["M3<br/>Ingestion +<br/>source viewer"]
     M3 --> M4["M4<br/>Layer 1 complete<br/>first demo"]
     M4 --> M5["M5<br/>Model manager +<br/>egress gate"]
-    M5 --> M6["M6<br/>AI extraction +<br/>meaning search"]
-    M6 --> M7a["M7a<br/>Decisions +<br/>proposals"]
+    M5 --> M6a["M6a<br/>AI extraction<br/>(Stage B)"]
+    M5 --> M6b["M6b<br/>Meaning search"]
+    M6a --> M6c["M6c<br/>Entities +<br/>acceptance"]
+    M6b --> M6c
+    M6c --> M7a["M7a<br/>Decisions +<br/>proposals"]
     M7a --> M7b["M7b<br/>Review queue +<br/>entity detail"]
     M7b --> M8["M8<br/>Layer 3<br/>(timebox, cut first)"]
     M7b --> M9["M9<br/>Release v0.1"]
@@ -87,7 +90,7 @@ The brief's first milestone plan (approved 2026-09-22) said its estimates would 
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 1.5 | 0.5 | 1.5 | 2 | 1.5 | 1.25 | 1.5 | 1.5 | (1) | 1 | (0.25) | **~12.25** without M8 and M10 |
 
-Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M3 = M3a 0.5 + M3b 0.5 + M3c 0.5 + M3d 0.5. M4 = M4a 0.25 + M4b 0.5 + M4c 0.5 + M4d 0.25. M5 = M5a 0.5 + M5b 0.25 + M5c 0.5. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
+Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M3 = M3a 0.5 + M3b 0.5 + M3c 0.5 + M3d 0.5. M4 = M4a 0.25 + M4b 0.5 + M4c 0.5 + M4d 0.25. M5 = M5a 0.5 + M5b 0.25 + M5c 0.5. M6 = M6a 0.75 + M6b 0.25 + M6c 0.5. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
 
 All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. **Re-baselined after M1 (2026-10-24):** M5 1 → 1.25 (the external path moved in from M1); M6 stays 1.5 (it adds the identifier-overlap rule and 4-slot Stage B); M7 and M8 unchanged, with the M8 go/no-go leaning no (`09-model-check.md` §7).
 
@@ -477,6 +480,14 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 7. A model re-run never shows two models' output mixed; cancel leaves nothing visible changed (ADR-0005).
 
 **Exit decision.** None.
+
+**Split** (decided 2026-11-04)
+
+| Sub | Focus | Scope items | Spike | Acceptance criteria | Needs |
+|---|---|---|---|---|---|
+| **M6a** | AI extraction (Stage B) | Roadmap §4 #12 (A4) decided first. Production `mk-ai`: Stage B lane on `ai_client`, up to 4 slots on the local model (NFR-PERF-25); schema check with one retry, evidence span check, confidence; AI mentions that overlap a Stage A identifier mention are dropped (`09-model-check.md` §5.3); documents the user picks on large projects, segments with identifiers first (gap A3); Blocked when the gate or the supervisor says no (INV-PR-09); re-run with another model via pending run + switch (ADR-0005); "Experimental" label. US-10.1–10.4. | — | 1 (E10), 3, 7 | M5 exit |
+| **M6b** | Meaning search | S6 first (TD-2 scale, needs an idle RM-1). Embeddings lane, float vectors in `project.db`, binary index file, rescoring, idle release (ADR-0010); query embedding through the gate (INV-SR-03); meaning mode in the Search tab. US-06.2. ADR-0010 accepted or superseded. | S6 | 1 (US-06.2), 5 | M5 exit (can run before or alongside M6a) |
+| **M6c** | Entities + acceptance | US-11.1 exact-name groups; US-07.7 first part (entities in 2+ sources on the connections screen); LLM benchmark runnable by hand (NFR-MNT-06), replacing `spikes/model-check`; NFR-QA-08/09 re-measured with the minimum-tier model on Stage A output and the "Experimental" label decided; network-off TD-1 run; idle-machine timings. | — | 1 (US-11.1, US-07.7 part), 2, 4, 6; exit | M6a, M6b |
 
 ---
 
