@@ -261,7 +261,7 @@ The core is a Cargo workspace. One crate per group of contexts. Domain crates ha
 | BC-07 Entity resolution, BC-08 Linking, BC-09 Curation | `mk-graph` (one crate: they rebuild together, ADR-0005) | Core |
 | BC-10 Search | `mk-search` (pure: query syntax to a safe FTS5 query, snippets, card-like masking; the FTS5 table and its reads are in `mk-store`, since M4a) | Core |
 | BC-11 Egress policy | `mk-egress` (since M5a: address classes and the permission check, pure; the gate, the only maker of a model client; the client pinned to the checked addresses with `ureq` + rustls; the fixed-text endpoint test; the OS keychain through `keyring`. Ports for the stores and the resolver are implemented in `mk-core`) | Core |
-| BC-12 Model management | `mk-models` | Core |
+| BC-12 Model management | `mk-models` (catalog, hardware check and downloads since M5b; since M5c the `runtime` module: finding `llama-server` and reading its build and backend, the process on 127.0.0.1 with a per-start key, and the supervisor with the domain §7.8 states, at most 2 auto-restarts and the idle stop. `mk-core` chooses the model per role, keeps AI jobs Blocked while it cannot run, and is the only caller) | Core |
 | BC-13 Evaluation | `mk-bench` (ground truth, pure scoring and the baseline gate, since M4b) | CLI only |
 | Storage adapters, migrations | `mk-store` | Core |
 | App entry points | `apps/desktop` (Tauri), `apps/cli` | — |
@@ -355,8 +355,9 @@ This is how NFR-PERF-32 (≤ 60 s on TD-2 with no changes) is met. Hashing 5 GB 
     project-v<schema>-<date>.db       ← written before every migration (INV-WS-04)
 
 <OS app-data folder>/mangkon-ai/
-  app.db                              ← registry (M3c), endpoints and their tests (M5a); installed models, hardware profile later
-  models/<model-id>.gguf
+  app.db                              ← registry (M3c), endpoints and their tests (M5a), downloads and settings (M5b, M5c)
+  models/<model-id>/<file>.gguf
+  demo-project/                       ← the demo project with TD-1 as its sources, made on request (US-14.4, M5c)
   logs/mangkon.log (+ rotated)        ← no document content, ≤ 50 MB (NFR-SEC-08)
   tessdata/<code>.traineddata         ← OCR languages: eng written by the app, others put there by the user (ADR-0018)
 ```
@@ -367,7 +368,9 @@ Rules:
 - `project.db` schema v4 (M3c) adds `root_exclusion` (paths removed from a source folder, US-01.5), the failure detail behind "Show details" (US-02.7 AC2), item start and finish times (ETA, US-03.1 AC2) and the job pause time. The project's name and the app version that last wrote it are in `project_meta`.
 - Everything under `index/` and `cache/` can be deleted. The app rebuilds it. `cache/staging/` is emptied when a project opens. Details: [ADR-0016](adr/0016-streamed-file-limits.md).
 - `app.db` v2 (M5a) adds `endpoint` (name, base URL, model, the secret-store account of its key, the structured-output flag of the last test) and `endpoint_test` (the last 20 per endpoint). `project.db` schema v8 (M5a) adds `endpoint_permission` (no row = Not allowed, INV-EG-01) and `egress_record` (host, class, purpose, first and last sent, INV-EG-05). Neither is derived: a rebuild leaves them alone.
-- API keys are never in either folder (ADR-0012).
+- `app.db` v3 (M5b) adds `model_download`, `model_file` and `app_setting`. The settings keys so far: `local_models_override` (M5b, Q7), `llama_server_path` (M5c, ADR-0015), `ai.extraction` and `ai.embeddings` (M5c: `local:<model id>` or `endpoint:<endpoint id>`; unset means the recommended installed model of the role) and `first_run_done` (M5c, US-14.4).
+- `llama-server` output is kept in memory only (the last 16 KiB per model, for "Show details"); the app writes no log of it.
+- API keys are never in either folder (ADR-0012). The local runtime's key is new at every start and lives only in memory.
 
 ---
 

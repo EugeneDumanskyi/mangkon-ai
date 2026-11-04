@@ -56,6 +56,8 @@ pub struct ProgressView {
     pub paused: bool,
     /// A re-scan or Stage A run is going on.
     pub running: bool,
+    /// Why AI work waits (a Blocked job's reason, US-09.5 AC3, US-09.7 AC3).
+    pub blocked: Option<String>,
 }
 
 /// Contents to retry: Failed and Not processed.
@@ -254,6 +256,7 @@ impl Project {
         let started = self.run_started();
         let d = self.store().progress_detail(started.map(|(_, ms)| ms))?;
         let running = self.is_running();
+        let blocked = self.store().blocked_reason()?;
         let rerun = *self
             .rerun_progress()
             .lock()
@@ -270,6 +273,7 @@ impl Project {
                 eta: Eta::None,
                 paused: d.paused,
                 running,
+                blocked,
             });
         }
         let eta = match started {
@@ -289,6 +293,7 @@ impl Project {
             eta,
             paused: d.paused,
             running,
+            blocked,
         })
     }
 }

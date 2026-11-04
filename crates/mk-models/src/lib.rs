@@ -6,6 +6,8 @@
 //!   check ([`hardware`], US-09.1) and model downloads ([`download`], US-09.4), with the
 //!   download state machine of domain §7.7 ([`state`]). `download` holds this crate's HTTP
 //!   client (ADR-0009): it reaches only hosts listed in the catalog.
+//! - M5c: the local runtime ([`runtime`]): the user's `llama-server`, its build and backend, and
+//!   the supervisor that starts, watches and stops it (ADR-0015, domain §7.8).
 //!
 //! The catalog file is `catalog/catalog.json`; its JSON Schema, produced from these types, is
 //! `schema/catalog.schema.json`. Numbers in it come from `docs/09-model-check.md`. Sizes are in
@@ -13,6 +15,7 @@
 
 pub mod download;
 pub mod hardware;
+pub mod runtime;
 pub mod state;
 
 #[cfg(feature = "testkit")]

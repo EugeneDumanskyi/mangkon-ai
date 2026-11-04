@@ -59,14 +59,14 @@ pub struct ModelError {
 }
 
 impl ModelError {
-    fn new(code: &'static str, message: impl Into<String>) -> ModelError {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> ModelError {
         ModelError {
             code,
             message: message.into(),
         }
     }
 
-    fn store(e: mk_store::StoreError) -> ModelError {
+    pub(crate) fn store(e: mk_store::StoreError) -> ModelError {
         ModelError::new("store", format!("The app database failed: {e}"))
     }
 
@@ -192,7 +192,7 @@ impl ModelParts {
         }
     }
 
-    fn profile(&self) -> HardwareProfile {
+    pub(crate) fn profile(&self) -> HardwareProfile {
         let mut cached = lock(&self.hardware);
         cached
             .get_or_insert_with(|| self.probe.probe(&self.dir))
@@ -231,6 +231,73 @@ impl ModelParts {
                 Some((r.model_id, (state, error)))
             })
             .collect())
+    }
+
+    /// The tier this machine fits, or the smallest one with the override on (US-09.3 AC1).
+    fn tier(&self) -> Option<&mk_models::Tier> {
+        let v = verdict(&self.profile(), &self.catalog);
+        v.tier
+            .as_deref()
+            .and_then(|t| self.catalog.tiers.iter().find(|x| x.id == t))
+            .or_else(|| {
+                self.local_override()
+                    .unwrap_or(false)
+                    .then(|| self.catalog.tiers.first())
+                    .flatten()
+            })
+    }
+
+    /// The model the tier recommends for `role`.
+    pub(crate) fn recommended(&self, role: Role) -> Option<String> {
+        let t = self.tier()?;
+        match role {
+            Role::Extraction => t.recommended_extraction.clone(),
+            Role::Embeddings => Some(t.recommended_embeddings.clone()),
+        }
+    }
+
+    /// Whether `id` is Installed with all its files (domain §7.7: only those serve a stage).
+    pub(crate) fn is_installed(&self, id: &str) -> bool {
+        self.catalog
+            .model(id)
+            .is_some_and(|m| self.state_of(m).ok() == Some(DownloadState::Installed))
+    }
+
+    /// Installed models of `role`, in catalog order.
+    pub(crate) fn installed(&self, role: Role) -> Vec<String> {
+        self.catalog
+            .models
+            .iter()
+            .filter(|m| m.role == role && self.is_installed(&m.id))
+            .map(|m| m.id.clone())
+            .collect()
+    }
+
+    /// What the runtime starts for an installed model.
+    pub(crate) fn spec(&self, id: &str) -> Result<mk_models::runtime::ModelSpec, ModelError> {
+        let m = self.model(id)?;
+        if !self.is_installed(id) {
+            return Err(ModelError::new(
+                "not_installed",
+                format!("{} is not installed. Download it in AI models.", m.name),
+            ));
+        }
+        Ok(mk_models::runtime::ModelSpec {
+            id: m.id.clone(),
+            role: m.role,
+            files: m.files.iter().map(|f| file_path(&self.dir, m, f)).collect(),
+            context: m.context,
+        })
+    }
+
+    pub(crate) fn name_of(&self, id: &str) -> String {
+        self.catalog
+            .model(id)
+            .map_or_else(|| id.to_string(), |m| m.name.clone())
+    }
+
+    pub(crate) fn role_of(&self, id: &str) -> Option<Role> {
+        self.catalog.model(id).map(|m| m.role)
     }
 
     fn state_of(&self, model: &Model) -> Result<DownloadState, ModelError> {
@@ -514,18 +581,7 @@ impl Workspace {
     pub fn model_catalog(&self) -> Result<Vec<ModelView>, ModelError> {
         let parts = &self.models;
         let profile = parts.profile();
-        let v = verdict(&profile, &parts.catalog);
-        let tier = v
-            .tier
-            .as_deref()
-            .and_then(|t| parts.catalog.tiers.iter().find(|x| x.id == t))
-            .or_else(|| {
-                parts
-                    .local_override()
-                    .unwrap_or(false)
-                    .then(|| parts.catalog.tiers.first())
-                    .flatten()
-            });
+        let tier = parts.tier();
         let mut stored = parts.stored()?;
         let running = lock(&parts.running).as_ref().map(|r| r.id.clone());
         let live = lock(&parts.live).clone();

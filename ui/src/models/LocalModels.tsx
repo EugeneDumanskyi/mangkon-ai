@@ -3,7 +3,9 @@ import { useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { CatalogModel } from "../ipc/bindings/CatalogModel";
 import type { HardwareInfo } from "../ipc/bindings/HardwareInfo";
+import type { TryResult } from "../ipc/bindings/TryResult";
 import { gb, percent, roleLabel, size, speed, stateLabel, timeLeft } from "../lib/models";
+import { TryResultView } from "./Runtime";
 
 const button = "rounded border border-border px-2 py-0.5 text-sm disabled:opacity-50";
 
@@ -148,6 +150,9 @@ export function ModelRowView({
   onResume,
   onCancel,
   onDelete,
+  trying = false,
+  tryResult = null,
+  onTry,
 }: {
   model: CatalogModel;
   busy: boolean;
@@ -157,6 +162,10 @@ export function ModelRowView({
   onResume: () => void;
   onCancel: () => void;
   onDelete: () => void;
+  /** "Try" (US-09.5 AC1): only on the AI models screen. */
+  trying?: boolean;
+  tryResult?: TryResult | null;
+  onTry?: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const m = model;
@@ -191,6 +200,11 @@ export function ModelRowView({
           {(m.state === "downloading" || partial) && (
             <button type="button" className={button} disabled={busy} onClick={onCancel}>
               Cancel
+            </button>
+          )}
+          {m.state === "installed" && onTry !== undefined && (
+            <button type="button" className={button} disabled={busy || trying} onClick={onTry}>
+              {trying ? "Starting…" : "Try"}
             </button>
           )}
           {m.state === "installed" &&
@@ -268,6 +282,7 @@ export function ModelRowView({
         </div>
       )}
       {m.state === "installed" && <span className="text-sm">{stateLabel(m)}</span>}
+      {tryResult !== null && <TryResultView result={tryResult} />}
       {m.error !== null && (
         <span role="alert" className="text-sm">
           {m.error.message}
@@ -290,12 +305,18 @@ export function CatalogSection({
   busy,
   errors,
   onAction,
+  trying = null,
+  tried = {},
+  onTry,
 }: {
   hardware: HardwareInfo | undefined;
   models: CatalogModel[];
   busy: string | null;
   errors: Record<string, string>;
   onAction: (action: ModelAction, id: string) => void;
+  trying?: string | null;
+  tried?: Record<string, TryResult>;
+  onTry?: (id: string) => void;
 }) {
   const allowed = hardware?.localAllowed ?? false;
   return (
@@ -333,6 +354,13 @@ export function CatalogSection({
                 onDelete={() => {
                   onAction("delete", m.id);
                 }}
+                trying={trying === m.id}
+                tryResult={tried[m.id] ?? null}
+                {...(onTry && {
+                  onTry: () => {
+                    onTry(m.id);
+                  },
+                })}
               />
             ))}
           </ul>
@@ -390,6 +418,22 @@ export function LocalModels() {
     },
     onSettled: changed,
   });
+  const [tried, setTried] = useState<Record<string, TryResult>>({});
+  const tryModel = useMutation({
+    mutationFn: commands.modelTry,
+    onMutate: (id) => {
+      setTried((r) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== id)));
+    },
+    onSuccess: (result, id) => {
+      setTried((r) => ({ ...r, [id]: result }));
+    },
+    onError: (e, id) => {
+      setErrors((r) => ({ ...r, [id]: errorMessage(e) }));
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["runtime"] });
+    },
+  });
   const error = hardware.error ?? recheck.error ?? override.error;
   return (
     <>
@@ -411,6 +455,11 @@ export function LocalModels() {
         errors={errors}
         onAction={(action, id) => {
           act.mutate({ action, id });
+        }}
+        trying={tryModel.isPending ? tryModel.variables : null}
+        tried={tried}
+        onTry={(id) => {
+          tryModel.mutate(id);
         }}
       />
     </>

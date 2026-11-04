@@ -85,15 +85,22 @@ impl TestReport {
         self.chat.is_ok()
     }
 
-    /// One line for the UI and `endpoint_test.message`.
+    /// One line for the UI and `endpoint_test.message`, naming the model the server reported.
     pub fn summary(&self) -> String {
+        let reported = self
+            .chat
+            .as_ref()
+            .ok()
+            .and_then(|c| c.reported_model.as_deref());
+        self.summary_as(reported.unwrap_or("the model"))
+    }
+
+    /// [`summary`](Self::summary) with the model named `name`: a local runtime reports its
+    /// file path, not a name.
+    pub fn summary_as(&self, name: &str) -> String {
         match &self.chat {
             Ok(c) => {
-                let mut s = format!(
-                    "Connected: {} answered in {} ms",
-                    c.reported_model.as_deref().unwrap_or("the model"),
-                    c.response_ms
-                );
+                let mut s = format!("Connected: {name} answered in {} ms", c.response_ms);
                 if self.structured_output == Some(false) {
                     s.push_str(". ");
                     s.push_str(NO_STRUCTURED_OUTPUT);
@@ -200,6 +207,34 @@ pub fn endpoint_test(
             }),
     );
     report
+}
+
+/// The embeddings call alone, with [`TEST_EMBED_TEXT`] (INV-EG-08): for a server started for
+/// embeddings only, which has no chat.
+pub fn embeddings_test(
+    resolver: &dyn Resolve,
+    roots: &TlsRoots,
+    target: TestTarget<'_>,
+) -> Result<EmbeddingsProbe, EgressError> {
+    let origin = target.base_url.origin().clone();
+    let resolved = resolve_origin(resolver, &origin)?;
+    let agent = pinned_agent(&origin, &resolved.ips, roots, TEST_TIMEOUT);
+    let inputs = [TEST_EMBED_TEXT.to_string()];
+    let r = post_json(
+        &agent,
+        &origin,
+        &target.base_url.join("embeddings"),
+        target.key,
+        &embeddings_body(target.model, &inputs),
+    )?;
+    if !(200..300).contains(&r.status) {
+        return Err(status_error(r.status, &r.body, target.model, target.key));
+    }
+    let e = parse_embeddings(&r.body, 1, r.ms)?;
+    Ok(EmbeddingsProbe {
+        dimensions: e.vectors[0].len(),
+        response_ms: e.ms,
+    })
 }
 
 #[cfg(test)]

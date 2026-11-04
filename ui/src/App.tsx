@@ -1,12 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "./ipc/commands";
+import { FirstRun } from "./first/FirstRun";
+import { onOpenProjectSettings } from "./lib/ai";
 import { connectCoreEvents, onCoreEvent } from "./lib/coreEvents";
 import { ModelsScreen } from "./models/ModelsScreen";
 import { ProjectScreen } from "./project/ProjectScreen";
 import { runQueueWalk } from "./project/queueWalk";
 import { StartScreen } from "./project/StartScreen";
 import { S2dScreen } from "./spike/S2dScreen";
+import { StatusBar } from "./status/StatusBar";
 
 export function App() {
   const client = useQueryClient();
@@ -14,6 +17,17 @@ export function App() {
   const project = useQuery({ queryKey: ["project"], queryFn: commands.currentProject });
   const [notice, setNotice] = useState<string | null>(null);
   const [models, setModels] = useState(false);
+  const firstRun = useQuery({ queryKey: ["first_run"], queryFn: commands.firstRun });
+  // Set up later: no first-run screen again this session.
+  const [setupDone, setSetupDone] = useState(false);
+  // The status bar's "Settings" link leaves the AI models screen for the project's settings.
+  useEffect(
+    () =>
+      onOpenProjectSettings(() => {
+        setModels(false);
+      }),
+    [],
+  );
 
   useEffect(() => {
     connectCoreEvents(client).catch((e: unknown) => {
@@ -95,10 +109,18 @@ export function App() {
             viewSweep={info.data?.viewSweep ?? false}
             clickSweep={info.data?.clickSweep ?? null}
           />
+        ) : firstRun.data?.show === true && !setupDone ? (
+          <FirstRun
+            demo={firstRun.data.demo}
+            onDone={() => {
+              setSetupDone(true);
+            }}
+          />
         ) : (
           project.isSuccess && <StartScreen />
         )}
       </main>
+      {!info.data?.spikeS2d && <StatusBar projectOpen={project.data != null} />}
     </div>
   );
 }

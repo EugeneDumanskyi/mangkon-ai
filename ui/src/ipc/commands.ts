@@ -1,6 +1,10 @@
 // The only module that calls into the core (ADR-0003). Every argument and result type comes from
 // the generated bindings, so a change on the Rust side breaks the TypeScript build.
 import { Channel, invoke } from "@tauri-apps/api/core";
+import type { AiActivityInfo } from "./bindings/AiActivityInfo";
+import type { AiChoice } from "./bindings/AiChoice";
+import type { AiChoiceInfo } from "./bindings/AiChoiceInfo";
+import type { AiReadinessInfo } from "./bindings/AiReadinessInfo";
 import type { AllowPrompt } from "./bindings/AllowPrompt";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { CatalogModel } from "./bindings/CatalogModel";
@@ -20,10 +24,12 @@ import type { EgressRecord } from "./bindings/EgressRecord";
 import type { EndpointItem } from "./bindings/EndpointItem";
 import type { EndpointSave } from "./bindings/EndpointSave";
 import type { EndpointTestReport } from "./bindings/EndpointTestReport";
+import type { FirstRunInfo } from "./bindings/FirstRunInfo";
 import type { FrameStats } from "./bindings/FrameStats";
 import type { HardwareInfo } from "./bindings/HardwareInfo";
 import type { IpcError } from "./bindings/IpcError";
 import type { MappingView } from "./bindings/MappingView";
+import type { ModelRole } from "./bindings/ModelRole";
 import type { Occurrence } from "./bindings/Occurrence";
 import type { PageView } from "./bindings/PageView";
 import type { PatternTest } from "./bindings/PatternTest";
@@ -34,6 +40,7 @@ import type { QueueWalk } from "./bindings/QueueWalk";
 import type { RecentProject } from "./bindings/RecentProject";
 import type { RemoveSummary } from "./bindings/RemoveSummary";
 import type { RowPage } from "./bindings/RowPage";
+import type { RuntimeInfo } from "./bindings/RuntimeInfo";
 import type { RowsRequest } from "./bindings/RowsRequest";
 import type { SearchCursor } from "./bindings/SearchCursor";
 import type { SearchPage } from "./bindings/SearchPage";
@@ -45,6 +52,7 @@ import type { SettingsInfo } from "./bindings/SettingsInfo";
 import type { SettingsSaved } from "./bindings/SettingsSaved";
 import type { SourceRoot } from "./bindings/SourceRoot";
 import type { SourceView } from "./bindings/SourceView";
+import type { TryResult } from "./bindings/TryResult";
 import type { UiEvent } from "./bindings/UiEvent";
 import type { UiTiming } from "./bindings/UiTiming";
 import type { ViewSweep } from "./bindings/ViewSweep";
@@ -190,6 +198,28 @@ export const commands = {
   modelDelete: (id: string) => invoke<null>("model_delete", { id }),
   /** US-09.2 AC3 (Q7): allow local models below the minimum. */
   localModelsOverride: (on: boolean) => invoke<HardwareInfo>("local_models_override", { on }),
+  /** The llama-server in use, its build and backend (ADR-0015); `recheck` finds it again. */
+  runtimeStatus: (recheck: boolean) => invoke<RuntimeInfo>("runtime_status", { recheck }),
+  /** "Choose…": the llama-server to use; `null` clears the setting. */
+  runtimeSetPath: (path: string | null) => invoke<RuntimeInfo>("runtime_set_path", { path }),
+  /** "Retry" after a failure: checks again and starts failed models again. */
+  runtimeRetry: () => invoke<RuntimeInfo>("runtime_retry"),
+  /** "Try": starts an installed model on 127.0.0.1 and sends the fixed test texts. */
+  modelTry: (id: string) => invoke<TryResult>("model_try", { id }),
+  /** What each role uses (both roles). */
+  aiChoice: () => invoke<AiChoiceInfo[]>("ai_choice"),
+  /** "Use for AI"; `null` goes back to the default. */
+  aiChoiceSet: (role: ModelRole, choice: AiChoice | null) =>
+    invoke<AiChoiceInfo[]>("ai_choice_set", { role, choice }),
+  /** Whether each role's AI can run for the open project (US-09.7 AC3). */
+  aiReadiness: () => invoke<AiReadinessInfo[]>("ai_readiness"),
+  /** Where data goes now, if an AI call is on its way (US-09.8 AC1). */
+  aiActivity: () => invoke<AiActivityInfo | null>("ai_activity"),
+  /** Whether to show the first-run screen, and where the demo files are (US-14.4). */
+  firstRun: () => invoke<FirstRunInfo>("first_run"),
+  firstRunFinish: () => invoke<null>("first_run_finish"),
+  /** Opens the demo project with the demo files at `path`, or where they were found. */
+  demoOpen: (path: string | null) => invoke<ProjectInfo>("demo_open", { path }),
   /** Core events go to `onEvent` until the page reloads (no `core:event` permission). */
   subscribe: (onEvent: (event: UiEvent) => void) => {
     const channel = new Channel<UiEvent>();

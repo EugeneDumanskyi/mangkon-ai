@@ -164,6 +164,7 @@ describe("progress of the identifier re-run", () => {
       runTotal: 40,
       currentFiles: [],
       eta: { kind: "none" },
+      blocked: null,
     };
     const html = renderToStaticMarkup(<ProgressSummary progress={progress} />);
     expect(html).toContain("Finding identifiers again in stored text");

@@ -20,6 +20,7 @@ use mk_egress::{
 };
 use mk_store::{AppStore, EndpointRow, EndpointTestRow, Store, StoreError};
 
+use crate::ai::{Activity, AiActivity};
 use crate::project::Project;
 use crate::workspace::Workspace;
 
@@ -153,9 +154,9 @@ impl Endpoints for AppEndpoints {
 }
 
 /// The project's permissions and records for the gate.
-struct ProjectEgress<'a>(&'a Store);
+pub(crate) struct ProjectEgress<'a>(pub(crate) &'a Store);
 
-fn permission_of(row: Option<mk_store::PermissionRow>) -> Permission {
+pub(crate) fn permission_of(row: Option<mk_store::PermissionRow>) -> Permission {
     let Some(row) = row else {
         return Permission::NotAllowed;
     };
@@ -212,6 +213,8 @@ pub(crate) struct EgressParts {
     pub(crate) secrets: Arc<LazySecrets>,
     pub(crate) roots: TlsRoots,
     pub(crate) gate: Gate,
+    /// Where data goes now, for the status bar (INV-EG-06, NFR-SEC-05).
+    pub(crate) activity: Arc<Activity>,
 }
 
 impl EgressParts {
@@ -220,18 +223,23 @@ impl EgressParts {
             preset: config.secrets,
             picked: OnceLock::new(),
         });
+        let activity = Arc::new(Activity::default());
+        let (on_send, on_finish) = (activity.clone(), activity.clone());
         let gate = Gate::new(
             config.resolver.clone(),
             Arc::new(AppEndpoints(app)),
             secrets.clone(),
             config.roots.clone(),
         )
-        .with_timeout(config.call_timeout);
+        .with_timeout(config.call_timeout)
+        .on_send(move |s| on_send.begin(AiActivity::of(s)))
+        .on_finish(move |s, _| on_finish.end(&AiActivity::of(s)));
         EgressParts {
             resolver: config.resolver,
             secrets,
             roots: config.roots,
             gate,
+            activity,
         }
     }
 }
@@ -360,7 +368,10 @@ fn new_id() -> Result<String, EndpointError> {
     Ok(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
-fn destination_of(resolver: &dyn Resolve, base: &BaseUrl) -> Result<DestinationInfo, EgressError> {
+pub(crate) fn destination_of(
+    resolver: &dyn Resolve,
+    base: &BaseUrl,
+) -> Result<DestinationInfo, EgressError> {
     let r = resolve_origin(resolver, base.origin())?;
     let o = base.origin();
     Ok(DestinationInfo {
@@ -604,6 +615,13 @@ impl Workspace {
             None => None,
         };
         let parts = self.egress_parts();
+        // The test text goes out too: the status bar shows where (NFR-SEC-05).
+        let shown = destination_of(parts.resolver.as_ref(), &base)
+            .ok()
+            .map(|d| AiActivity::test(&d.host, d.class));
+        if let Some(a) = &shown {
+            parts.activity.begin(a.clone());
+        }
         let report = endpoint_test(
             parts.resolver.as_ref(),
             &parts.roots,
@@ -613,6 +631,9 @@ impl Workspace {
                 key: key.as_ref(),
             },
         );
+        if let Some(a) = &shown {
+            parts.activity.end(a);
+        }
         drop(key);
         let (ms, model) = match &report.chat {
             Ok(c) => (Some(c.response_ms as i64), c.reported_model.clone()),
@@ -726,12 +747,15 @@ impl Workspace {
             return Ok(());
         }
         project.store().allow_endpoint(id, origin, class.as_str())?;
+        self.refresh_ai_blocks(project)?;
         Ok(())
     }
 
-    /// Revokes the project's permission for an endpoint (domain §7.6).
+    /// Revokes the project's permission for an endpoint (domain §7.6). AI jobs that used it
+    /// are Blocked (INV-PR-09).
     pub fn revoke_endpoint(&self, project: &Project, id: &str) -> Result<(), EndpointError> {
         project.store().revoke_endpoint(id)?;
+        self.refresh_ai_blocks(project)?;
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 # 13 — Model manager and egress gate
 
 > Input: `06-roadmap.md` §2 M5 (spike S5), ADR-0009, ADR-0012, ADR-0015, `02-requirements.md` E09, `03-nfr.md` (NFR-SEC-02/04/05/07, NFR-COMP-05), `04-domain.md` BC-11 and §7.6. **If this file disagrees with them, they win.**
-> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama and LM Studio dropped (2026-11-04); calls from RM-2 moved to M10. §3: the release-app webview check moved to M10. §4 (M5b): code and automated checks done on RM-1 (2026-11-04); resume after a killed download checked on the real CDN; the network capture was not done (skipped, 2026-11-04; moved to M10). Linux only; macOS and Windows are not verified here.
+> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama and LM Studio dropped (2026-11-04); calls from RM-2 moved to M10. §3: the release-app webview check moved to M10. §4 (M5b): code and automated checks done on RM-1 (2026-11-04); resume after a killed download checked on the real CDN; the network capture was not done (skipped, 2026-11-04; moved to M10). §5–§6 (M5c): done on RM-1 (2026-11-04): automated checks, Try with the 4B model, the out-of-memory text, the desktop walk. Linux only; macOS and Windows are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -170,5 +170,111 @@ tshark -r /tmp/m5b.pcap -Y 'tls.handshake.type == 1' -T fields -e tls.handshake.
 - `*.cdn.hf.co` matches any name below `cdn.hf.co` (decided 2026-11-04): Hugging Face controls that zone, and every file is checked against the catalog's SHA-256.
 - Resume re-requests the `resolve` URL (signed CDN links expire) and needs a 206 with exactly the expected `Content-Range`; anything else restarts the file from 0. The bytes already on disk are hashed before the rest arrives.
 - A stalled connection gives up after 30 s with no data and leaves the model Interrupted.
-- NVIDIA driver older than 525.60 (Linux) or 527.41 (Windows) gets a note to update (CUDA 12.0 minimums from NVIDIA's release notes). It never blocks. ASSUMPTION until M5c: the `llama-server` build chosen in the ADR-0015 follow-up may need a newer CUDA 12.x and driver; check the numbers then.
+- NVIDIA driver older than 525.60 (Linux) or 527.41 (Windows) gets a note to update (CUDA 12.0 minimums from NVIDIA's release notes). It never blocks. Checked in M5c (2026-11-04): RM-1's `llama-server` is a source build against the CUDA 13 runtime (`libcudart.so.13`) with driver 595.104.02, and the app shows its backend from `--list-devices` (§5). ASSUMPTION: the prebuilt `cuda-12.8` archive works from driver 525.60 through CUDA minor-version compatibility, and CUDA 13 builds need driver 580 or newer. Not tested; the note stays a note.
 
+
+---
+
+## 5. Local runtime (M5c, US-09.5, ADR-0015)
+
+### Finding and checking `llama-server`
+
+- Where: the path in settings (`app_setting` `llama_server_path`, "Choose…" on the AI models screen), then `PATH`. Nowhere else. A settings path that is not an executable file is refused when it is set.
+- Build: `--version` (both forms of the output), at least 10863; refusal texts exactly as ADR-0015, with `docs/install-llama-cpp.md`.
+- Backend: `--list-devices`. Each device line starts with its backend's name: `CUDA0: NVIDIA GeForce RTX 5070 Laptop GPU (7707 MiB, 7570 MiB free)` on RM-1 (build 10863). No device line means a CPU-only build; with a GPU in the hardware check the screen then says which build to get. ASSUMPTION: the prefixes `Vulkan`, `MTL`/`Metal`, `ROCm`/`HIP` and `SYCL` for the other backends (read from the llama.cpp sources, not run).
+- Both calls have a 5 s limit. "Check again" runs them again; "Retry" also starts failed models again. No app restart is needed.
+
+```sh
+mangkon-cli runtime --llama-server ~/AI/llama.cpp/build/bin/llama-server
+```
+
+```text
+llama-server  ~/AI/llama.cpp/build/bin/llama-server (--llama-server)
+Build         10863 (commit 88ada91c1, 0.4.0-dev)
+Device        CUDA0: NVIDIA GeForce RTX 5070 Laptop GPU (7707 MiB, 7570 MiB free)
+Backend       CUDA
+Verdict       usable (build 10863 or newer)
+```
+
+### How it is started
+
+```text
+llama-server --host 127.0.0.1 --port <free port> --api-key <64 hex, new per start> -m <first file>
+  extraction: -c <catalog context> -np 1 --cache-ram 0 --reasoning off
+  embeddings: --embedding -c 2048 -np 1 -b 2048 -ub 2048 --cache-ram 0
+```
+
+- One process per loaded model, at most two (extraction and embeddings, architecture §7). Started when an AI stage or Try needs it (`Workspace::ai_client`, `try_local_model`), Ready only after `/health` answers 200 (polled every 250 ms, 300 s limit for large models).
+- A lease holds it Busy during a call; it goes back to Ready after. A successful call sets the restart count back to 0 (INV-MM-06).
+- Stopped after 10 min with no call (NFR-RES-06), when its role switches to another model or endpoint, and on app quit: SIGTERM, then kill after 10 s, and the app waits for it (US-09.5 AC2). A start still loading at quit is stopped too.
+- The app's own malloc tunables are not passed on: `GLIBC_TUNABLES` is set back to the user's own value.
+- Output (stdout and stderr) is kept as the last 16 KiB in memory only, for "Show details". No log file.
+- Each call goes through the egress gate as "This machine" with the per-start key as Bearer token (INV-EG-04/05), so it is shown in the status bar and recorded like any other destination.
+
+### Failures (US-09.5 AC3, NFR-REL-12)
+
+| What happens | Shown | Source of the text |
+|---|---|---|
+| Not found / build too old | "llama-server not found" / "llama.cpp build N found; build 10863 or newer is needed" | ADR-0015 |
+| Out of GPU memory at load | "Not enough GPU memory" | RM-1, build 10863 (35B, `--fit off -ngl 99`): `cudaMalloc failed: out of memory`, `failed to allocate CUDA0 buffer`, then `error loading model … failed to load model`, exit 1. Memory is checked before the model-file text, so this wins. ASSUMPTION: Vulkan prints `ErrorOutOfDeviceMemory` (not run) |
+| Bad or missing model file | "The model file could not be loaded" | RM-1, build 10863 (the first 16 MB of the 4B file): `error loading model: tensor 'token_embd.weight' data is not within the file bounds, model is corrupted or incomplete`, `failed to load model`, exit 1 |
+| Port taken between the check and the bind | Tried once more on a new port | RM-1, build 10863: `couldn't bind HTTP server socket, hostname: 127.0.0.1, port: N`, before the model loads |
+| No `/health` in 300 s | "llama-server did not get ready within 300 s" | — |
+| Anything else | "llama-server stopped (exit N)" / "(signal N)" plus Show details | — |
+| Crash while Ready or Busy | Started again, at most twice; then Failed: "llama-server stopped again after 2 restarts (signal 9)" | INV-MM-06 |
+
+When the role's model cannot run, the project's AI jobs (stages B and C for extraction, Embeddings for embeddings) are Blocked with that reason (INV-PR-09), the progress panel and the status bar show it, and Stage A goes on. They run again when the reason is gone: Retry, Choose…, allowing an endpoint, installing a model.
+
+### Automated checks (fakes, every CI run)
+
+`mk-core-fake-llama-server` / `mk-fake-llama-server` (feature `testkit`) answers `--version`, `--list-devices`, `/health`, chat and embeddings with the key check of the real one, and fails on request (slow start, out of memory, bad model, exit, crash after N ms, port taken once). The real process path runs against it:
+
+- `crates/mk-models/tests/runtime.rs` (13 tests): start on demand on 127.0.0.1 with key (401 without, 200 with) and a `/proc/net/tcp` check that it listens on loopback only; a new port and key per start; one start for concurrent callers; idle stop; quit while Ready and while still loading; each failure text; not found then set in settings; port taken once; health timeout; crash → 2 restarts → Failed; a success resets the count; model switch; `kill -9`.
+- `crates/mk-core/tests/m5c_runtime.rs` (13 tests): the ADR-0015 view; `ai_client` and Try for both roles; quit; idle; out of memory → AI job Blocked with the reason while Stage A of three files finishes, then Retry unblocks it; `kill -9` three times → Blocked, Stage A goes on; "No model allowed for this project" with no model, with an endpoint not allowed, and again after revoke; the default choice and a switch that stops the model; NFR-SEC-05 for the three classes (below); first run and demo project (§6).
+- `ui/src/status/statusBar.test.tsx`, `ui/src/models/runtime.test.tsx`.
+
+NFR-SEC-05 (destination during every AI call): the gate publishes each call before it is sent and clears it when it ends, success or error. The test sends through `ai_client` to hosts that resolve to `127.0.0.1` plus a LAN or an internet address (the most exposed class wins, the send goes to the first checked address), so all three classes are shown without a packet leaving the machine. Try and the endpoint test publish the same way.
+
+### Real runs on RM-1 (2026-11-04)
+
+Machine idle (GPU 2 of 8151 MiB used, load 0.6), build 10863 CUDA, `qwen3.5-4b-q4_k_m` from §4.
+
+```sh
+mangkon-cli model try qwen3.5-4b-q4_k_m --llama-server ~/AI/llama.cpp/build/bin/llama-server
+```
+
+```text
+Started   127.0.0.1:33493 in 1467 ms (pid 160382)
+Listening 127.0.0.1:33493
+Result    Connected: …/Qwen_Qwen3.5-4B-Q4_K_M.gguf answered in 173 ms
+Stopped
+```
+
+- llama-server reports the model file path as the model's name, so the result line showed the path. Since then Try names the catalog model ("Connected: Qwen3.5 4B answered in … ms"); `TestReport::summary_as`.
+- Exit 0, 2.8 s in all. `ss -ltnp` during the run: `127.0.0.1:33493` only, owned by that pid. No `llama-server` left after.
+- `--json`, run again: another port (45687), started in 1459 ms, answered in 136 ms, structured output supported.
+- Arguments as started: `--host 127.0.0.1 --port <P> --api-key <key> -m …/Qwen_Qwen3.5-4B-Q4_K_M.gguf -c 8192 -np 1 --cache-ram 0 --reasoning off`.
+- Out of memory: `Qwen3.6-35B-A3B-Q8_0` (35205 MiB on an 8 GiB GPU) with `--fit off -ngl 99` failed after about 33 s with the text in the table above. With the app's own arguments (llama.cpp's default fit, no `-ngl`) the same model was ready in 5 s, 6588 MiB on the GPU and the rest in RAM, and stopped with exit 0 on SIGTERM. So with the app's arguments a model too large for the GPU still starts; "Not enough GPU memory" is for a GPU that is already busy or a fit that fails.
+- A cut model file (the first 16 MB of the 4B file): "The model file could not be loaded", text in the table above.
+
+Desktop walk (release build, `cargo xtask build --release`):
+
+| Step | Result |
+|---|---|
+| First run, fresh app data folder (`XDG_DATA_HOME` set to an empty folder) | "Step 1 of 3" with the hardware check; step 2 with the recommended models and "Skip — use without AI"; step 3 with the demo folder found next to the binary (`testdata/td1`). "Open demo project" created `<app data>/demo-project` and read its files; the status bar showed "No model allowed for this project · Settings", and the link opened the project's Settings tab |
+| Start again, same folder | No first-run screen; the start screen with the demo project in the list |
+| Quit | No `mangkon` or `llama-server` process left |
+| Normal app data, `llama-server` on `PATH` | The llama-server section showed the path (found on PATH), build 10863 and CUDA. Try on the 4B model: "Data sent to this machine" during the call, then "People and organizations: Ready · 127.0.0.1:40239"; `ss -ltnp`: 127.0.0.1 only, the arguments as above |
+| `kill -9` three times | Started again on a new port each time (36721, then 33833), listening about 1–1.5 s after the kill; the third kill left it Failed with Retry, and no new process came up in 20 s. Retry: Starting… then Ready |
+| 10 min with no call | After Retry it went Ready; with no call `llama-server` stopped by itself about 10 min later (watched for 572 s from just after Ready), and the GPU memory was freed |
+| Quit while Ready | Try, then the window closed: no `mangkon` or `llama-server` process left, no listening socket, GPU back to 2 MiB |
+
+---
+
+## 6. First run and demo project (M5c, US-14.4)
+
+- Shown while `app_setting` `first_run_done` is unset and no project is in the list. Three steps, each skippable: This machine (the hardware check), AI model (the recommended models with Download, an endpoint, or "Skip — use without AI"; below the minimum only the endpoint or Skip), First project (New project, or the demo project). "Skip setup" ends it at any step.
+- An endpoint added here is used for people and organizations; meaning search is set on the AI models screen.
+- The demo files are TD-1 (`testdata/td1`, `07-test-corpus.md`). They come with the source code, not with the app, so the app looks for `testdata/td1/ground-truth.json` written by `corpus-gen` in the folders above the running binary and the current folder. When that fails (a binary copied elsewhere), "Choose the demo folder…" takes TD-1, `td1/`'s parent or the repository folder.
+- The demo project is `<app data>/demo-project` ("Demo project", a number added if the name is taken) with TD-1's `synthetic/` and `public/` folders as sources; opening it again reuses it. Its files are read at once.
+- Checked by `us_14_4_*` in `crates/mk-core/tests/m5c_runtime.rs` and `ui/src/first/firstRun.test.tsx`. The hand walk on a fresh app data folder passed on RM-1 (2026-11-04, §5).

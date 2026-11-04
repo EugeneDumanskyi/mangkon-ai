@@ -30,4 +30,8 @@ stage: string | null,
 /**
  * Files finished in this run, and those plus the files still to do.
  */
-runDone: number, runTotal: number, currentFiles: Array<string>, eta: Eta, };
+runDone: number, runTotal: number, currentFiles: Array<string>, eta: Eta, 
+/**
+ * Why AI work waits (US-09.5 AC3, US-09.7 AC3); `null` when nothing waits.
+ */
+blocked: string | null, };

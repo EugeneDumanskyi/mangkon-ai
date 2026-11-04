@@ -1,7 +1,10 @@
 //! Test helpers (feature `testkit`, dev-dependencies only): a fake Hugging Face over plain HTTP
 //! that serves byte ranges and can redirect to a second host name, drop the connection, send
 //! wrong bytes or ignore `Range`; a resolver that points test host names at it and records
-//! every name it is asked for; a tiny catalog for those files. Never in a shipped build.
+//! every name it is asked for; a tiny catalog for those files; a stand-in `llama-server`
+//! ([`llama`]). Never in a shipped build.
+
+pub mod llama;
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -62,7 +65,7 @@ pub struct FakeHf {
     thread: Option<JoinHandle<()>>,
 }
 
-fn read_head(r: &mut impl BufRead) -> Option<(String, Vec<(String, String)>)> {
+pub(crate) fn read_head(r: &mut impl BufRead) -> Option<(String, Vec<(String, String)>)> {
     let mut line = String::new();
     if r.read_line(&mut line).ok()? == 0 {
         return None;

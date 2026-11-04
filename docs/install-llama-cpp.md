@@ -1,7 +1,7 @@
 # Install llama.cpp (`llama-server`)
 
 > Input: ADR-0015 (user-installed `llama-server`), `09-model-check.md` §4 (runtime check on RM-1). **If this file disagrees with them, they win.**
-> Status: Written in M1 (2026-10-24). Linux checked on RM-1. macOS not verified here; Windows untested.
+> Status: Written in M1 (2026-10-24); §2, §4 and §5 updated in M5c (2026-11-04). Linux checked on RM-1. macOS not verified here; Windows untested.
 > Package versions were read from the package indexes on 2026-10-24. They change often; the build check below is what counts.
 
 Mangkon AI runs local models through `llama-server` from [llama.cpp](https://github.com/ggml-org/llama.cpp). The app does not ship it and never downloads it. You install it once, and the app finds it. Layer 1 (identifiers, connections, keyword search) works without it. You can also use any OpenAI-compatible endpoint instead (`02-requirements.md` E09).
@@ -39,7 +39,11 @@ The number after `build` must be 10863 or higher. Older builds print `version: <
 | Apple silicon | The macOS arm64 build or Homebrew. Metal is built in. |
 | No GPU | The CPU build. It works, but extraction is much slower (see `09-model-check.md` §5). |
 
-A CPU-only build on a GPU machine is slow, not broken. The model manager (M5) will show which backend it found.
+A CPU-only build on a GPU machine is slow, not broken. The AI models screen shows the path, build and backend it found (from `llama-server --list-devices`), and says which build to get when the machine has a GPU but the build runs on the CPU only. From the command line:
+
+```sh
+mangkon-cli runtime                     # or: --llama-server /path/to/llama-server
+```
 
 ---
 
@@ -91,10 +95,15 @@ build/bin/llama-server --version
 You do not start `llama-server` yourself; the app starts its own process for each loaded model. It runs:
 
 ```text
+# extraction model
 llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> -c <context> -np 1 --cache-ram 0 --reasoning off
+# embedding model
+llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> --embedding -c 2048 -np 1 -b 2048 -ub 2048 --cache-ram 0
 ```
 
+- It starts when AI work (or "Try" on the AI models screen) needs the model, and stops after 10 minutes without a call, when you choose another model, and when the app quits.
 - It listens on `127.0.0.1` only, on a new random port with a new random key at every start (NFR-SEC-06). Other machines cannot reach it.
+- If it cannot start or keeps stopping, AI work waits with the reason ("Not enough GPU memory", "The model file could not be loaded", …) and everything else goes on. After a crash it is started again at most twice. "Show details" on the AI models screen has its last output; "Retry" starts it again.
 - A request without the key gets HTTP 401; only `/health` answers without one.
 - Models come from Hugging Face, checked by SHA-256 against the app's catalog (NFR-SEC-11). The app downloads models, never programs.
 
@@ -105,5 +114,6 @@ llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m
 | OS | Build | How | Result |
 |---|---|---|---|
 | Linux x86_64 (RM-1, Ubuntu-based, RTX 5070 Laptop) | 10863 (`88ada91c1`), CUDA source build | `model-check runtime`, `09-model-check.md` §4 | Found, version read, started, health-checked, killed and restarted |
+| Linux x86_64 (RM-1) | 10863 (`88ada91c1`), CUDA 13 source build, driver 595.104.02 | `mangkon-cli runtime`, `13-model-manager.md` §5 (M5c) | Found by settings path and on `PATH`, build and CUDA backend read. Started by the app with the 4B model (Try, CLI and desktop), 127.0.0.1 only; a 35B Q8_0 model starts with the default fit (6588 MiB on the GPU, the rest in RAM) |
 | macOS | — | Not verified here | — |
 | Windows | — | Untested | — |

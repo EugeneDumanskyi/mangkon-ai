@@ -466,6 +466,8 @@ pub struct Progress {
     pub run_total: u32,
     pub current_files: Vec<String>,
     pub eta: Eta,
+    /// Why AI work waits (US-09.5 AC3, US-09.7 AC3); `null` when nothing waits.
+    pub blocked: Option<String>,
 }
 
 impl Progress {
@@ -486,6 +488,7 @@ impl Progress {
             run_total: count(v.files_total),
             current_files: v.current_files,
             eta: v.eta.into(),
+            blocked: v.blocked,
         }
     }
 }
@@ -1823,6 +1826,14 @@ pub enum UiEvent {
     /// The hardware view, a model's state or a download's progress changed (progress at most
     /// every 500 ms).
     ModelsChanged,
+    /// A local model started, stopped, crashed or failed, or `llama-server` was checked again
+    /// (M5c).
+    RuntimeChanged,
+    /// Where data goes now (US-09.8 AC1, NFR-SEC-05): sent before each AI call, `null` when the
+    /// last one ended.
+    AiActivity {
+        activity: Option<AiActivityInfo>,
+    },
 }
 
 // ---- M5a: endpoints, permissions, egress records (US-09.6, US-09.7, US-09.8) ----
@@ -2416,6 +2427,338 @@ impl From<mk_core::ModelView> for CatalogModel {
                 code: e.code.to_string(),
                 message: e.message,
             }),
+        }
+    }
+}
+
+// ---- M5c: runtime, AI choice and readiness, where data goes, first run ----
+
+/// One device of `llama-server --list-devices` (ADR-0015).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RuntimeDevice {
+    pub id: String,
+    /// `CUDA`, `Vulkan`, `Metal`, `ROCm`, `SYCL`.
+    pub backend: String,
+    pub description: String,
+}
+
+/// Domain §7.8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum RuntimeState {
+    Stopped,
+    Starting,
+    Ready,
+    Busy,
+    Stopping,
+    Crashed,
+    Failed,
+}
+
+impl From<mk_core::RuntimeState> for RuntimeState {
+    fn from(s: mk_core::RuntimeState) -> Self {
+        match s {
+            mk_core::RuntimeState::Stopped => Self::Stopped,
+            mk_core::RuntimeState::Starting => Self::Starting,
+            mk_core::RuntimeState::Ready => Self::Ready,
+            mk_core::RuntimeState::Busy => Self::Busy,
+            mk_core::RuntimeState::Stopping => Self::Stopping,
+            mk_core::RuntimeState::Crashed => Self::Crashed,
+            mk_core::RuntimeState::Failed => Self::Failed,
+        }
+    }
+}
+
+fn role_of(r: mk_core::ModelRole) -> ModelRole {
+    match r {
+        mk_core::ModelRole::Extraction => ModelRole::Extraction,
+        mk_core::ModelRole::Embeddings => ModelRole::Embeddings,
+    }
+}
+
+impl From<ModelRole> for mk_core::ModelRole {
+    fn from(r: ModelRole) -> Self {
+        match r {
+            ModelRole::Extraction => Self::Extraction,
+            ModelRole::Embeddings => Self::Embeddings,
+        }
+    }
+}
+
+/// A model the runtime started this session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RuntimeModel {
+    pub model_id: String,
+    pub role: ModelRole,
+    pub state: RuntimeState,
+    /// Why it failed, in plain words (US-09.5 AC3).
+    pub failure: Option<ModelFailure>,
+    /// On 127.0.0.1 only.
+    pub port: Option<u16>,
+    pub restarts: u8,
+    /// The last output of `llama-server` ("Show details").
+    pub tail: String,
+}
+
+/// The `llama-server` the app uses (ADR-0015) and the models it runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RuntimeInfo {
+    pub path: Option<String>,
+    /// `settings` or `path`.
+    pub source: Option<String>,
+    pub build: Option<u32>,
+    pub commit: Option<String>,
+    pub version: Option<String>,
+    pub min_build: u32,
+    pub devices: Vec<RuntimeDevice>,
+    /// `CUDA`, …, or `CPU only`; empty when unknown.
+    pub backends: Vec<String>,
+    /// Why it cannot be used.
+    pub error: Option<ModelFailure>,
+    /// The path set with Choose…, if any.
+    pub settings_path: Option<String>,
+    pub install_guide: String,
+    /// A GPU and a CPU-only build: which build to get instead.
+    pub backend_note: Option<String>,
+    pub models: Vec<RuntimeModel>,
+}
+
+impl From<mk_core::RuntimeView> for RuntimeInfo {
+    fn from(v: mk_core::RuntimeView) -> Self {
+        let b = v.binary;
+        Self {
+            path: b.path.map(|p| p.display().to_string()),
+            source: b.source.map(|s| match s {
+                mk_core::RuntimeSource::Settings => "settings".into(),
+                mk_core::RuntimeSource::Path => "path".into(),
+            }),
+            build: b.build.as_ref().map(|x| x.build),
+            commit: b.build.as_ref().map(|x| x.commit.clone()),
+            version: b.build.and_then(|x| x.version),
+            min_build: v.min_build,
+            devices: b
+                .devices
+                .into_iter()
+                .map(|d| RuntimeDevice {
+                    id: d.id,
+                    backend: d.backend.label().into(),
+                    description: d.description,
+                })
+                .collect(),
+            backends: b.backends.iter().map(|x| x.label().to_string()).collect(),
+            error: b
+                .error
+                .map(|(code, message)| ModelFailure { code, message }),
+            settings_path: v.settings_path.map(|p| p.display().to_string()),
+            install_guide: v.install_guide.into(),
+            backend_note: v.backend_note,
+            models: v
+                .models
+                .into_iter()
+                .map(|m| RuntimeModel {
+                    model_id: m.model_id,
+                    role: role_of(m.role),
+                    state: m.state.into(),
+                    failure: m.failure.map(|f| ModelFailure {
+                        code: f.code.to_string(),
+                        message: f.message,
+                    }),
+                    port: m.port,
+                    restarts: m.restarts,
+                    tail: m.tail,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// What Try found (US-09.5 AC1 by hand).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TryResult {
+    pub model_id: String,
+    pub role: ModelRole,
+    pub ok: bool,
+    pub summary: String,
+    /// `127.0.0.1:<port>`.
+    pub bound: Option<String>,
+    #[ts(type = "number")]
+    pub start_ms: u64,
+    #[ts(type = "number | null")]
+    pub response_ms: Option<u64>,
+    pub structured_output: Option<bool>,
+    pub dimensions: Option<u32>,
+}
+
+impl From<mk_core::TryReport> for TryResult {
+    fn from(r: mk_core::TryReport) -> Self {
+        Self {
+            model_id: r.model_id,
+            role: role_of(r.role),
+            ok: r.ok,
+            summary: r.summary,
+            bound: r.bound,
+            start_ms: r.start_ms,
+            response_ms: r.response_ms,
+            structured_output: r.structured_output,
+            dimensions: r.dimensions.map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
+        }
+    }
+}
+
+/// A local model or an endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AiChoiceKind {
+    Local,
+    Endpoint,
+}
+
+/// What a role uses: a model id or an endpoint id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiChoice {
+    pub kind: AiChoiceKind,
+    pub id: String,
+}
+
+impl From<AiChoice> for mk_core::AiChoice {
+    fn from(c: AiChoice) -> Self {
+        match c.kind {
+            AiChoiceKind::Local => Self::Local(c.id),
+            AiChoiceKind::Endpoint => Self::Endpoint(c.id),
+        }
+    }
+}
+
+/// A role's AI as the AI models screen shows it ("Use for AI").
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiChoiceInfo {
+    pub role: ModelRole,
+    pub choice: Option<AiChoice>,
+    /// Picked by the user, not the default.
+    pub explicit: bool,
+    pub name: Option<String>,
+}
+
+impl From<mk_core::AiChoiceView> for AiChoiceInfo {
+    fn from(v: mk_core::AiChoiceView) -> Self {
+        Self {
+            role: role_of(v.role),
+            choice: v.choice.map(|c| match c {
+                mk_core::AiChoice::Local(id) => AiChoice {
+                    kind: AiChoiceKind::Local,
+                    id,
+                },
+                mk_core::AiChoice::Endpoint(id) => AiChoice {
+                    kind: AiChoiceKind::Endpoint,
+                    id,
+                },
+            }),
+            explicit: v.explicit,
+            name: v.name,
+        }
+    }
+}
+
+/// Whether a role's AI can run for the open project (US-09.7 AC3, US-09.5 AC3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiReadinessInfo {
+    pub role: ModelRole,
+    pub ready: bool,
+    /// Ready: "Data sent to …".
+    pub destination: Option<String>,
+    pub class: Option<DestinationClass>,
+    /// Ready: the model or endpoint name.
+    pub name: Option<String>,
+    /// Blocked: `no_model`, `needs_reconfirmation`, `runtime_failed`, `not_installed`.
+    pub code: Option<String>,
+    pub reason: Option<String>,
+}
+
+impl AiReadinessInfo {
+    pub fn new(role: mk_core::ModelRole, r: mk_core::AiReadiness) -> Self {
+        let role = role_of(role);
+        match r {
+            mk_core::AiReadiness::Ready {
+                destination,
+                class,
+                name,
+            } => Self {
+                role,
+                ready: true,
+                destination: Some(destination),
+                class: Some(class.into()),
+                name: Some(name),
+                code: None,
+                reason: None,
+            },
+            mk_core::AiReadiness::Blocked { code, reason } => Self {
+                role,
+                ready: false,
+                destination: None,
+                class: None,
+                name: None,
+                code: Some(code.into()),
+                reason: Some(reason),
+            },
+        }
+    }
+}
+
+/// One AI call on its way (US-09.8 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiActivityInfo {
+    pub host: String,
+    pub class: DestinationClass,
+    /// `extraction`, `embeddings`, `search_query` or `test`.
+    pub purpose: String,
+    /// "Data sent to this machine", "Data sent to 192.168.1.20 (local network)", …
+    pub label: String,
+}
+
+impl From<mk_core::AiActivity> for AiActivityInfo {
+    fn from(a: mk_core::AiActivity) -> Self {
+        Self {
+            label: a.label(),
+            host: a.host,
+            class: a.class.into(),
+            purpose: a.purpose.into(),
+        }
+    }
+}
+
+/// The first-run screen (US-14.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct FirstRunInfo {
+    pub show: bool,
+    /// TD-1, when found next to the app.
+    pub demo: Option<String>,
+}
+
+impl From<mk_core::FirstRun> for FirstRunInfo {
+    fn from(f: mk_core::FirstRun) -> Self {
+        Self {
+            show: f.show,
+            demo: f.demo.map(|p| p.display().to_string()),
         }
     }
 }

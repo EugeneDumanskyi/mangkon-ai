@@ -96,6 +96,17 @@ fn main() -> std::process::ExitCode {
         commands::model_download_cancel,
         commands::model_delete,
         commands::local_models_override,
+        commands::runtime_status,
+        commands::runtime_set_path,
+        commands::runtime_retry,
+        commands::model_try,
+        commands::ai_choice,
+        commands::ai_choice_set,
+        commands::ai_readiness,
+        commands::ai_activity,
+        commands::first_run,
+        commands::first_run_finish,
+        commands::demo_open,
         commands::subscribe,
         commands::record_ui_timing,
         commands::record_view_sweep,
@@ -172,6 +183,17 @@ fn main() -> std::process::ExitCode {
         commands::model_download_cancel,
         commands::model_delete,
         commands::local_models_override,
+        commands::runtime_status,
+        commands::runtime_set_path,
+        commands::runtime_retry,
+        commands::model_try,
+        commands::ai_choice,
+        commands::ai_choice_set,
+        commands::ai_readiness,
+        commands::ai_activity,
+        commands::first_run,
+        commands::first_run_finish,
+        commands::demo_open,
         commands::subscribe,
         commands::record_ui_timing,
         commands::record_view_sweep,
@@ -206,10 +228,11 @@ fn main() -> std::process::ExitCode {
         })
         .build(tauri::generate_context!())
         .expect("failed to start Mangkon AI")
-        // Quitting stops the run and keeps the queue's state (US-03.4 AC1).
+        // Quitting stops the run and keeps the queue's state (US-03.4 AC1), and stops every
+        // llama-server (US-09.5 AC2).
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                app.state::<AppState>().close();
+                app.state::<AppState>().shut_down();
             }
         });
     std::process::ExitCode::SUCCESS

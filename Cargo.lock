@@ -3001,6 +3001,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.3.4",
  "mk-bench",
+ "mk-core",
  "mk-corpus",
  "mk-egress",
  "mk-graph",
@@ -3101,6 +3102,7 @@ dependencies = [
 name = "mk-models"
 version = "0.0.0"
 dependencies = [
+ "getrandom 0.3.4",
  "mk-models",
  "rustls",
  "schemars 1.2.3",

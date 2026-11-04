@@ -27,10 +27,17 @@
 //! - M5b: the hardware check ([`Workspace::hardware`]), the shipped model catalog with each
 //!   model's state ([`Workspace::model_catalog`]) and downloads with pause, resume, cancel and
 //!   delete ([`Workspace::start_download`]).
+//! - M5c: the local runtime ([`Workspace::runtime_status`], [`Workspace::try_local_model`]),
+//!   the AI choice per role, readiness and Blocked AI jobs ([`Workspace::ai_readiness`]),
+//!   [`Workspace::ai_client`] for the M6 stages, and where data goes now
+//!   ([`Workspace::on_ai_activity`]); the first-run screen and the demo project
+//!   ([`Workspace::first_run`], [`Workspace::open_demo`]).
 
+mod ai;
 mod control;
 mod egress;
 mod events;
+mod first_run;
 mod identifiers;
 mod links;
 mod manage;
@@ -38,6 +45,7 @@ mod models;
 mod page;
 mod patterns;
 mod project;
+mod runtime;
 mod search;
 pub mod stage_a;
 mod view;
@@ -50,6 +58,10 @@ pub mod spike_s2d;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+pub use ai::{
+    AiActivity, AiChoice, AiChoiceView, AiClient, AiError, AiReadiness, NO_MODEL_ALLOWED,
+    TryReport, stages_of,
+};
 pub use control::{PAUSE_GRACE, Stop};
 pub use egress::{
     Access, AllowPrompt, DestinationInfo, EgressConfig, EgressRecordInfo, EndpointError,
@@ -57,6 +69,9 @@ pub use egress::{
     SecretStoreStatus, refusal_text, test_endpoint_at,
 };
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
+pub use first_run::{
+    DEMO_FOLDER, DEMO_NAME, FirstRun, demo_corpus_in, find_demo_corpus, is_demo_corpus,
+};
 pub use identifiers::RerunSummary;
 pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
@@ -67,13 +82,20 @@ pub use mk_egress::{
 };
 pub use mk_graph::model::EntityRow;
 pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey, SubjectKind};
-pub use mk_jobs::ItemState;
+pub use mk_jobs::{ItemState, Stage as JobStage};
 pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_mapping::{Assignments, ColumnType, MappingState};
 pub use mk_models::download::DownloadConfig;
 pub use mk_models::hardware::gb as gb_text;
 pub use mk_models::hardware::{
     FixedProbe, Gpu, GpuVendor, HardwareProbe, HardwareProfile, SystemProbe, Verdict,
+};
+/// The addresses a port listens on, from `/proc/net/tcp{,6}` (the CLI's loopback check).
+#[cfg(target_os = "linux")]
+pub use mk_models::runtime::process::{LOOPBACK_HEX, listen_addrs};
+pub use mk_models::runtime::{
+    Backend, BinaryInfo, Failure as RuntimeFailure, RuntimeConfig, RuntimeState, SlotStatus,
+    Source as RuntimeSource, SpawnOptions,
 };
 pub use mk_models::state::DownloadState;
 pub use mk_models::{Catalog, Role as ModelRole};
@@ -92,6 +114,7 @@ pub use project::{
     HealthReport, IngestSummary, OpenSummary, Project, ProjectError, RebuildSummary, RescanSummary,
     StageASummary, file_types, project_exists,
 };
+pub use runtime::{RuntimeView, backend_note};
 pub use search::{SEARCH_PAGE, SearchHit, SearchPage, SegmentHit};
 pub use view::{
     CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ConnectionsSummary, ContextLine, ContextRow,

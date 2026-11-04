@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
+import type { AiReadinessInfo } from "../ipc/bindings/AiReadinessInfo";
 import type { AllowPrompt } from "../ipc/bindings/AllowPrompt";
 import type { EgressRecord } from "../ipc/bindings/EgressRecord";
 import type { ProjectEndpoint } from "../ipc/bindings/ProjectEndpoint";
+import { roleName } from "../lib/ai";
 import { accessLabel, classLabel, destinationLine, purposeLabel, shownTime } from "../lib/egress";
 
 const button = "rounded border border-border px-2 py-0.5 text-sm disabled:opacity-50";
@@ -163,6 +165,28 @@ export function EgressRecordsTable({ records }: { records: EgressRecord[] }) {
   );
 }
 
+/** "AI for this project": per role, where its data would go, or why it waits (US-09.7 AC3,
+ *  US-09.5 AC3). */
+export function AiReadinessView({ readiness }: { readiness: AiReadinessInfo[] }) {
+  return (
+    <section aria-label="AI for this project" className="mt-6 flex flex-col gap-2">
+      <h3 className="font-semibold">AI for this project</h3>
+      <dl className="grid max-w-3xl grid-cols-[14rem_1fr] gap-x-3 gap-y-0.5 text-sm">
+        {readiness.map((r) => (
+          <div key={r.role} className="contents" data-readiness={r.ready ? "ready" : r.code}>
+            <dt className="text-muted">{roleName(r.role)}</dt>
+            <dd>{r.ready ? `${r.name ?? ""} · ${r.destination ?? ""}` : r.reason}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="max-w-2xl text-sm text-muted">
+        Models and endpoints are chosen on the AI models screen. Endpoints on another computer or on
+        the internet must also be allowed below.
+      </p>
+    </section>
+  );
+}
+
 /** The project's AI endpoint permissions and its egress records (US-09.7, US-09.8). */
 export function EgressSettings() {
   const client = useQueryClient();
@@ -171,9 +195,11 @@ export function EgressSettings() {
     queryFn: commands.projectEndpoints,
   });
   const records = useQuery({ queryKey: ["egress_records"], queryFn: commands.egressRecords });
+  const readiness = useQuery({ queryKey: ["ai_readiness"], queryFn: commands.aiReadiness });
   const [prompt, setPrompt] = useState<AllowPrompt | null>(null);
   const changed = () => {
     void client.invalidateQueries({ queryKey: ["project_endpoints"] });
+    void client.invalidateQueries({ queryKey: ["ai_readiness"] });
   };
   const prepare = useMutation({
     mutationFn: commands.endpointAllowPrepare,
@@ -194,6 +220,7 @@ export function EgressSettings() {
   const error = endpoints.error ?? prepare.error ?? revoke.error;
   return (
     <>
+      {readiness.data && <AiReadinessView readiness={readiness.data} />}
       <section aria-label="AI endpoints" className="mt-6 flex flex-col gap-2">
         <h3 className="font-semibold">AI endpoints</h3>
         <p className="max-w-2xl text-sm text-muted">

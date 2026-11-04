@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use mk_corpus::IngestionState;
-use mk_jobs::{ItemState, JobState, Trigger};
+use mk_jobs::{ItemState, JobState, Stage, Trigger};
 use mk_workspace::ProjectSettings;
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -95,6 +95,109 @@ pub(crate) fn set_queue_paused(conn: &Connection, paused: bool) -> Result<usize,
     Ok(moved)
 }
 
+/// Open jobs of `stages`, with their state and blocked reason.
+fn stage_jobs(
+    conn: &Connection,
+    stages: &[Stage],
+) -> Result<Vec<(i64, JobState, Option<String>)>, StoreError> {
+    let mut stmt =
+        conn.prepare_cached("SELECT id, stage, state, blocked_reason FROM job ORDER BY id")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (id, stage, s, reason) = row?;
+        if !stages.iter().any(|st| st.as_str() == stage) {
+            continue;
+        }
+        let s = JobState::from_name(&s).ok_or_else(|| invalid(format!("unknown job state {s}")))?;
+        if OPEN_JOBS.contains(&s) {
+            out.push((id, s, reason));
+        }
+    }
+    Ok(out)
+}
+
+/// INV-PR-09, domain §7.2: AI jobs of `stages` that would run (Queued or Running) become
+/// Blocked with `reason`; Blocked ones take the new reason. A Queued job moves through Running,
+/// as one that started and found it cannot. Paused jobs stay paused. Returns the jobs changed.
+pub(crate) fn block_jobs(
+    conn: &Connection,
+    stages: &[Stage],
+    reason: &str,
+) -> Result<usize, StoreError> {
+    let mut n = 0;
+    for (job, s, old) in stage_jobs(conn, stages)? {
+        let from = match s {
+            JobState::Queued => {
+                JobState::Queued
+                    .move_to(JobState::Running)
+                    .map_err(|e| invalid(e.to_string()))?;
+                JobState::Running
+            }
+            JobState::Running => JobState::Running,
+            JobState::Blocked if old.as_deref() != Some(reason) => JobState::Blocked,
+            _ => continue,
+        };
+        if from == JobState::Running {
+            from.move_to(JobState::Blocked)
+                .map_err(|e| invalid(e.to_string()))?;
+        }
+        conn.prepare_cached("UPDATE job SET state = ?2, blocked_reason = ?3 WHERE id = ?1")?
+            .execute(params![job, JobState::Blocked.as_str(), reason])?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// Blocked jobs of `stages` run again (the reason is gone). Returns the jobs moved.
+pub(crate) fn unblock_jobs(conn: &Connection, stages: &[Stage]) -> Result<usize, StoreError> {
+    let mut n = 0;
+    for (job, s, _) in stage_jobs(conn, stages)? {
+        if s != JobState::Blocked {
+            continue;
+        }
+        s.move_to(JobState::Running)
+            .map_err(|e| invalid(e.to_string()))?;
+        conn.prepare_cached("UPDATE job SET state = ?2, blocked_reason = NULL WHERE id = ?1")?
+            .execute(params![job, JobState::Running.as_str()])?;
+        complete_job_if_done(conn, job)?;
+        n += 1;
+    }
+    Ok(n)
+}
+
+/// A job of `stage` with one Pending item per content. Only tests make AI-stage jobs before
+/// M6; the AI lanes that run them come then.
+pub(crate) fn create_stage_job(
+    conn: &Connection,
+    stage: Stage,
+    contents: &[i64],
+) -> Result<i64, StoreError> {
+    let job = create_job(conn, Trigger::Add, stage)?;
+    for c in contents {
+        add_item(conn, job, *c, 0)?;
+    }
+    Ok(job)
+}
+
+/// The reason of the first Blocked job, if any (the progress panel).
+pub(crate) fn blocked_reason(conn: &Connection) -> Result<Option<String>, StoreError> {
+    Ok(conn
+        .prepare_cached("SELECT blocked_reason FROM job WHERE state = ?1 ORDER BY id LIMIT 1")?
+        .query_row([JobState::Blocked.as_str()], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
+}
+
 /// What [`cancel_queue`] did.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct CancelOutcome {
@@ -180,7 +283,7 @@ fn requeue(
         .execute([id])?;
         let j = match job {
             Some(j) => j,
-            None => *job.insert(create_job(conn, trigger)?),
+            None => *job.insert(create_job(conn, trigger, Stage::A)?),
         };
         add_item(conn, j, id, size as u64)?;
         n += 1;

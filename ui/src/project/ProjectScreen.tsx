@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ClickSweepInfo } from "../ipc/bindings/ClickSweepInfo";
 import type { ProjectInfo } from "../ipc/bindings/ProjectInfo";
+import { onOpenProjectSettings } from "../lib/ai";
 import { onCoreEvent } from "../lib/coreEvents";
 import {
   type History,
@@ -93,6 +94,14 @@ export function ProjectScreen({
     setHistory(back);
   }, []);
   const [tab, setTab] = useState<Tab>("connections");
+  // The status bar's "Settings" link (US-09.7 AC3).
+  useEffect(
+    () =>
+      onOpenProjectSettings(() => {
+        setTab("settings");
+      }),
+    [],
+  );
   const [summary, setSummary] = useState<Summary | null>(null);
   const progress = useQuery({
     queryKey: ["progress"],

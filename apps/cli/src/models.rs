@@ -2,13 +2,18 @@
 //! US-09.4): the hardware check, the shipped catalog with each model's state, and downloads
 //! from the hosts the catalog lists. Ctrl-C stops a download; it is Interrupted and resumes
 //! from its partial file on the next `model download`.
+//!
+//! `runtime` and `model try` (M5c, ADR-0015, US-09.5): the `llama-server` found (path, build,
+//! backend, or why it cannot be used), and Try: start an installed model, send the fixed test
+//! texts, show where it listened, stop it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use mk_core::{
-    DownloadState, EgressConfig, HardwareView, ModelView, ModelsConfig, Workspace, gb_text,
+    DownloadState, EgressConfig, HardwareView, ModelView, ModelsConfig, RuntimeSource, RuntimeView,
+    Workspace, gb_text,
 };
 use serde_json::{Value, json};
 
@@ -18,6 +23,8 @@ pub struct Options {
     pub app_data: Option<PathBuf>,
     /// The models folder (default: `models/` in the app's data folder).
     pub dir: Option<PathBuf>,
+    /// `llama-server` for this run only (the app's setting is not changed).
+    pub llama_server: Option<PathBuf>,
     pub json: bool,
 }
 
@@ -26,6 +33,8 @@ pub enum Command {
     Models,
     Download(String),
     Delete(String),
+    Runtime,
+    Try(String),
 }
 
 fn open(opts: &Options) -> Result<Workspace, String> {
@@ -42,6 +51,11 @@ fn open(opts: &Options) -> Result<Workspace, String> {
         },
     )
     .map_err(|e| e.to_string())
+    .inspect(|ws| {
+        if let Some(p) = &opts.llama_server {
+            ws.supervisor().set_settings_path(Some(p.clone()));
+        }
+    })
 }
 
 pub fn run(opts: &Options) -> ExitCode {
@@ -173,6 +187,160 @@ fn print_models(models: &[ModelView]) {
     }
 }
 
+fn runtime_json(v: &RuntimeView) -> Value {
+    let b = &v.binary;
+    json!({
+        "path": b.path,
+        "source": b.source.map(|s| match s {
+            RuntimeSource::Settings => "settings",
+            RuntimeSource::Path => "PATH",
+        }),
+        "build": b.build.as_ref().map(|x| x.build),
+        "commit": b.build.as_ref().map(|x| x.commit.clone()),
+        "version": b.build.as_ref().and_then(|x| x.version.clone()),
+        "min_build": v.min_build,
+        "backends": b.backends.iter().map(|x| x.label()).collect::<Vec<_>>(),
+        "devices": b.devices.iter().map(|d| json!({
+            "id": d.id, "backend": d.backend.label(), "description": d.description,
+        })).collect::<Vec<_>>(),
+        "error": b.error.as_ref().map(|(c, m)| json!({"code": c, "message": m})),
+        "backend_note": v.backend_note,
+        "install_guide": v.install_guide,
+    })
+}
+
+fn print_runtime(v: &RuntimeView, given: bool) {
+    let b = &v.binary;
+    match (&b.path, b.source) {
+        (Some(p), Some(RuntimeSource::Settings)) if given => {
+            println!("llama-server  {} (--llama-server)", p.display())
+        }
+        (Some(p), Some(RuntimeSource::Settings)) => {
+            println!("llama-server  {} (from settings)", p.display())
+        }
+        (Some(p), _) => println!("llama-server  {} (from PATH)", p.display()),
+        (None, _) => println!("llama-server  not found"),
+    }
+    if let Some(x) = &b.build {
+        let version = x
+            .version
+            .as_deref()
+            .map_or(String::new(), |v| format!(", {v}"));
+        println!("Build         {} (commit {}{version})", x.build, x.commit);
+    }
+    for d in &b.devices {
+        println!("Device        {}: {}", d.id, d.description);
+    }
+    if !b.backends.is_empty() {
+        let names: Vec<&str> = b.backends.iter().map(|x| x.label()).collect();
+        println!("Backend       {}", names.join(", "));
+    }
+    match &b.error {
+        Some((_, m)) => println!("Verdict       {m} (see {})", v.install_guide),
+        None => println!("Verdict       usable (build {} or newer)", v.min_build),
+    }
+    if let Some(n) = &v.backend_note {
+        println!("Note          {n}");
+    }
+}
+
+/// Where `port` listens, as `ss -ltn` would show it (Linux).
+fn listening(port: u16) -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    {
+        mk_core::listen_addrs(port)
+            .into_iter()
+            .map(|a| {
+                if a == mk_core::LOOPBACK_HEX {
+                    format!("127.0.0.1:{port}")
+                } else {
+                    format!("{a}:{port} (hex)")
+                }
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = port;
+        Vec::new()
+    }
+}
+
+fn try_model(ws: &Workspace, id: &str, json_out: bool) -> Result<ExitCode, String> {
+    let v = ws.runtime_status();
+    if let Some((_, m)) = &v.binary.error {
+        return Err(format!("{m} (see {})", v.install_guide));
+    }
+    if !json_out {
+        eprintln!(
+            "Starting {id} with {}",
+            v.binary
+                .path
+                .as_ref()
+                .map_or(String::new(), |p| p.display().to_string())
+        );
+    }
+    let r = ws.try_local_model(id).map_err(|e| e.to_string())?;
+    let slot = ws
+        .supervisor()
+        .status()
+        .into_iter()
+        .find(|s| s.model_id == id);
+    let listen = slot
+        .as_ref()
+        .and_then(|s| s.port)
+        .map(listening)
+        .unwrap_or_default();
+    let pid = slot.as_ref().and_then(|s| s.pid);
+    let tail = slot.as_ref().map(|s| s.tail.clone()).unwrap_or_default();
+    ws.shut_down();
+    if json_out {
+        print_json(&json!({
+            "model": r.model_id,
+            "ok": r.ok,
+            "summary": r.summary,
+            "bound": r.bound,
+            "listening": listen,
+            "pid": pid,
+            "start_ms": r.start_ms,
+            "response_ms": r.response_ms,
+            "structured_output": r.structured_output,
+            "dimensions": r.dimensions,
+        }));
+    } else {
+        if let Some(b) = &r.bound {
+            println!(
+                "Started       {b} in {} ms (pid {})",
+                r.start_ms,
+                pid.map_or("?".into(), |p| p.to_string())
+            );
+        }
+        if !listen.is_empty() {
+            println!("Listening     {}", listen.join(", "));
+        }
+        println!("Result        {}", r.summary);
+        if !r.ok && !tail.is_empty() {
+            println!("\nllama-server output (last lines):");
+            for line in tail
+                .lines()
+                .rev()
+                .take(20)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
+                println!("  {line}");
+            }
+        }
+        println!("Stopped");
+    }
+    Ok(if r.ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
 fn view(ws: &Workspace, id: &str) -> Result<ModelView, String> {
     ws.model_catalog()
         .map_err(|e| e.to_string())?
@@ -248,6 +416,18 @@ fn run_inner(opts: &Options) -> Result<ExitCode, String> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Command::Runtime => {
+            let v = ws.runtime_status();
+            if opts.json {
+                print_json(&runtime_json(&v));
+            } else {
+                print_runtime(&v, opts.llama_server.is_some());
+            }
+            if v.binary.error.is_some() {
+                return Ok(ExitCode::FAILURE);
+            }
+        }
+        Command::Try(id) => return try_model(&ws, id, opts.json),
         Command::Delete(id) => {
             let free = ws.delete_model(id).map_err(|e| e.to_string())?;
             if opts.json {

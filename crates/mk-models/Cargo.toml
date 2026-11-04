@@ -1,6 +1,6 @@
 [package]
 name = "mk-models"
-description = "BC-12: model catalog, hardware check and model downloads (the runtime supervisor comes in M5c)."
+description = "BC-12: model catalog, hardware check, model downloads and the local runtime supervisor."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -23,6 +23,15 @@ url = "2.5.8"
 sha2 = "0.10.9"
 # US-09.1: RAM, CPU and free disk.
 sysinfo = { version = "0.39.6", default-features = false, features = ["system", "disk"] }
+# NFR-SEC-06: a new random key for every llama-server start.
+getrandom = "0.3.4"
+
+# A stand-in llama-server for the runtime tests (`--version`, `--list-devices`, `/health`, chat
+# and embeddings with key checks). Never shipped.
+[[bin]]
+name = "mk-fake-llama-server"
+path = "src/bin/mk-fake-llama-server.rs"
+required-features = ["testkit"]
 
 [features]
 # A fake Hugging Face, a recording resolver and test catalogs (dev-dependencies only).

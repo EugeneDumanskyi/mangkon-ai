@@ -7,7 +7,8 @@
 //! 3. check the project's permission (INV-EG-04, domain §7.6);
 //! 4. record the destination in the project **before** sending (INV-EG-05);
 //! 5. send pinned to the checked addresses ([`crate::transport`]);
-//! 6. publish the destination for the status bar (INV-EG-06; shown in M5c).
+//! 6. publish the destination for the status bar before the send, and again when the call
+//!    ends (INV-EG-06, NFR-SEC-05).
 
 use std::fmt;
 use std::net::IpAddr;
@@ -79,13 +80,36 @@ impl<T: EgressStore + ?Sized> EgressStore for &T {
 }
 
 /// Where a call goes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum Destination {
     /// The app's own `llama-server` on `127.0.0.1:port` (INV-MM-05). No permission needed.
-    LocalRuntime { port: u16, model: String },
+    /// `key` is the one made for this start (NFR-SEC-06), sent as Bearer; it is never stored.
+    LocalRuntime {
+        port: u16,
+        model: String,
+        key: SecretString,
+    },
     /// An app-level endpoint, by id.
     Endpoint(String),
 }
+
+/// Equal when they name the same place; the key is not compared.
+impl PartialEq for Destination {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Destination::LocalRuntime { port, model, .. },
+                Destination::LocalRuntime {
+                    port: p, model: m, ..
+                },
+            ) => port == p && model == m,
+            (Destination::Endpoint(a), Destination::Endpoint(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Destination {}
 
 /// What is being sent where, published before each send (INV-EG-06).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +181,14 @@ impl From<EgressError> for GateError {
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
 type OnSend = Arc<dyn Fn(&Sending) + Send + Sync>;
+type OnFinish = Arc<dyn Fn(&Sending, Finished) + Send + Sync>;
+
+/// How a call that was sent ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Finished {
+    Ok,
+    Failed,
+}
 
 /// The egress gate.
 pub struct Gate {
@@ -166,6 +198,7 @@ pub struct Gate {
     roots: TlsRoots,
     timeout: Duration,
     on_send: Option<OnSend>,
+    on_finish: Option<OnFinish>,
 }
 
 /// The outcome of steps 1–3: a destination this project may send to now.
@@ -173,6 +206,8 @@ struct Checked {
     base: BaseUrl,
     model: String,
     secret_ref: Option<String>,
+    /// The local runtime's per-start key.
+    local_key: Option<SecretString>,
     ips: Vec<IpAddr>,
     class: DestinationClass,
 }
@@ -191,6 +226,7 @@ impl Gate {
             roots,
             timeout: CALL_TIMEOUT,
             on_send: None,
+            on_finish: None,
         }
     }
 
@@ -199,9 +235,15 @@ impl Gate {
         self
     }
 
-    /// Called with the destination before every send (the status bar, M5c).
+    /// Called with the destination before every send (the status bar, NFR-SEC-05).
     pub fn on_send(mut self, f: impl Fn(&Sending) + Send + Sync + 'static) -> Gate {
         self.on_send = Some(Arc::new(f));
+        self
+    }
+
+    /// Called when a call that [`on_send`](Self::on_send) announced has ended, sent or not.
+    pub fn on_finish(mut self, f: impl Fn(&Sending, Finished) + Send + Sync + 'static) -> Gate {
+        self.on_finish = Some(Arc::new(f));
         self
     }
 
@@ -229,12 +271,16 @@ impl Gate {
         store: &dyn EgressStore,
         destination: &Destination,
     ) -> Result<Checked, GateError> {
-        let (endpoint_id, base, model, secret_ref) = match destination {
-            Destination::LocalRuntime { port, model } => {
-                (None, BaseUrl::local_runtime(*port), model.clone(), None)
-            }
+        let (endpoint_id, base, model, secret_ref, local_key) = match destination {
+            Destination::LocalRuntime { port, model, key } => (
+                None,
+                BaseUrl::local_runtime(*port),
+                model.clone(),
+                None,
+                Some(key.clone()),
+            ),
             Destination::Endpoint(id) => match self.endpoints.endpoint(id)? {
-                Some(e) => (Some(id.as_str()), e.base_url, e.model, e.secret_ref),
+                Some(e) => (Some(id.as_str()), e.base_url, e.model, e.secret_ref, None),
                 None => {
                     if store.permission(id)? != Permission::NotAllowed {
                         let reason = ReconfirmReason::EndpointNotFound;
@@ -268,6 +314,7 @@ impl Gate {
                 base,
                 model,
                 secret_ref,
+                local_key,
                 ips: resolved.ips,
                 class: resolved.class,
             }),
@@ -332,23 +379,24 @@ impl ModelClient<'_> {
     ) -> Result<(String, u64), GateError> {
         let c = self.gate.check(self.store.as_ref(), &self.destination)?;
         // The key is read now, from the secret store, and dropped after the call (ADR-0012).
-        let key: Option<SecretString> = match &c.secret_ref {
-            Some(r) => Some(self.gate.secrets.get(r)?.ok_or_else(|| {
+        let key: Option<SecretString> = match (&c.secret_ref, &c.local_key) {
+            (_, Some(k)) => Some(k.clone()),
+            (Some(r), None) => Some(self.gate.secrets.get(r)?.ok_or_else(|| {
                 EgressError::new(
                     ErrorCode::KeyMissing,
                     "The API key for this endpoint is missing. Enter it again in AI models.",
                 )
             })?),
-            None => None,
+            (None, None) => None,
         };
-        let host = c.base.origin().host.clone();
-        self.store.record(&host, c.class, self.purpose)?;
+        let sending = Sending {
+            host: c.base.origin().host.clone(),
+            class: c.class,
+            purpose: self.purpose,
+        };
+        self.store.record(&sending.host, c.class, self.purpose)?;
         if let Some(f) = &self.gate.on_send {
-            f(&Sending {
-                host,
-                class: c.class,
-                purpose: self.purpose,
-            });
+            f(&sending);
         }
         let agent = self.agent(&c);
         let reply = post_json(
@@ -357,11 +405,26 @@ impl ModelClient<'_> {
             &c.base.join(path),
             key.as_ref(),
             &body(&c.model),
-        )?;
-        if !(200..300).contains(&reply.status) {
-            return Err(status_error(reply.status, &reply.body, &c.model, key.as_ref()).into());
+        )
+        .map_err(GateError::from)
+        .and_then(|reply| {
+            if (200..300).contains(&reply.status) {
+                Ok((reply.body, reply.ms))
+            } else {
+                Err(status_error(reply.status, &reply.body, &c.model, key.as_ref()).into())
+            }
+        });
+        if let Some(f) = &self.gate.on_finish {
+            f(
+                &sending,
+                if reply.is_ok() {
+                    Finished::Ok
+                } else {
+                    Finished::Failed
+                },
+            );
         }
-        Ok((reply.body, reply.ms))
+        reply
     }
 
     /// One chat completion.

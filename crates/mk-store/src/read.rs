@@ -8,7 +8,7 @@ use mk_graph::model::{
     MentionFact,
 };
 use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey, SubjectKind};
-use mk_jobs::{ItemState, JobState, PendingItem};
+use mk_jobs::{ItemState, JobState, PendingItem, Stage};
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -133,20 +133,22 @@ pub struct PendingWork {
     pub file_type: String,
 }
 
-/// Pending items of Queued and Running jobs: a Paused or Cancelled job starts nothing
-/// (INV-PR-06).
+/// Pending Stage A items of Queued and Running jobs: a Paused or Cancelled job starts nothing
+/// (INV-PR-06). AI-stage items wait for their own lanes (M6).
 pub(crate) fn pending_items(conn: &Connection) -> Result<Vec<PendingWork>, StoreError> {
     let mut stmt = conn.prepare(
         "SELECT w.id, w.priority, COALESCE(c.size, 0), COALESCE(c.file_type, '')
          FROM work_item w
          JOIN job j ON j.id = w.job_id
          LEFT JOIN content c ON c.id = w.content_id
-         WHERE w.state = ?1 AND j.state IN (?2, ?3) ORDER BY w.priority, w.id",
+         WHERE w.state = ?1 AND j.state IN (?2, ?3) AND j.stage = ?4
+         ORDER BY w.priority, w.id",
     )?;
     let args = params![
         ItemState::Pending.as_str(),
         JobState::Queued.as_str(),
-        JobState::Running.as_str()
+        JobState::Running.as_str(),
+        Stage::A.as_str()
     ];
     let rows = stmt.query_map(args, |r| {
         Ok(PendingWork {

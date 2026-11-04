@@ -29,7 +29,7 @@ pub mod testkit;
 
 pub use error::{EgressError, ErrorCode};
 pub use gate::{
-    CALL_TIMEOUT, Destination, EgressStore, EndpointConfig, Endpoints, Gate, GateError,
+    CALL_TIMEOUT, Destination, EgressStore, EndpointConfig, Endpoints, Finished, Gate, GateError,
     ModelClient, Sending,
 };
 pub use openai::{ChatMessage, ChatReply, ChatRequest, Embeddings, ReplySchema};
@@ -39,7 +39,7 @@ pub use policy::{
 };
 pub use probe::{
     ChatProbe, EmbeddingsProbe, NO_STRUCTURED_OUTPUT, TEST_EMBED_TEXT, TEST_TEXT, TEST_TIMEOUT,
-    TestReport, TestTarget, endpoint_test,
+    TestReport, TestTarget, embeddings_test, endpoint_test,
 };
 pub use resolve::{RESOLVE_TIMEOUT, Resolve, Resolved, SystemResolver, resolve_origin};
 pub use secrecy::{ExposeSecret, SecretString};

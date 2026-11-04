@@ -1,7 +1,7 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
 //! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b),
-//! `endpoint test` (M5a), `hardware`, `models` and `model download|delete` (M5b) and the
-//! `--worker` entry.
+//! `endpoint test` (M5a), `hardware`, `models` and `model download|delete` (M5b), `runtime`
+//! and `model try` (M5c) and the `--worker` entry.
 
 mod bench;
 mod endpoint;
@@ -32,6 +32,8 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli hardware [--app-data DIR] [--dir DIR] [--json]
        mangkon-cli models [--app-data DIR] [--dir DIR] [--json]
        mangkon-cli model (download ID | delete ID) [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli runtime [--llama-server PATH] [--app-data DIR] [--json]
+       mangkon-cli model try ID [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -96,8 +98,17 @@ Commands:
               minimum (unless allowed in the app) or without the free disk it needs. Ctrl-C
               stops it; run it again to resume. Exits 1 unless the model is installed.
               delete: delete the installed model ID and print the free disk.
-              --app-data  the app's data folder (default: the OS one)
-              --dir       the models folder (default: models/ in the app's data folder)";
+              try: start the installed model ID with llama-server on 127.0.0.1 (a random
+              port and key), send the fixed test texts (chat and structured output, or one
+              embedding), print where it listened and the times, then stop it. Exits 1 if
+              the test fails.
+              --app-data      the app's data folder (default: the OS one)
+              --dir           the models folder (default: models/ in the app's data folder)
+              --llama-server  the llama-server to use this time (default: the app's setting,
+                              then PATH); the setting is not changed
+  runtime     The llama-server the app would use: where it was found (settings or PATH), its
+              build and backends (from --list-devices), and why it cannot be used, if so.
+              Exits 1 if it cannot be used.";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -151,10 +162,12 @@ fn main() -> ExitCode {
             Ok(opts) => endpoint::test(&opts),
             Err(e) => usage_error(&e),
         },
-        Some(cmd @ ("hardware" | "models" | "model")) => match models_options(cmd, &args[1..]) {
-            Ok(opts) => models::run(&opts),
-            Err(e) => usage_error(&e),
-        },
+        Some(cmd @ ("hardware" | "models" | "model" | "runtime")) => {
+            match models_options(cmd, &args[1..]) {
+                Ok(opts) => models::run(&opts),
+                Err(e) => usage_error(&e),
+            }
+        }
         Some("bench") => match bench_options(&args[1..]) {
             Ok(opts) => bench::run(&opts),
             Err(e) => usage_error(&e),
@@ -346,7 +359,7 @@ fn rebuild_options(args: &[String]) -> Result<ingest::RebuildOptions, String> {
 }
 
 fn models_options(cmd: &str, args: &[String]) -> Result<models::Options, String> {
-    let (mut app_data, mut dir, mut json) = (None, None, false);
+    let (mut app_data, mut dir, mut json, mut llama_server) = (None, None, false, None);
     let mut words = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -354,6 +367,7 @@ fn models_options(cmd: &str, args: &[String]) -> Result<models::Options, String>
         match a.as_str() {
             "--app-data" => app_data = Some(PathBuf::from(value()?)),
             "--dir" => dir = Some(PathBuf::from(value()?)),
+            "--llama-server" => llama_server = Some(PathBuf::from(value()?)),
             "--json" => json = true,
             other if other.starts_with("--") => {
                 return Err(format!("unknown {cmd} argument {other:?}"));
@@ -366,13 +380,21 @@ fn models_options(cmd: &str, args: &[String]) -> Result<models::Options, String>
         ("models", []) => models::Command::Models,
         ("model", ["download", id]) => models::Command::Download((*id).to_string()),
         ("model", ["delete", id]) => models::Command::Delete((*id).to_string()),
-        ("model", _) => return Err("model takes download ID or delete ID".into()),
+        ("model", ["try", id]) => models::Command::Try((*id).to_string()),
+        ("model", _) => return Err("model takes download ID, delete ID or try ID".into()),
+        ("runtime", []) => models::Command::Runtime,
         _ => return Err(format!("{cmd} takes no other words")),
     };
+    if llama_server.is_some()
+        && !matches!(command, models::Command::Runtime | models::Command::Try(_))
+    {
+        return Err("--llama-server is for runtime and model try".into());
+    }
     Ok(models::Options {
         command,
         app_data,
         dir,
+        llama_server,
         json,
     })
 }

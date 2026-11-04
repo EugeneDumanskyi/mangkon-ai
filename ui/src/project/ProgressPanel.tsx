@@ -41,6 +41,7 @@ export function ProgressSummary({ progress: p }: { progress: Progress }) {
         {p.notProcessed > 0 && ` · ${p.notProcessed.toLocaleString()} not processed`} ·{" "}
         {plural(p.total, "file")}
       </span>
+      {p.blocked !== null && <span data-blocked>AI work waits: {p.blocked}</span>}
     </div>
   );
 }

@@ -293,14 +293,18 @@ pub(crate) fn complete_job_if_done(conn: &Connection, job: i64) -> Result<(), St
     Ok(())
 }
 
-/// A new Stage A job: Queued, or Paused while the project's queue is paused (INV-PR-06).
-pub(crate) fn create_job(conn: &Connection, trigger: Trigger) -> Result<i64, StoreError> {
+/// A new job of `stage`: Queued, or Paused while the project's queue is paused (INV-PR-06).
+pub(crate) fn create_job(
+    conn: &Connection,
+    trigger: Trigger,
+    stage: Stage,
+) -> Result<i64, StoreError> {
     conn.prepare_cached(
         "INSERT INTO job (trigger, stage, state, created_at) VALUES (?1, ?2, ?3, ?4)",
     )?
     .execute(params![
         trigger.as_str(),
-        Stage::A.as_str(),
+        stage.as_str(),
         JobState::Queued.as_str(),
         now_iso()
     ])?;
@@ -597,7 +601,7 @@ pub(crate) fn apply_rescan(
         }
     }
     if !needs_work.is_empty() {
-        let job = create_job(conn, trigger)?;
+        let job = create_job(conn, trigger, Stage::A)?;
         for (id, size) in &needs_work {
             add_item(conn, job, *id, *size)?;
         }
@@ -633,7 +637,7 @@ pub(crate) fn enqueue_contents(
     conn: &Connection,
     contents: &[NewContent],
 ) -> Result<Vec<i64>, StoreError> {
-    let job = create_job(conn, Trigger::Add)?;
+    let job = create_job(conn, Trigger::Add, Stage::A)?;
     let mut items = Vec::with_capacity(contents.len());
     for c in contents {
         let (id, created) = ensure_content(conn, &c.hash, &c.file_type, c.size)?;

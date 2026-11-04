@@ -91,7 +91,8 @@ describe("add summary (US-01.3 AC5)", () => {
 
 describe("events of the queue", () => {
   it("re-queries progress on progress changes and documents after a run", () => {
-    expect(staleKeys({ kind: "progressChanged" })).toEqual([["progress"]]);
+    // Blocked AI jobs come as progress changes too (INV-PR-09).
+    expect(staleKeys({ kind: "progressChanged" })).toEqual([["progress"], ["ai_readiness"]]);
     expect(staleKeys(finished())).toContainEqual(["documents"]);
     expect(staleKeys({ kind: "projectChanged" })).toContainEqual(["recent"]);
   });

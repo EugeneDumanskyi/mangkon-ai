@@ -9,6 +9,8 @@ use std::sync::Arc;
 use mk_store::{AppStore, StoreError};
 use mk_workspace::{NameError, ProjectLayout, ProjectName, RegistryEntry};
 
+use mk_models::runtime::{RuntimeConfig, Supervisor};
+
 use crate::egress::{EgressConfig, EgressParts};
 use crate::models::{ModelParts, ModelsConfig};
 use crate::project::{OpenSummary, Project, ProjectError, project_exists};
@@ -112,12 +114,15 @@ pub struct Workspace {
     pub(crate) egress: EgressParts,
     /// Hardware check, catalog and downloads (M5b).
     pub(crate) models: Arc<ModelParts>,
+    /// The local runtime supervisor (M5c).
+    pub(crate) runtime: Supervisor,
 }
 
 impl Drop for Workspace {
-    /// A running download is stopped and left Interrupted (domain §7.7 "app quit").
+    /// A running download is stopped and left Interrupted (domain §7.7 "app quit"), and every
+    /// `llama-server` is stopped (US-09.5 AC2).
     fn drop(&mut self) {
-        self.models.shut_down();
+        self.shut_down();
     }
 }
 
@@ -155,13 +160,32 @@ impl Workspace {
         egress: EgressConfig,
         models: ModelsConfig,
     ) -> Result<Workspace, WorkspaceError> {
+        Self::open_with_runtime(dir, egress, models, RuntimeConfig::default())
+    }
+
+    /// [`open_with_models`](Self::open_with_models) with other runtime timings or a test
+    /// `PATH` and env (tests, the CLI).
+    pub fn open_with_runtime(
+        dir: &Path,
+        egress: EgressConfig,
+        models: ModelsConfig,
+        runtime: RuntimeConfig,
+    ) -> Result<Workspace, WorkspaceError> {
         let app = Arc::new(AppStore::open(dir)?);
         Ok(Workspace {
             egress: EgressParts::new(app.clone(), egress),
             models: ModelParts::new(app.clone(), dir, models),
+            runtime: crate::runtime::supervisor(&app, runtime),
             app,
             dir: dir.to_path_buf(),
         })
+    }
+
+    /// App quit: the running download is left Interrupted and every `llama-server` is stopped
+    /// and reaped (US-09.5 AC2). Safe to call more than once.
+    pub fn shut_down(&self) {
+        self.models.shut_down();
+        self.runtime.shut_down();
     }
 
     pub(crate) fn app(&self) -> &AppStore {
@@ -213,18 +237,31 @@ impl Workspace {
         let location = std::fs::canonicalize(location)
             .map_err(|_| WorkspaceError::NotWritable(location.to_path_buf()))?;
         let dir = location.join(name.folder_name());
+        self.create_in(&name, &dir)
+    }
+
+    /// Creates the project `name` in the new folder `dir` (whose parent is writable) and
+    /// opens it.
+    pub(crate) fn create_in(
+        &self,
+        name: &ProjectName,
+        dir: &Path,
+    ) -> Result<(Project, RegistryEntry), WorkspaceError> {
         if dir.exists() {
-            return Err(WorkspaceError::FolderExists(dir));
+            return Err(WorkspaceError::FolderExists(dir.to_path_buf()));
         }
+        let location = dir.parent().unwrap_or(dir).to_path_buf();
+        path_string(dir)?;
+        std::fs::create_dir(dir).map_err(|_| WorkspaceError::NotWritable(location))?;
+        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         let path = path_string(&dir)?;
-        std::fs::create_dir(&dir).map_err(|_| WorkspaceError::NotWritable(location.clone()))?;
         let created = (|| {
             let (project, _) = Project::open(&dir)?;
             project
                 .store()
                 .stamp(Some(name.as_str()), env!("CARGO_PKG_VERSION"))
                 .map_err(ProjectError::from)?;
-            let entry = self.app.register(&name, &path)?;
+            let entry = self.app.register(name, &path)?;
             Ok((project, entry))
         })();
         if created.is_err() {

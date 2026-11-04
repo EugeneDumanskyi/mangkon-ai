@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use mk_corpus::StoredRef;
 use mk_graph::DecisionKind;
 use mk_graph::model::{DerivedState, EntityRow, Facts};
-use mk_jobs::Trigger;
+use mk_jobs::{Stage, Trigger};
 use mk_kernel::ContentHash;
 use mk_workspace::ProjectSettings;
 
@@ -269,6 +269,27 @@ impl Store {
     pub fn set_queue_paused(&self, paused: bool) -> Result<usize, StoreError> {
         self.writer
             .call(move |tx| manage::set_queue_paused(tx, paused))
+    }
+
+    /// AI jobs of `stages` that would run become Blocked with `reason` (INV-PR-09, US-09.5
+    /// AC3, US-09.7 AC3). Returns the jobs changed.
+    pub fn block_ai_jobs(&self, stages: &[Stage], reason: &str) -> Result<usize, StoreError> {
+        let (stages, reason) = (stages.to_vec(), reason.to_string());
+        self.writer
+            .call(move |tx| manage::block_jobs(tx, &stages, &reason))
+    }
+
+    /// Blocked AI jobs of `stages` run again. Returns the jobs moved.
+    pub fn unblock_ai_jobs(&self, stages: &[Stage]) -> Result<usize, StoreError> {
+        let stages = stages.to_vec();
+        self.writer
+            .call(move |tx| manage::unblock_jobs(tx, &stages))
+    }
+
+    /// A job of `stage` over `contents` (tests: AI stages run only from M6).
+    pub fn create_stage_job(&self, stage: Stage, contents: Vec<i64>) -> Result<i64, StoreError> {
+        self.writer
+            .call(move |tx| manage::create_stage_job(tx, stage, &contents))
     }
 
     /// Cancels every open job; their unfinished contents become Not processed (US-03.3, D10).
@@ -601,6 +622,26 @@ impl Store {
     /// The Stage A queue since `since` (UTC ms), for the progress panel (US-03.1).
     pub fn progress_detail(&self, since: Option<i64>) -> Result<ProgressDetail, StoreError> {
         self.readers.with(|c| documents::progress_detail(c, since))
+    }
+
+    /// Why AI work waits: the reason of the first Blocked job.
+    pub fn blocked_reason(&self) -> Result<Option<String>, StoreError> {
+        self.readers.with(manage::blocked_reason)
+    }
+
+    /// The state and blocked reason of job `id`.
+    pub fn job_state(&self, id: i64) -> Result<Option<(String, Option<String>)>, StoreError> {
+        self.readers.with(move |c| {
+            Ok(
+                c.prepare_cached("SELECT state, blocked_reason FROM job WHERE id = ?1")?
+                    .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .map(Some)
+                    .or_else(|e| match e {
+                        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                        e => Err(e),
+                    })?,
+            )
+        })
     }
 
     /// Whether a run would start an item now (a Pending item in a Queued or Running job).

@@ -127,8 +127,13 @@ describe("Downloads (US-09.4)", () => {
     expect(buttons(html)).toEqual([]);
   });
 
-  it("models events re-query the hardware and the catalog", () => {
-    expect(staleKeys({ kind: "modelsChanged" })).toEqual([["hardware"], ["model_catalog"]]);
+  it("models events re-query the hardware, the catalog and what AI can run", () => {
+    expect(staleKeys({ kind: "modelsChanged" })).toEqual([
+      ["hardware"],
+      ["model_catalog"],
+      ["ai_choice"],
+      ["ai_readiness"],
+    ]);
   });
 
   it("sizes and times", () => {

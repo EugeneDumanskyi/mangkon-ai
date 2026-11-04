@@ -85,6 +85,7 @@ const progress = (over: Partial<Progress>): Progress => ({
   runTotal: 8,
   currentFiles: ["/src/big.pdf"],
   eta: { kind: "estimating" },
+  blocked: null,
   ...over,
 });
 

@@ -952,3 +952,139 @@ pub async fn local_models_override(
 ) -> Result<ipc::HardwareInfo, IpcError> {
     Ok(state.workspace()?.set_local_override(on)?.into())
 }
+
+// ---- M5c: runtime, AI choice and readiness, first run ----
+
+/// The `llama-server` the app uses, its build and backend (ADR-0015), and the models it runs;
+/// `recheck` finds and reads it again ("Check again").
+#[tauri::command]
+pub async fn runtime_status(
+    state: State<'_, AppState>,
+    recheck: bool,
+) -> Result<ipc::RuntimeInfo, IpcError> {
+    let ws = state.workspace()?;
+    let v = if recheck {
+        ws.recheck_runtime()
+    } else {
+        ws.runtime_status()
+    };
+    Ok(v.into())
+}
+
+/// "Choose…": the `llama-server` to use (looked at before `PATH`); `null` clears it.
+#[tauri::command]
+pub async fn runtime_set_path(
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<ipc::RuntimeInfo, IpcError> {
+    let path = path.map(PathBuf::from);
+    let v = state.workspace()?.set_llama_server_path(path.as_deref())?;
+    state.refresh_ai_blocks();
+    Ok(v.into())
+}
+
+/// "Retry" after a failure (domain §7.8): checks again and starts Failed models again.
+#[tauri::command]
+pub async fn runtime_retry(state: State<'_, AppState>) -> Result<ipc::RuntimeInfo, IpcError> {
+    let v = state.workspace()?.retry_runtime();
+    state.refresh_ai_blocks();
+    Ok(v.into())
+}
+
+/// "Try": starts an installed model on 127.0.0.1 and sends the fixed test texts
+/// (US-09.5 AC1, INV-EG-08).
+#[tauri::command]
+pub async fn model_try(state: State<'_, AppState>, id: String) -> Result<ipc::TryResult, IpcError> {
+    let r = state.workspace()?.try_local_model(&id)?;
+    state.refresh_ai_blocks();
+    Ok(r.into())
+}
+
+fn choices(ws: &mk_core::Workspace) -> Result<Vec<ipc::AiChoiceInfo>, IpcError> {
+    [
+        mk_core::ModelRole::Extraction,
+        mk_core::ModelRole::Embeddings,
+    ]
+    .into_iter()
+    .map(|r| Ok(ws.ai_choice(r)?.into()))
+    .collect()
+}
+
+/// What each role uses (INV-MM-04: the recommended installed model by default).
+#[tauri::command]
+pub async fn ai_choice(state: State<'_, AppState>) -> Result<Vec<ipc::AiChoiceInfo>, IpcError> {
+    choices(&*state.workspace()?)
+}
+
+/// "Use for AI": the model or endpoint `role` uses; `null` goes back to the default.
+#[tauri::command]
+pub async fn ai_choice_set(
+    state: State<'_, AppState>,
+    role: ipc::ModelRole,
+    choice: Option<ipc::AiChoice>,
+) -> Result<Vec<ipc::AiChoiceInfo>, IpcError> {
+    let ws = state.workspace()?;
+    ws.set_ai_choice(role.into(), choice.map(Into::into))?;
+    state.refresh_ai_blocks();
+    choices(&ws)
+}
+
+/// Whether each role's AI can run for the open project, and where its data would go
+/// (US-09.7 AC3); empty with no project open.
+#[tauri::command]
+pub async fn ai_readiness(
+    state: State<'_, AppState>,
+) -> Result<Vec<ipc::AiReadinessInfo>, IpcError> {
+    let Ok(open) = state.current() else {
+        return Ok(Vec::new());
+    };
+    let ws = state.workspace()?;
+    Ok([
+        mk_core::ModelRole::Extraction,
+        mk_core::ModelRole::Embeddings,
+    ]
+    .into_iter()
+    .map(|r| ipc::AiReadinessInfo::new(r, ws.ai_readiness(&open.project, r)))
+    .collect())
+}
+
+/// Where data goes now, if an AI call is on its way (US-09.8 AC1).
+#[tauri::command]
+pub async fn ai_activity(
+    state: State<'_, AppState>,
+) -> Result<Option<ipc::AiActivityInfo>, IpcError> {
+    Ok(state.workspace()?.ai_activity().map(Into::into))
+}
+
+/// Whether to show the first-run screen, and where the demo files are (US-14.4).
+#[tauri::command]
+pub async fn first_run(state: State<'_, AppState>) -> Result<ipc::FirstRunInfo, IpcError> {
+    Ok(state.workspace()?.first_run()?.into())
+}
+
+/// The first-run screen is done or skipped.
+#[tauri::command]
+pub async fn first_run_finish(state: State<'_, AppState>) -> Result<(), IpcError> {
+    Ok(state.workspace()?.finish_first_run()?)
+}
+
+/// "Open demo project" (US-14.4 AC2): with the demo files at `path` (TD-1, or a folder that
+/// holds `testdata/td1`), or where they were found. Its files are read in the background.
+#[tauri::command]
+pub async fn demo_open(
+    state: State<'_, AppState>,
+    path: Option<String>,
+) -> Result<ipc::ProjectInfo, IpcError> {
+    let corpus = match path {
+        Some(p) => PathBuf::from(p),
+        None => state.workspace()?.first_run()?.demo.ok_or_else(|| {
+            IpcError::new(
+                "demo_not_found",
+                "The demo files were not found next to the app. Choose the testdata/td1 folder \
+                 of the source code.",
+            )
+        })?,
+    };
+    state.open_demo(&corpus)?;
+    info(&state)
+}

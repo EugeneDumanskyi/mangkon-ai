@@ -472,26 +472,47 @@ fn s5_redirect_not_followed() {
 }
 
 /// The local runtime is always on 127.0.0.1 and needs no permission (INV-MM-05); its sends are
-/// recorded as This machine (INV-EG-05).
+/// recorded as This machine (INV-EG-05) and carry the per-start key (NFR-SEC-06). The
+/// destination is published before each send and again when the call ends (NFR-SEC-05).
 #[test]
 fn local_runtime_needs_no_permission_and_is_recorded() {
-    let server = FakeServer::start(LOOPBACK, Behavior::openai(MODEL));
+    let key = "f".repeat(64);
+    let server = FakeServer::start(
+        LOOPBACK,
+        Behavior::OpenAi {
+            model: MODEL.into(),
+            structured: true,
+            embeddings: true,
+            key: Some(key.clone()),
+        },
+    );
+    let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let (on_send, on_finish) = (events.clone(), events.clone());
     let g = gate(
         Arc::new(ScriptedResolver::new()),
         Vec::new(),
         TlsRoots::Platform,
-    );
+    )
+    .on_send(move |s| {
+        on_send
+            .lock()
+            .unwrap()
+            .push(format!("send {} {}", s.host, s.class.label()))
+    })
+    .on_finish(move |s, f| {
+        on_finish
+            .lock()
+            .unwrap()
+            .push(format!("end {} {f:?}", s.host))
+    });
     let store = MemoryEgressStore::default();
-    let client = g
-        .client(
-            &store,
-            Destination::LocalRuntime {
-                port: server.port(),
-                model: MODEL.into(),
-            },
-            Purpose::SearchQuery,
-        )
-        .unwrap();
+    let local = |key: &str| Destination::LocalRuntime {
+        port: server.port(),
+        model: MODEL.into(),
+        key: key.to_string().into(),
+    };
+    assert_eq!(local("a"), local("b"), "the key is not part of the place");
+    let client = g.client(&store, local(&key), Purpose::SearchQuery).unwrap();
     let e = client.embeddings(&["a".into(), "b".into()]).unwrap();
     assert_eq!(e.vectors.len(), 2);
     assert_eq!(
@@ -501,6 +522,25 @@ fn local_runtime_needs_no_permission_and_is_recorded() {
             DestinationClass::ThisMachine,
             Purpose::SearchQuery
         )]
+    );
+    let seen = server.seen();
+    assert_eq!(
+        seen[0].header("authorization"),
+        Some(format!("Bearer {key}").as_str())
+    );
+    // A wrong key is refused by the runtime; the call still ends for the status bar.
+    let wrong = g
+        .client(&store, local("wrong"), Purpose::SearchQuery)
+        .unwrap();
+    assert!(wrong.embeddings(&["a".into()]).is_err());
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            "send 127.0.0.1 this machine",
+            "end 127.0.0.1 Ok",
+            "send 127.0.0.1 this machine",
+            "end 127.0.0.1 Failed",
+        ]
     );
 }
 

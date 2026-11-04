@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mk_corpus::IngestionState;
-use mk_jobs::{ItemState, JobState};
+use mk_jobs::{ItemState, JobState, Stage};
 use mk_mapping::MappingState;
 use mk_workspace::{DEFAULT_OCR_LANGUAGE, PatternSetting, ProjectSettings};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -279,7 +279,7 @@ pub(crate) fn progress_detail(
              FROM work_item w
              JOIN job j ON j.id = w.job_id
              LEFT JOIN content c ON c.id = w.content_id
-             WHERE w.state IN (?1, ?2) AND j.state IN (?3, ?4, ?5, ?6)",
+             WHERE w.state IN (?1, ?2) AND j.state IN (?3, ?4, ?5, ?6) AND j.stage = ?7",
         )?
         .query_row(
             params![
@@ -288,7 +288,8 @@ pub(crate) fn progress_detail(
                 JobState::Queued.as_str(),
                 JobState::Running.as_str(),
                 JobState::Paused.as_str(),
-                JobState::Blocked.as_str()
+                JobState::Blocked.as_str(),
+                Stage::A.as_str()
             ],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
@@ -353,18 +354,19 @@ pub(crate) fn exclusions(conn: &Connection, root: i64) -> Result<BTreeSet<String
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-/// Whether a Pending item is in a Queued or Running job: a run would start something.
+/// Whether a Pending Stage A item is in a Queued or Running job: a run would start something.
 pub(crate) fn has_runnable_work(conn: &Connection) -> Result<bool, StoreError> {
     Ok(conn
         .prepare_cached(
             "SELECT EXISTS (SELECT 1 FROM work_item w JOIN job j ON j.id = w.job_id
-                            WHERE w.state = ?1 AND j.state IN (?2, ?3))",
+                            WHERE w.state = ?1 AND j.state IN (?2, ?3) AND j.stage = ?4)",
         )?
         .query_row(
             params![
                 ItemState::Pending.as_str(),
                 JobState::Queued.as_str(),
-                JobState::Running.as_str()
+                JobState::Running.as_str(),
+                Stage::A.as_str()
             ],
             |r| r.get(0),
         )?)

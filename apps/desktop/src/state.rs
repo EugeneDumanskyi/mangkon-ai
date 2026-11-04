@@ -6,10 +6,14 @@
 //! Opening, closing or switching projects while files are read stops the run first: the files
 //! in a worker go back to waiting and the queue keeps its state, so a running queue runs again
 //! on the next open and a paused one stays paused (US-03.4 AC1).
+//!
+//! M5c: when a local model changes state, `llama-server` is checked again, a model is installed
+//! or deleted, or the AI choice changes, the open project's AI jobs are Blocked or run again to
+//! match (INV-PR-09). Quitting stops every `llama-server` (US-09.5 AC2).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 use mk_core::{IngestSummary, Project, ProjectError, RegistryEntry, Workspace};
@@ -54,7 +58,7 @@ pub enum Target<'a> {
 #[derive(Default)]
 pub struct AppState {
     workspace: Mutex<Option<Arc<Workspace>>>,
-    open: Mutex<Option<Arc<Open>>>,
+    open: Arc<Mutex<Option<Arc<Open>>>>,
     events: Arc<Mutex<Option<Channel<UiEvent>>>>,
     scripted: AtomicBool,
 }
@@ -71,10 +75,62 @@ impl AppState {
             return Ok(w.clone());
         }
         let w = Arc::new(Workspace::open_default()?);
+        // Weak: the workspace holds these callbacks.
+        let (events, open, weak) = (self.events.clone(), self.open.clone(), Arc::downgrade(&w));
+        w.on_models_changed(move || {
+            emit(&events, UiEvent::ModelsChanged);
+            refresh_blocks(&weak, &open, &events);
+        });
+        let (events, open, weak) = (self.events.clone(), self.open.clone(), Arc::downgrade(&w));
+        w.on_runtime_changed(move || {
+            emit(&events, UiEvent::RuntimeChanged);
+            refresh_blocks(&weak, &open, &events);
+        });
         let events = self.events.clone();
-        w.on_models_changed(move || emit(&events, UiEvent::ModelsChanged));
+        w.on_ai_activity(move |a| {
+            emit(
+                &events,
+                UiEvent::AiActivity {
+                    activity: a.map(Into::into),
+                },
+            )
+        });
         *ws = Some(w.clone());
         Ok(w)
+    }
+
+    /// The open project's AI jobs follow what can run now (INV-PR-09).
+    pub fn refresh_ai_blocks(&self) {
+        let ws = lock(&self.workspace).as_ref().map(Arc::downgrade);
+        if let Some(weak) = ws {
+            refresh_blocks(&weak, &self.open, &self.events);
+        }
+    }
+
+    /// App quit: the open project's run is stopped (US-03.4 AC1), a download is left
+    /// Interrupted and every `llama-server` is stopped and reaped (US-09.5 AC2).
+    pub fn shut_down(&self) {
+        self.close();
+        if let Some(w) = lock(&self.workspace).as_ref() {
+            w.shut_down();
+        }
+    }
+
+    /// "Open demo project" (US-14.4 AC2): opens or makes it with TD-1 from `corpus` as its
+    /// sources, then reads them.
+    pub fn open_demo(&self, corpus: &Path) -> Result<Arc<Open>, IpcError> {
+        let ws = self.workspace()?;
+        let mut open = lock(&self.open);
+        close_open(open.take());
+        let (project, _, entry) = ws.open_demo(corpus)?;
+        let dir = PathBuf::from(&entry.path);
+        let result = self.install(&mut open, project, dir, entry);
+        drop(open);
+        self.emit(UiEvent::ProjectChanged);
+        if let Ok(o) = &result {
+            self.start_ingest(o);
+        }
+        result
     }
 
     /// The open project, or a plain error.
@@ -175,6 +231,10 @@ impl AppState {
             closed: AtomicBool::new(false),
         });
         *slot = Some(o.clone());
+        if let Some(ws) = lock(&self.workspace).as_ref() {
+            // A project made or opened now: its AI jobs follow what can run (INV-PR-09).
+            let _ = ws.refresh_ai_blocks(&o.project);
+        }
         // Forward ConnectionsChanged until the project closes (its sender goes with it).
         let events = self.events.clone();
         std::thread::Builder::new()
@@ -360,6 +420,20 @@ fn finished_event(result: Result<IngestSummary, ProjectError>) -> UiEvent {
             skipped: 0,
             skipped_files: Vec::new(),
         },
+    }
+}
+
+/// Blocks or unblocks the open project's AI jobs; `ProgressChanged` when one changed.
+fn refresh_blocks(
+    ws: &Weak<Workspace>,
+    open: &Mutex<Option<Arc<Open>>>,
+    events: &Mutex<Option<Channel<UiEvent>>>,
+) {
+    let (Some(ws), Some(o)) = (ws.upgrade(), lock(open).clone()) else {
+        return;
+    };
+    if ws.refresh_ai_blocks(&o.project).unwrap_or(false) {
+        emit(events, UiEvent::ProgressChanged);
     }
 }
 
