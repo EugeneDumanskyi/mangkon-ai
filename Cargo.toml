@@ -53,6 +53,7 @@ mk-store = { path = "crates/mk-store" }
 mk-worker = { path = "crates/mk-worker" }
 mk-core = { path = "crates/mk-core" }
 mk-egress = { path = "crates/mk-egress" }
+mk-models = { path = "crates/mk-models" }
 
 [profile.dev]
 debug = "line-tables-only"

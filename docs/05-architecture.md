@@ -169,7 +169,7 @@ flowchart TB
 | Researcher | Person | Commands, decisions | Only one user per install in v0.1. |
 | Source folders | External (local) | File bytes, read-only | INV-CO-01: never written, moved, or deleted. |
 | OS secret store | External (local) | API keys | INV-EG-07: keys never stored anywhere else. |
-| Hugging Face | External (internet) | Model files in; nothing out except the request | Checksum before use (NFR-SEC-11). |
+| Hugging Face | External (internet) | Model files in; nothing out except the request | Only the hosts listed in the catalog (`download_hosts`), HTTPS, redirects included (NFR-SEC-02). Checksum before use (NFR-SEC-11). |
 | llama.cpp | External (local, user-installed) | Started as a sidecar; nothing downloaded | Found in the settings path or on `PATH`; minimum build checked before start (ADR-0015). |
 | OpenAI-compatible endpoint | External (this machine, LAN, or internet) | **Project data out** (segments, queries) | Only through the egress gate (ADR-0009). Off by default. |
 

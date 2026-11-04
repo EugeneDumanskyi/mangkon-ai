@@ -992,6 +992,8 @@ As a researcher, I want the app to check my hardware, so that I know if local AI
 **AC2 — Result**
 - **Then** it shows one of: "Meets minimum", "Below minimum"
 - **And** the minimum is: GPU with 8 GB VRAM + 16 GB RAM, or Apple Silicon with 32 GB unified memory, plus 30 GB free disk
+- GB here means 10^9 bytes (decided 2026-11-04): a card sold as 8 GB reports about 8.5 × 10^9 bytes and meets the minimum.
+- Free disk is shown, but it is not part of the verdict (decided 2026-11-04): with less than 30 GB free the check adds a note ("about 30 GB is recommended for models and project data"), and each download checks its own size (US-09.4 AC1). A nearly full disk can still take a small model.
 
 **AC3 — AMD / Intel GPU**
 - **Given** an AMD or Intel GPU that meets the VRAM minimum
@@ -1041,6 +1043,7 @@ As a researcher, I want the app to check my hardware, so that I know if local AI
 - **When** I click "Download"
 - **Then** the app blocks it and says how much space is needed
 - ASSUMPTION: 2 GB headroom.
+- On a resume, "model size" means the bytes still to download (decided 2026-11-04): the partial file already holds the rest.
 
 **AC2 — Progress**
 - **Then** I see progress, speed, and time left; I can pause and cancel

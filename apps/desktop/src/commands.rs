@@ -887,3 +887,68 @@ pub fn record_frame_stats<R: tauri::Runtime>(
     }
     Ok(path.display().to_string())
 }
+
+// ---- M5b: hardware check, catalog, downloads ----
+
+/// The hardware check (US-09.1): cached for the session; `recheck` reads the machine again
+/// ("Check hardware").
+#[tauri::command]
+pub async fn hardware_check(
+    state: State<'_, AppState>,
+    recheck: bool,
+) -> Result<ipc::HardwareInfo, IpcError> {
+    let ws = state.workspace()?;
+    let h = if recheck {
+        ws.recheck_hardware()?
+    } else {
+        ws.hardware()?
+    };
+    Ok(h.into())
+}
+
+/// The shipped catalog with each model's state and progress (US-09.3, US-09.4 AC2).
+#[tauri::command]
+pub async fn model_catalog(state: State<'_, AppState>) -> Result<Vec<ipc::CatalogModel>, IpcError> {
+    let list = state.workspace()?.model_catalog()?;
+    Ok(list.into_iter().map(Into::into).collect())
+}
+
+/// Starts a download after the hardware and disk checks (US-09.4 AC1).
+#[tauri::command]
+pub async fn model_download_start(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    Ok(state.workspace()?.start_download(&id)?)
+}
+
+/// Pauses the running download (US-09.4 AC2).
+#[tauri::command]
+pub async fn model_download_pause(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    Ok(state.workspace()?.pause_download(&id)?)
+}
+
+/// Resumes a paused or interrupted download from its partial files (US-09.4 AC3).
+#[tauri::command]
+pub async fn model_download_resume(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    Ok(state.workspace()?.resume_download(&id)?)
+}
+
+/// Cancels a download and deletes its partial files (US-09.4 AC2).
+#[tauri::command]
+pub async fn model_download_cancel(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    Ok(state.workspace()?.cancel_download(&id)?)
+}
+
+/// Deletes an installed model (US-09.4 AC5); the hardware view shows the new free space.
+#[tauri::command]
+pub async fn model_delete(state: State<'_, AppState>, id: String) -> Result<(), IpcError> {
+    state.workspace()?.delete_model(&id)?;
+    Ok(())
+}
+
+/// US-09.2 AC3 (Q7): allow local models below the minimum.
+#[tauri::command]
+pub async fn local_models_override(
+    state: State<'_, AppState>,
+    on: bool,
+) -> Result<ipc::HardwareInfo, IpcError> {
+    Ok(state.workspace()?.set_local_override(on)?.into())
+}

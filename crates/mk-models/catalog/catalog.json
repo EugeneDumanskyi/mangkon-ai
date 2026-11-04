@@ -1,6 +1,14 @@
 {
-  "schema_version": 1,
-  "catalog_version": 1,
+  "schema_version": 2,
+  "catalog_version": 2,
+  "download_hosts": [
+    "huggingface.co",
+    "*.cdn.hf.co",
+    "cdn-lfs.hf.co",
+    "cdn-lfs-us-1.hf.co",
+    "cdn-lfs-eu-1.hf.co",
+    "cas-bridge.xethub.hf.co"
+  ],
   "models": [
     {
       "id": "qwen3.5-4b-q4_k_m",
@@ -215,18 +223,18 @@
     {
       "id": "minimum",
       "name": "Minimum: 8 GB VRAM + 16 GB RAM, or 32 GB unified memory",
-      "min_vram_bytes": 8589934592,
-      "min_ram_bytes": 17179869184,
-      "min_unified_bytes": 34359738368,
+      "min_vram_bytes": 8000000000,
+      "min_ram_bytes": 16000000000,
+      "min_unified_bytes": 32000000000,
       "recommended_extraction": "qwen3.5-4b-q4_k_m",
       "recommended_embeddings": "bge-m3-q8_0"
     },
     {
       "id": "large-ram",
       "name": "8 GB VRAM + 48 GB RAM, or 64 GB unified memory",
-      "min_vram_bytes": 8589934592,
-      "min_ram_bytes": 51539607552,
-      "min_unified_bytes": 68719476736,
+      "min_vram_bytes": 8000000000,
+      "min_ram_bytes": 48000000000,
+      "min_unified_bytes": 64000000000,
       "recommended_extraction": "qwen3.6-35b-a3b-q8_0",
       "recommended_embeddings": "bge-m3-q8_0"
     }

@@ -1,18 +1,40 @@
-//! BC-12 model management. In M1: the model catalog format (NFR-MNT-09), its loader and
-//! `validate()`. The catalog lists models and hardware tiers, not runtime binaries (ADR-0015).
-//! Downloads, the hardware check and the runtime supervisor come in M5.
+//! BC-12 model management.
+//!
+//! - M1: the model catalog format (NFR-MNT-09), its loader and `validate()`. The catalog lists
+//!   models, hardware tiers and the hosts downloads may use, not runtime binaries (ADR-0015).
+//! - M5b: the catalog shipped in the binary ([`Catalog::shipped`], US-09.3 AC2), the hardware
+//!   check ([`hardware`], US-09.1) and model downloads ([`download`], US-09.4), with the
+//!   download state machine of domain §7.7 ([`state`]). `download` holds this crate's HTTP
+//!   client (ADR-0009): it reaches only hosts listed in the catalog.
 //!
 //! The catalog file is `catalog/catalog.json`; its JSON Schema, produced from these types, is
-//! `schema/catalog.schema.json`. Numbers in it come from `docs/09-model-check.md`.
+//! `schema/catalog.schema.json`. Numbers in it come from `docs/09-model-check.md`. Sizes are in
+//! bytes; "GB" in the app means 10^9 bytes (decided 2026-11-04).
+
+pub mod download;
+pub mod hardware;
+pub mod state;
+
+#[cfg(feature = "testkit")]
+pub mod testkit;
 
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// The host every model URL starts at (`Model::url`).
+pub const HF_HOST: &str = "huggingface.co";
+
+/// One gigabyte as the app shows it: 10^9 bytes.
+pub const GB: u64 = 1_000_000_000;
+
+/// The catalog file compiled into this build.
+const SHIPPED: &str = include_str!("../catalog/catalog.json");
 
 /// Gap A6 rule (ASSUMPTION until approved at the end of M1): an embedding model is listed only if
 /// binary top-200 → float rescore keeps recall@20 ≥ 0.9 against exact search (ADR-0010).
@@ -25,6 +47,9 @@ pub struct Catalog {
     pub schema_version: u32,
     /// Bumped whenever the catalog content changes.
     pub catalog_version: u32,
+    /// The only hosts a download may reach, redirects included (ADR-0009, NFR-SEC-02). Each is
+    /// a lowercase DNS name, or `*.` and a name for any host below it. HTTPS only.
+    pub download_hosts: Vec<String>,
     pub models: Vec<Model>,
     /// From the smallest machine to the largest.
     pub tiers: Vec<Tier>,
@@ -170,13 +195,88 @@ pub fn schema() -> String {
     out
 }
 
+/// Whether `pattern` is a lowercase DNS name with at least two labels, or `*.` and one.
+fn host_pattern_valid(pattern: &str) -> bool {
+    let name = pattern.strip_prefix("*.").unwrap_or(pattern);
+    let labels: Vec<&str> = name.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+}
+
+/// Whether `host` matches one of `patterns`: equal, ignoring case, or below a `*.` name.
+pub fn host_allowed(patterns: &[String], host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    patterns.iter().any(|p| match p.strip_prefix("*.") {
+        Some(suffix) => host
+            .strip_suffix(suffix)
+            .and_then(|rest| rest.strip_suffix('.'))
+            .is_some_and(|label| !label.is_empty()),
+        None => *p == host,
+    })
+}
+
+/// Whether a catalog file name is a plain relative path inside the model folder.
+fn safe_file_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains('\\')
+        && Path::new(name)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+}
+
 fn is_hex(s: &str, len: usize) -> bool {
     s.len() == len
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+impl Model {
+    /// Where `file` is downloaded from: `{origin}/{repo}/resolve/{revision}/{name}`. `origin` is
+    /// `https://huggingface.co` in the app.
+    pub fn url_at(&self, origin: &str, file: &ModelFile) -> String {
+        format!(
+            "{}/{}/resolve/{}/{}",
+            origin.trim_end_matches('/'),
+            self.hf_repo,
+            self.hf_revision,
+            file.name
+        )
+    }
+
+    /// [`url_at`](Self::url_at) on Hugging Face.
+    pub fn url(&self, file: &ModelFile) -> String {
+        self.url_at(&format!("https://{HF_HOST}"), file)
+    }
+
+    /// Size on disk of all its files.
+    pub fn bytes(&self) -> u64 {
+        self.files.iter().map(|f| f.bytes).sum()
+    }
+}
+
 impl Catalog {
+    /// The catalog shipped with this app version (US-09.3 AC2: never fetched). The file is
+    /// checked in CI (`nfr_mnt_09_catalog_valid`), so a bad file never ships.
+    pub fn shipped() -> Catalog {
+        serde_json::from_str(SHIPPED).expect("the shipped catalog parses (checked in CI)")
+    }
+
+    pub fn model(&self, id: &str) -> Option<&Model> {
+        self.models.iter().find(|m| m.id == id)
+    }
+
+    /// Whether a download may reach `host` (ADR-0009, NFR-SEC-02).
+    pub fn host_allowed(&self, host: &str) -> bool {
+        host_allowed(&self.download_hosts, host)
+    }
+
     /// Checks the catalog. Returns every problem found, not just the first.
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut e = Vec::new();
@@ -186,11 +286,32 @@ impl Catalog {
                 self.schema_version
             ));
         }
+        for h in &self.download_hosts {
+            if !host_pattern_valid(h) {
+                e.push(format!(
+                    "download host {h:?} is not a lowercase DNS name or *.name"
+                ));
+            }
+        }
+        if !self.download_hosts.iter().any(|h| h == HF_HOST) {
+            e.push(format!("download_hosts must list {HF_HOST}"));
+        }
         let mut ids = BTreeSet::new();
         for m in &self.models {
             let id = &m.id;
             if !ids.insert(id.as_str()) {
                 e.push(format!("model {id}: duplicate id"));
+            }
+            // The id names the model's folder.
+            if id.is_empty()
+                || id.starts_with('.')
+                || !id.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-' | b'_')
+                })
+            {
+                e.push(format!(
+                    "model {id:?}: id must be lowercase letters, digits, '.', '-' or '_'"
+                ));
             }
             if m.hf_repo.split('/').filter(|p| !p.is_empty()).count() != 2 {
                 e.push(format!(
@@ -213,6 +334,12 @@ impl Catalog {
                 }
                 if f.bytes == 0 || !f.name.ends_with(".gguf") {
                     e.push(format!("model {id}: {} must be a non-empty .gguf", f.name));
+                }
+                if !safe_file_name(&f.name) {
+                    e.push(format!(
+                        "model {id}: {} must be a relative path inside the model folder",
+                        f.name
+                    ));
                 }
             }
             // NFR-LEG-03: a license is shown before download.
@@ -330,6 +457,7 @@ mod tests {
         Catalog {
             schema_version: SCHEMA_VERSION,
             catalog_version: 1,
+            download_hosts: vec![HF_HOST.into(), "*.cdn.hf.co".into()],
             models: vec![model("x", Role::Extraction), model("e", Role::Embeddings)],
             tiers: vec![Tier {
                 id: "min".into(),
@@ -397,5 +525,57 @@ mod tests {
             errs.iter().any(|e| e.contains("smaller than tier")),
             "{errs:?}"
         );
+    }
+
+    #[test]
+    fn nfr_sec_02_download_hosts() {
+        let hosts = Catalog::shipped().download_hosts;
+        for ok in [
+            "huggingface.co",
+            "HuggingFace.co.",
+            "us.aws.cdn.hf.co",
+            "eu.cdn.hf.co",
+            "cas-bridge.xethub.hf.co",
+            "cdn-lfs-us-1.hf.co",
+        ] {
+            assert!(host_allowed(&hosts, ok), "{ok}");
+        }
+        for bad in [
+            "cdn.hf.co",
+            "evil.huggingface.co.attacker.example",
+            "huggingface.co.example",
+            "xcdn.hf.co",
+            "hf.co",
+            "attacker.example",
+            "",
+        ] {
+            assert!(!host_allowed(&hosts, bad), "{bad}");
+        }
+        let mut c = catalog();
+        c.download_hosts = vec!["*.cdn.hf.co".into(), "Bad_Host".into(), "*.com".into()];
+        let errs = c.validate().unwrap_err();
+        assert_eq!(errs.len(), 3, "{errs:?}");
+    }
+
+    #[test]
+    fn file_names_stay_inside_the_model_folder() {
+        let mut c = catalog();
+        c.models[0].files[0].name = "../x.gguf".into();
+        c.models[1].files[0].name = "/etc/x.gguf".into();
+        let errs = c.validate().unwrap_err();
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(safe_file_name("UD-IQ3_XXS/part-00001.gguf"));
+    }
+
+    #[test]
+    fn urls_are_pinned_to_the_revision() {
+        let c = Catalog::shipped();
+        let m = c.model("nomic-embed-text-v1.5-q8_0").expect("nomic");
+        assert_eq!(
+            m.url(&m.files[0]),
+            "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/\
+             0188c9bf409793f810680a5a431e7b899c46104c/nomic-embed-text-v1.5.Q8_0.gguf"
+        );
+        assert_eq!(m.bytes(), 146_146_432);
     }
 }

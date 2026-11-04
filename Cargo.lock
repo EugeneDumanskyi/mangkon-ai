@@ -3008,6 +3008,7 @@ dependencies = [
  "mk-jobs",
  "mk-kernel",
  "mk-mapping",
+ "mk-models",
  "mk-parsers",
  "mk-search",
  "mk-store",
@@ -3100,9 +3101,16 @@ dependencies = [
 name = "mk-models"
 version = "0.0.0"
 dependencies = [
+ "mk-models",
+ "rustls",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "sysinfo",
+ "tempfile",
+ "ureq",
+ "url",
 ]
 
 [[package]]

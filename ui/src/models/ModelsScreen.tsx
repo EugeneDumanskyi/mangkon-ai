@@ -13,6 +13,7 @@ import {
   keyInput,
   shownTime,
 } from "../lib/egress";
+import { LocalModels } from "./LocalModels";
 
 const button = "rounded border border-border px-2 py-0.5 text-sm disabled:opacity-50";
 const input = "rounded border border-border bg-surface px-2 py-1 text-sm";
@@ -290,7 +291,8 @@ export function EndpointForm({
   );
 }
 
-/** The app-level AI models screen (E09). M5a: the Endpoints section. */
+/** The app-level AI models screen (E09): this machine and the model catalog (M5b), then the
+ *  endpoints (M5a). */
 export function ModelsScreen({ onClose }: { onClose: () => void }) {
   const client = useQueryClient();
   const endpoints = useQuery({ queryKey: ["endpoints"], queryFn: commands.endpointsList });
@@ -345,7 +347,8 @@ export function ModelsScreen({ onClose }: { onClose: () => void }) {
           Close
         </button>
       </div>
-      <section aria-label="Endpoints" className="mt-4 flex flex-col gap-2">
+      <LocalModels />
+      <section id="endpoints" aria-label="Endpoints" className="mt-6 flex flex-col gap-2">
         <h3 className="font-semibold">Endpoints</h3>
         <p className="max-w-2xl text-sm text-muted">
           OpenAI-compatible servers, such as llama-server, Ollama or LM Studio on this or another

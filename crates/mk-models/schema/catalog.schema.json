@@ -10,6 +10,13 @@
       "format": "uint32",
       "minimum": 0
     },
+    "download_hosts": {
+      "description": "The only hosts a download may reach, redirects included (ADR-0009, NFR-SEC-02). Each is\na lowercase DNS name, or `*.` and a name for any host below it. HTTPS only.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "models": {
       "type": "array",
       "items": {
@@ -33,6 +40,7 @@
   "required": [
     "schema_version",
     "catalog_version",
+    "download_hosts",
     "models",
     "tiers"
   ],

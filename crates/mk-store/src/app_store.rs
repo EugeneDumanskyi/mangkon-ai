@@ -1,6 +1,7 @@
 //! `app.db` (architecture §6, ADR-0004): the app's own database, next to the projects. M3c: the
 //! project registry (domain §5.2, US-01.1, US-01.2). M5a: external model endpoints and their
-//! tests (US-09.6); their API keys are in the OS secret store, never here (INV-EG-07). Few,
+//! tests (US-09.6); their API keys are in the OS secret store, never here (INV-EG-07). M5b:
+//! model downloads and verified files (domain §7.7), app settings (the Q7 override). Few,
 //! small writes from one thread at a time: a plain connection behind a mutex, no writer thread.
 //!
 //! Its schema has its own migrations ([`APP_MIGRATIONS`]); a newer one is refused unchanged and
@@ -28,7 +29,25 @@ pub const APP_MIGRATIONS: &[Migration] = &[
         name: "endpoints",
         sql: include_str!("../app_migrations/0002_endpoints.sql"),
     },
+    Migration {
+        version: 3,
+        name: "models",
+        sql: include_str!("../app_migrations/0003_models.sql"),
+    },
 ];
+
+/// A model download that left "Available" (domain §5.3 MODEL_INSTALLATION). `state` is a
+/// §7.7 state name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelDownloadRow {
+    pub model_id: String,
+    pub state: String,
+    pub bytes_done: i64,
+    pub total_bytes: i64,
+    pub error_code: Option<String>,
+    pub error_message: Option<String>,
+    pub updated_at: i64,
+}
 
 /// Tests kept per endpoint; older ones are dropped.
 const KEPT_TESTS: i64 = 20;
@@ -139,6 +158,15 @@ impl AppStore {
             tx.pragma_update(None, "user_version", latest)
                 .map_err(|e| failed(e.to_string()))?;
             tx.commit().map_err(|e| failed(e.to_string()))?;
+        }
+        // Domain §7.7: a download or check that was running when the app quit is Interrupted.
+        // (Tests open older schemas, without the table.)
+        if latest >= 3 {
+            conn.execute(
+                "UPDATE model_download SET state = 'interrupted', updated_at = ?1
+                 WHERE state IN ('downloading', 'verifying')",
+                [now_ms()],
+            )?;
         }
         Ok(AppStore {
             conn: Mutex::new(conn),
@@ -405,5 +433,129 @@ impl AppStore {
                 })
             })
             .optional()?)
+    }
+
+    // ---- model downloads (M5b) ----
+
+    /// Every model download that left "Available".
+    pub fn model_downloads(&self) -> Result<Vec<ModelDownloadRow>, StoreError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT model_id, state, bytes_done, total_bytes, error_code, error_message, updated_at
+             FROM model_download ORDER BY model_id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(ModelDownloadRow {
+                model_id: r.get(0)?,
+                state: r.get(1)?,
+                bytes_done: r.get(2)?,
+                total_bytes: r.get(3)?,
+                error_code: r.get(4)?,
+                error_message: r.get(5)?,
+                updated_at: r.get(6)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Stores a download's state; `available` removes the row and its verified files.
+    pub fn set_model_download(
+        &self,
+        model_id: &str,
+        state: &str,
+        bytes_done: u64,
+        total_bytes: u64,
+        error: Option<(&str, &str)>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        if state == "available" {
+            tx.prepare_cached("DELETE FROM model_download WHERE model_id = ?1")?
+                .execute([model_id])?;
+            tx.prepare_cached("DELETE FROM model_file WHERE model_id = ?1")?
+                .execute([model_id])?;
+        } else {
+            tx.prepare_cached(
+                "INSERT INTO model_download
+                     (model_id, state, bytes_done, total_bytes, error_code, error_message,
+                      updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT (model_id) DO UPDATE SET state = ?2, bytes_done = ?3,
+                     total_bytes = ?4, error_code = ?5, error_message = ?6, updated_at = ?7",
+            )?
+            .execute(params![
+                model_id,
+                state,
+                bytes_done as i64,
+                total_bytes as i64,
+                error.map(|e| e.0),
+                error.map(|e| e.1),
+                now_ms()
+            ])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Updates only the byte count of a running download.
+    pub fn set_model_bytes(&self, model_id: &str, bytes_done: u64) -> Result<(), StoreError> {
+        self.lock()
+            .prepare_cached(
+                "UPDATE model_download SET bytes_done = ?2, updated_at = ?3 WHERE model_id = ?1",
+            )?
+            .execute(params![model_id, bytes_done as i64, now_ms()])?;
+        Ok(())
+    }
+
+    /// Records a file whose checksum matched the catalog (INV-MM-01).
+    pub fn model_file_verified(
+        &self,
+        model_id: &str,
+        name: &str,
+        bytes: u64,
+    ) -> Result<(), StoreError> {
+        self.lock()
+            .prepare_cached(
+                "INSERT OR REPLACE INTO model_file (model_id, name, bytes, verified_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?
+            .execute(params![model_id, name, bytes as i64, now_ms()])?;
+        Ok(())
+    }
+
+    /// The files of a model recorded as verified, with their sizes.
+    pub fn model_files_verified(&self, model_id: &str) -> Result<Vec<(String, u64)>, StoreError> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT name, bytes FROM model_file WHERE model_id = ?1 ORDER BY name",
+        )?;
+        let rows = stmt.query_map([model_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    // ---- app settings (M5b) ----
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .lock()
+            .prepare_cached("SELECT value FROM app_setting WHERE key = ?1")?
+            .query_row([key], |r| r.get(0))
+            .optional()?)
+    }
+
+    /// Sets a setting; `None` removes it.
+    pub fn set_setting(&self, key: &str, value: Option<&str>) -> Result<(), StoreError> {
+        let conn = self.lock();
+        match value {
+            Some(v) => conn
+                .prepare_cached("INSERT OR REPLACE INTO app_setting (key, value) VALUES (?1, ?2)")?
+                .execute(params![key, v])?,
+            None => conn
+                .prepare_cached("DELETE FROM app_setting WHERE key = ?1")?
+                .execute([key])?,
+        };
+        Ok(())
     }
 }

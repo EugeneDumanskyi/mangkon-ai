@@ -10,6 +10,7 @@ use mk_store::{AppStore, StoreError};
 use mk_workspace::{NameError, ProjectLayout, ProjectName, RegistryEntry};
 
 use crate::egress::{EgressConfig, EgressParts};
+use crate::models::{ModelParts, ModelsConfig};
 use crate::project::{OpenSummary, Project, ProjectError, project_exists};
 
 /// Why a project could not be created or opened, in plain words (NFR-USE-05).
@@ -109,6 +110,15 @@ pub struct Workspace {
     dir: PathBuf,
     /// Endpoints, secrets and the egress gate (M5a).
     pub(crate) egress: EgressParts,
+    /// Hardware check, catalog and downloads (M5b).
+    pub(crate) models: Arc<ModelParts>,
+}
+
+impl Drop for Workspace {
+    /// A running download is stopped and left Interrupted (domain §7.7 "app quit").
+    fn drop(&mut self) {
+        self.models.shut_down();
+    }
 }
 
 /// Whether the app can create files in `dir`: it creates and removes a probe file
@@ -135,9 +145,20 @@ impl Workspace {
 
     /// [`open`](Self::open) with another resolver, secret store or trust store (tests).
     pub fn open_with(dir: &Path, egress: EgressConfig) -> Result<Workspace, WorkspaceError> {
+        Self::open_with_models(dir, egress, ModelsConfig::default())
+    }
+
+    /// [`open_with`](Self::open_with) with another models folder, catalog, hardware probe or
+    /// download network (tests, the CLI's `--dir`).
+    pub fn open_with_models(
+        dir: &Path,
+        egress: EgressConfig,
+        models: ModelsConfig,
+    ) -> Result<Workspace, WorkspaceError> {
         let app = Arc::new(AppStore::open(dir)?);
         Ok(Workspace {
             egress: EgressParts::new(app.clone(), egress),
+            models: ModelParts::new(app.clone(), dir, models),
             app,
             dir: dir.to_path_buf(),
         })

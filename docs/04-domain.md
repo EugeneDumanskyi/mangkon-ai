@@ -669,7 +669,7 @@ Notes (M4c):
 | ID | Rule | Source |
 |---|---|---|
 | INV-MM-01 | A downloaded model is usable only after its checksum matches the catalog. A mismatch deletes the file. | US-09.4 AC4, NFR-SEC-11 |
-| INV-MM-02 | A download starts only if free disk ≥ model size + 2 GB. | US-09.4 AC1 |
+| INV-MM-02 | A download starts only if free disk ≥ the bytes still to download + 2 GB (the whole model on a first start; decided 2026-11-04). | US-09.4 AC1 |
 | INV-MM-03 | Local downloads are offered only when the hardware verdict is "Meets minimum", or the user turned on the override. | US-09.2, Q7 |
 | INV-MM-04 | A stage uses only a model of the matching role (extraction or embeddings). | US-09.3 |
 | INV-MM-05 | The local runtime is reachable only from this machine. Its destination class is always "This machine". | US-09.5 AC1 |

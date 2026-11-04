@@ -9,4 +9,4 @@ export type UiEvent = { "kind": "connectionsChanged" } | { "kind": "projectChang
 /**
  * `pause`, `cancel` or `close` when the run was stopped.
  */
-interrupted: string | null, added: number, duplicates: number, skipped: number, skippedFiles: Array<SkippedFile>, } | { "kind": "error", message: string, };
+interrupted: string | null, added: number, duplicates: number, skipped: number, skippedFiles: Array<SkippedFile>, } | { "kind": "error", message: string, } | { "kind": "modelsChanged" };

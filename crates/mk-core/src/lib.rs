@@ -24,6 +24,9 @@
 //! - M5a: external endpoints ([`Workspace::save_endpoint`], [`Workspace::test_endpoint`]), keys
 //!   in the OS secret store, per-project permissions and egress records, and
 //!   [`Workspace::model_client`], the only way to a model client (ADR-0009).
+//! - M5b: the hardware check ([`Workspace::hardware`]), the shipped model catalog with each
+//!   model's state ([`Workspace::model_catalog`]) and downloads with pause, resume, cancel and
+//!   delete ([`Workspace::start_download`]).
 
 mod control;
 mod egress;
@@ -31,6 +34,7 @@ mod events;
 mod identifiers;
 mod links;
 mod manage;
+mod models;
 mod page;
 mod patterns;
 mod project;
@@ -66,6 +70,13 @@ pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey, SubjectKind};
 pub use mk_jobs::ItemState;
 pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_mapping::{Assignments, ColumnType, MappingState};
+pub use mk_models::download::DownloadConfig;
+pub use mk_models::hardware::gb as gb_text;
+pub use mk_models::hardware::{
+    FixedProbe, Gpu, GpuVendor, HardwareProbe, HardwareProfile, SystemProbe, Verdict,
+};
+pub use mk_models::state::DownloadState;
+pub use mk_models::{Catalog, Role as ModelRole};
 pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
     CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,
@@ -74,6 +85,7 @@ pub use mk_store::{
     SearchFilter, SortColumn,
 };
 pub use mk_workspace::{PatternSetting, ProjectSettings, RegistryEntry, Reprocess, RootKind};
+pub use models::{HardwareView, MODELS_CHANGED_EVERY, ModelError, ModelView, ModelsConfig};
 pub use page::{PAGE_CACHE_LIMIT, PAGE_SCALE, PageBox, PageStatus, PageView, page_cache_dir};
 pub use patterns::{CustomPatternInfo, MAX_SAMPLE_CHARS, PatternTest, TOO_BROAD, test_pattern};
 pub use project::{

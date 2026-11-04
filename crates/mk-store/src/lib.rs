@@ -35,7 +35,7 @@ use mk_jobs::Trigger;
 use mk_kernel::ContentHash;
 use mk_workspace::ProjectSettings;
 
-pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow};
+pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow, ModelDownloadRow};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use egress::{EgressRecordRow, PermissionRow};
 pub use manage::{CancelOutcome, RemoveOutcome};

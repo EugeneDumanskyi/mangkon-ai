@@ -3,6 +3,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AllowPrompt } from "./bindings/AllowPrompt";
 import type { AppInfo } from "./bindings/AppInfo";
+import type { CatalogModel } from "./bindings/CatalogModel";
 import type { ColumnAssignment } from "./bindings/ColumnAssignment";
 import type { ConnectionCursor } from "./bindings/ConnectionCursor";
 import type { ConnectionFilter } from "./bindings/ConnectionFilter";
@@ -20,6 +21,7 @@ import type { EndpointItem } from "./bindings/EndpointItem";
 import type { EndpointSave } from "./bindings/EndpointSave";
 import type { EndpointTestReport } from "./bindings/EndpointTestReport";
 import type { FrameStats } from "./bindings/FrameStats";
+import type { HardwareInfo } from "./bindings/HardwareInfo";
 import type { IpcError } from "./bindings/IpcError";
 import type { MappingView } from "./bindings/MappingView";
 import type { Occurrence } from "./bindings/Occurrence";
@@ -174,6 +176,20 @@ export const commands = {
   endpointRevoke: (id: string) => invoke<null>("endpoint_revoke", { id }),
   /** "Data sent from this project" (US-09.8 AC2). */
   egressRecords: () => invoke<EgressRecord[]>("egress_records"),
+  /** The hardware check (US-09.1); `recheck` reads the machine again ("Check hardware"). */
+  hardwareCheck: (recheck: boolean) => invoke<HardwareInfo>("hardware_check", { recheck }),
+  /** The shipped catalog with each model's state and progress (US-09.3, US-09.4). */
+  modelCatalog: () => invoke<CatalogModel[]>("model_catalog"),
+  /** Starts a download; refused with the reason below the minimum or without the disk space. */
+  modelDownloadStart: (id: string) => invoke<null>("model_download_start", { id }),
+  modelDownloadPause: (id: string) => invoke<null>("model_download_pause", { id }),
+  modelDownloadResume: (id: string) => invoke<null>("model_download_resume", { id }),
+  /** Cancels a download and deletes its partial files. */
+  modelDownloadCancel: (id: string) => invoke<null>("model_download_cancel", { id }),
+  /** Deletes an installed model (US-09.4 AC5). */
+  modelDelete: (id: string) => invoke<null>("model_delete", { id }),
+  /** US-09.2 AC3 (Q7): allow local models below the minimum. */
+  localModelsOverride: (on: boolean) => invoke<HardwareInfo>("local_models_override", { on }),
   /** Core events go to `onEvent` until the page reloads (no `core:event` permission). */
   subscribe: (onEvent: (event: UiEvent) => void) => {
     const channel = new Channel<UiEvent>();

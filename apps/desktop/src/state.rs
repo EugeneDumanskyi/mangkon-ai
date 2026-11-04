@@ -71,6 +71,8 @@ impl AppState {
             return Ok(w.clone());
         }
         let w = Arc::new(Workspace::open_default()?);
+        let events = self.events.clone();
+        w.on_models_changed(move || emit(&events, UiEvent::ModelsChanged));
         *ws = Some(w.clone());
         Ok(w)
     }

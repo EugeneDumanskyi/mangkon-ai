@@ -1820,6 +1820,9 @@ pub enum UiEvent {
     Error {
         message: String,
     },
+    /// The hardware view, a model's state or a download's progress changed (progress at most
+    /// every 500 ms).
+    ModelsChanged,
 }
 
 // ---- M5a: endpoints, permissions, egress records (US-09.6, US-09.7, US-09.8) ----
@@ -2218,6 +2221,201 @@ impl From<mk_core::EgressRecordInfo> for EgressRecord {
             },
             first_sent_at: r.first_sent_at,
             last_sent_at: r.last_sent_at,
+        }
+    }
+}
+
+// ---- M5b: hardware check, catalog, downloads (US-09.1–US-09.4) ----
+
+impl From<mk_core::ModelError> for IpcError {
+    fn from(e: mk_core::ModelError) -> Self {
+        IpcError::new(e.code, e.message)
+    }
+}
+
+/// One GPU the check found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct GpuInfo {
+    /// `NVIDIA`, `AMD`, `Intel`, `Apple` or `Other`.
+    pub vendor: String,
+    pub name: String,
+    #[ts(type = "number | null")]
+    pub vram_bytes: Option<u64>,
+    pub driver: Option<String>,
+    /// The GPU that decides the verdict (the most VRAM).
+    pub used: bool,
+}
+
+/// The hardware check (US-09.1) and what it allows (US-09.2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct HardwareInfo {
+    pub os: String,
+    pub cpu: String,
+    #[ts(type = "number")]
+    pub ram_bytes: u64,
+    /// Apple Silicon: the memory CPU and GPU share.
+    #[ts(type = "number | null")]
+    pub unified_bytes: Option<u64>,
+    pub gpus: Vec<GpuInfo>,
+    #[ts(type = "number | null")]
+    pub free_disk_bytes: Option<u64>,
+    pub disk_path: String,
+    pub meets: bool,
+    /// `Meets minimum` or `Below minimum`.
+    pub label: String,
+    /// One plain line per part below the minimum.
+    pub reasons: Vec<String>,
+    /// Vulkan best effort, "May work, but not supported", an old driver.
+    pub notes: Vec<String>,
+    pub tier: Option<String>,
+    /// US-09.2 AC3 (Q7).
+    pub local_override: bool,
+    /// Local downloads are offered (INV-MM-03).
+    pub local_allowed: bool,
+    /// US-09.2 AC1 text, when local downloads are not offered.
+    pub too_weak: Option<String>,
+    pub override_warning: String,
+}
+
+impl From<mk_core::HardwareView> for HardwareInfo {
+    fn from(h: mk_core::HardwareView) -> Self {
+        let best = h.verdict.best_gpu;
+        Self {
+            os: h.profile.os,
+            cpu: h.profile.cpu,
+            ram_bytes: h.profile.ram_bytes,
+            unified_bytes: h.profile.unified_bytes,
+            gpus: h
+                .profile
+                .gpus
+                .into_iter()
+                .enumerate()
+                .map(|(i, g)| GpuInfo {
+                    vendor: g.vendor.label().to_string(),
+                    name: g.name,
+                    vram_bytes: g.vram_bytes,
+                    driver: g.driver,
+                    used: best == Some(i),
+                })
+                .collect(),
+            free_disk_bytes: h.profile.free_disk_bytes,
+            disk_path: h.profile.disk_path,
+            meets: h.verdict.meets,
+            label: h.verdict.label.to_string(),
+            reasons: h.verdict.reasons,
+            notes: h.verdict.notes,
+            tier: h.verdict.tier,
+            local_override: h.local_override,
+            local_allowed: h.local_allowed,
+            too_weak: h.too_weak.map(str::to_string),
+            override_warning: h.override_warning.to_string(),
+        }
+    }
+}
+
+/// A model's role (INV-MM-04).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelRole {
+    Extraction,
+    Embeddings,
+}
+
+/// Domain §7.7.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DownloadState {
+    Available,
+    Downloading,
+    Paused,
+    Interrupted,
+    Verifying,
+    Installed,
+}
+
+/// A failed download, in plain words with a stable code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ModelFailure {
+    pub code: String,
+    pub message: String,
+}
+
+/// One catalog model and its download (US-09.3, US-09.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct CatalogModel {
+    pub id: String,
+    pub name: String,
+    pub role: ModelRole,
+    pub quant: String,
+    /// Size on disk.
+    #[ts(type = "number")]
+    pub bytes: u64,
+    #[ts(type = "number")]
+    pub vram_bytes: u64,
+    #[ts(type = "number")]
+    pub ram_bytes: u64,
+    /// SPDX id, or `LicenseRef-…` (US-09.3 AC3).
+    pub license: String,
+    pub license_url: String,
+    pub recommended: bool,
+    /// Its measured VRAM and RAM fit this machine.
+    pub fits: bool,
+    /// Free disk its download needs, when the disk has less (INV-MM-02).
+    #[ts(type = "number | null")]
+    pub disk_needed: Option<u64>,
+    pub state: DownloadState,
+    #[ts(type = "number")]
+    pub bytes_done: u64,
+    #[ts(type = "number")]
+    pub speed_bps: u64,
+    #[ts(type = "number | null")]
+    pub eta_s: Option<u64>,
+    pub error: Option<ModelFailure>,
+}
+
+impl From<mk_core::ModelView> for CatalogModel {
+    fn from(m: mk_core::ModelView) -> Self {
+        Self {
+            id: m.id,
+            name: m.name,
+            role: match m.role {
+                mk_core::ModelRole::Extraction => ModelRole::Extraction,
+                mk_core::ModelRole::Embeddings => ModelRole::Embeddings,
+            },
+            quant: m.quant,
+            bytes: m.bytes,
+            vram_bytes: m.vram_bytes,
+            ram_bytes: m.ram_bytes,
+            license: m.license_spdx,
+            license_url: m.license_url,
+            recommended: m.recommended,
+            fits: m.fits,
+            disk_needed: m.disk_needed,
+            state: match m.state {
+                mk_core::DownloadState::Available => DownloadState::Available,
+                mk_core::DownloadState::Downloading => DownloadState::Downloading,
+                mk_core::DownloadState::Paused => DownloadState::Paused,
+                mk_core::DownloadState::Interrupted => DownloadState::Interrupted,
+                mk_core::DownloadState::Verifying => DownloadState::Verifying,
+                mk_core::DownloadState::Installed => DownloadState::Installed,
+            },
+            bytes_done: m.bytes_done,
+            speed_bps: m.speed_bps,
+            eta_s: m.eta_s,
+            error: m.error.map(|e| ModelFailure {
+                code: e.code.to_string(),
+                message: e.message,
+            }),
         }
     }
 }

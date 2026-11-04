@@ -1,12 +1,14 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
 //! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b),
-//! `endpoint test` (M5a) and the `--worker` entry.
+//! `endpoint test` (M5a), `hardware`, `models` and `model download|delete` (M5b) and the
+//! `--worker` entry.
 
 mod bench;
 mod endpoint;
 mod ingest;
 mod kill_test;
 mod manage;
+mod models;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -27,6 +29,9 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli bench [--testdata DIR] [--baseline FILE [--update-baseline]] [--json FILE]
                          [--tessdata DIR] [--work DIR]
        mangkon-cli endpoint test BASE_URL --model NAME [--api-key-env VAR] [--json]
+       mangkon-cli hardware [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli models [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli model (download ID | delete ID) [--app-data DIR] [--dir DIR] [--json]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -81,7 +86,18 @@ Commands:
               the host points, the model it reports and the times. Saves nothing and sends no
               project data. Exits 1 if the chat call fails.
               --model        the model name to ask for
-              --api-key-env  the environment variable that holds the API key (never printed)";
+              --api-key-env  the environment variable that holds the API key (never printed)
+  hardware    Check this machine for local AI: OS, CPU, RAM, each GPU and its memory, free
+              disk, and the verdict (Meets minimum or Below minimum, with the reasons).
+  models      The model catalog shipped with this version: role, size, memory needed,
+              license, Recommended for this machine, and the download state.
+  model       download: download the model ID from the hosts in the catalog (or resume its
+              partial download), check its SHA-256 and install it. Refused below the
+              minimum (unless allowed in the app) or without the free disk it needs. Ctrl-C
+              stops it; run it again to resume. Exits 1 unless the model is installed.
+              delete: delete the installed model ID and print the free disk.
+              --app-data  the app's data folder (default: the OS one)
+              --dir       the models folder (default: models/ in the app's data folder)";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -133,6 +149,10 @@ fn main() -> ExitCode {
         },
         Some("endpoint") => match endpoint_options(&args[1..]) {
             Ok(opts) => endpoint::test(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some(cmd @ ("hardware" | "models" | "model")) => match models_options(cmd, &args[1..]) {
+            Ok(opts) => models::run(&opts),
             Err(e) => usage_error(&e),
         },
         Some("bench") => match bench_options(&args[1..]) {
@@ -321,6 +341,38 @@ fn rebuild_options(args: &[String]) -> Result<ingest::RebuildOptions, String> {
     }
     Ok(ingest::RebuildOptions {
         project: project.ok_or("rebuild needs --project DIR")?,
+        json,
+    })
+}
+
+fn models_options(cmd: &str, args: &[String]) -> Result<models::Options, String> {
+    let (mut app_data, mut dir, mut json) = (None, None, false);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--app-data" => app_data = Some(PathBuf::from(value()?)),
+            "--dir" => dir = Some(PathBuf::from(value()?)),
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown {cmd} argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let command = match (cmd, words.as_slice()) {
+        ("hardware", []) => models::Command::Hardware,
+        ("models", []) => models::Command::Models,
+        ("model", ["download", id]) => models::Command::Download((*id).to_string()),
+        ("model", ["delete", id]) => models::Command::Delete((*id).to_string()),
+        ("model", _) => return Err("model takes download ID or delete ID".into()),
+        _ => return Err(format!("{cmd} takes no other words")),
+    };
+    Ok(models::Options {
+        command,
+        app_data,
+        dir,
         json,
     })
 }

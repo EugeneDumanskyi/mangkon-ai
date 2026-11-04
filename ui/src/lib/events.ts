@@ -23,6 +23,8 @@ export function staleKeys(event: UiEvent): string[][] {
     // Search results change only when a run ends, so a list being read does not jump.
     case "ingestFinished":
       return [["progress"], ["connections"], ["documents"], ["search"]];
+    case "modelsChanged":
+      return [["hardware"], ["model_catalog"]];
     case "error":
       return [];
   }

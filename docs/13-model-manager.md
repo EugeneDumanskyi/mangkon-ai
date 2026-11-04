@@ -1,7 +1,7 @@
 # 13 — Model manager and egress gate
 
 > Input: `06-roadmap.md` §2 M5 (spike S5), ADR-0009, ADR-0012, ADR-0015, `02-requirements.md` E09, `03-nfr.md` (NFR-SEC-02/04/05/07, NFR-COMP-05), `04-domain.md` BC-11 and §7.6. **If this file disagrees with them, they win.**
-> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama, LM Studio and calls from RM-2 moved to M5c. §3: the release-app webview check moved to M5c. Linux only; macOS and Windows are not verified here.
+> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama, LM Studio and calls from RM-2 moved to M5c. §3: the release-app webview check moved to M5c. §4 (M5b): code and automated checks done on RM-1 (2026-11-04); resume after a killed download checked on the real CDN; the network capture was not done (skipped, 2026-11-04). Linux only; macOS and Windows are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -98,3 +98,83 @@ cargo test -p mk-core --test m5a_egress nfr_sec_07_real_keychain -- --ignored --
 DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent MK_EXPECT_SESSION_ONLY=1 \
   cargo test -p mk-core --test m5a_egress nfr_sec_07_real_keychain -- --ignored --nocapture
 ```
+
+---
+
+## 4. Hardware check and downloads (M5b)
+
+### Hardware check on RM-1
+
+`mangkon-cli hardware` (2026-11-04):
+
+| Part | Found |
+|---|---|
+| OS | Linux (Pop!_OS 24.04) |
+| CPU | Intel Core i7-14650HX (24 threads) |
+| RAM | 101 GB |
+| GPU (used) | NVIDIA GeForce RTX 5070 Laptop GPU, VRAM 8.5 GB (8151 MiB), driver 595.104.02 |
+| GPU | Intel Raptor Lake-S UHD Graphics, VRAM unknown (integrated) |
+| Verdict | Meets minimum, tier `large-ram` |
+
+GB is 10^9 bytes (decided 2026-11-04): the 8 GB card reports 8151 MiB = 8.55 × 10^9 bytes, which would be below 8 GiB. The probe reads `nvidia-smi`, `/sys/class/drm` and `lspci` and takes about 2.5 s; it runs once per session and again on "Check hardware". The macOS (`sysctl`, `system_profiler`) and Windows (PowerShell) probes are written but not verified here.
+
+### Download hosts
+
+The catalog lists the hosts a download may reach (`download_hosts`): `huggingface.co`, `*.cdn.hf.co`, `cdn-lfs.hf.co`, `cdn-lfs-us-1.hf.co`, `cdn-lfs-eu-1.hf.co`, `cas-bridge.xethub.hf.co`. Every hop must be HTTPS to a listed host; redirects are followed by the app (at most 5) and an unlisted host is refused before its name is looked up.
+
+Seen on 2026-11-04: `https://huggingface.co/<repo>/resolve/<revision>/<file>` answers 302 to a signed URL on `us.aws.cdn.hf.co` (`/xet-bridge-us/…`), which accepts `Range`. The host has two labels below `cdn.hf.co`, so `*.` matches any name below the suffix, not one label (deviation from the plan, which said one label; the names stay Hugging Face's).
+
+### Real downloads (RM-1)
+
+| Run | Result |
+|---|---|
+| `nomic-embed-text-v1.5-q8_0` (146 MB) through the download module, paused after 2.7 s, then resumed | Redirect to `us.aws.cdn.hf.co`; paused at 59,083,193 bytes; the resume re-requested the `resolve` URL and sent `Range: bytes=59083193-` to the new signed URL; 206 with the right `Content-Range`; SHA-256 matched; 5.4 s in all (about 32 MB/s) |
+| `mangkon-cli model download nomic-embed-text-v1.5-q8_0`, then `model delete` | Installed (about 32 MB/s), listed as installed, deleted, folder gone |
+| `mangkon-cli model download qwen3.5-4b-q4_k_m` (2.9 GB) killed (SIGKILL) after 20 s, then run again | Killed at 616,039,879 bytes, listed as Interrupted 0.6/2.9 GB with the `.part` kept; the second run started at 616 MB (not 0), finished at about 20–34 MB/s, SHA-256 matched, installed (2,871,743,520 bytes) |
+
+The kill-and-rerun replaces the planned network-off run (decided 2026-11-04): turning the network off cuts the whole machine. It checks resume on the real CDN (a fresh signed URL and `Range` from the `.part`). Losing the connection while the app keeps running is checked with the fakes only (cut body, 30 s stall limit).
+
+```sh
+mangkon-cli model download qwen3.5-4b-q4_k_m &   # kill -9 it after about 20 s
+mangkon-cli models                               # interrupted 0.6/2.9 GB
+mangkon-cli model download qwen3.5-4b-q4_k_m     # resumes, verifies, installs
+```
+
+### Automated checks (fakes, every CI run)
+
+A fake Hugging Face (`mk-models` feature `testkit`) serves byte ranges over plain HTTP, redirects to a second host name, and can cut a body, send wrong bytes, ignore `Range`, answer an error status or go slowly; a resolver knows only the test names and records every lookup.
+
+| Requirement | Tests | Result |
+|---|---|---|
+| US-09.1 AC2–AC4, NFR-COMP-04 | `mk-models` `hardware` unit tests (`us_09_1_ac2_*`, `us_09_1_ac3_vulkan_best_effort`, `us_09_1_ac3_best_gpu_decides`, `us_09_1_ac4_apple_24gb`, `nfr_comp_04_old_driver`) | Pass |
+| US-09.2 AC1–AC3 | `crates/mk-core/tests/m5b_models.rs` (`us_09_2_ac1_no_local_download_below_minimum`: refused with the AC1 text, nothing requested, no name looked up; `us_09_2_ac2_layer_1_works_below_minimum`; `us_09_2_ac3_override_enables`), `ui/src/models/hardware.test.tsx` | Pass |
+| US-09.3 AC1–AC3 | `us_09_3_ac1_recommended_per_tier`, `us_09_3_ac2_default_workspace_uses_the_shipped_catalog`, `nfr_mnt_09_valid_catalog_passes` (the shipped file validates), `ui/src/models/catalog.test.tsx` (license before Download) | Pass |
+| US-09.4 AC1, NFR-RES-05 | `us_09_4_ac1_disk_check_blocks`, `nfr_res_05_disk_check_before_download` (free space read again at the start); a write that hits a full disk ends Interrupted with "Disk full" | Pass |
+| US-09.4 AC2 | `us_09_4_ac2_progress_pause_cancel` (progress, speed, time left, one download at a time, pause keeps the partial file, cancel deletes it) | Pass |
+| US-09.4 AC3, NFR-REL-08 | `us_09_4_ac3_resume_after_drop` (resume asks for the rest only), `us_09_4_ac3_resume_after_restart` (a download running at quit is Interrupted after restart, its partial file kept); `mk-models` `tests/downloads.rs` (drops, a server that ignores `Range`, split models) | Pass |
+| US-09.4 AC4, NFR-SEC-11 | `us_09_4_ac4_checksum_mismatch_deletes`, `nfr_sec_11_tampered_partial_is_rejected` (a partial file changed while paused); no path reaches Installed without a matching SHA-256 (`domain_7_7_transitions`) | Pass |
+| US-09.4 AC5 | `us_09_4_ac5_delete_frees_space` (folder gone, free space read again) | Pass |
+| NFR-SEC-02 | `nfr_sec_02_redirect_outside_catalog_refused` and the `mk-models` host tests: an unlisted or non-HTTPS hop is refused and never looked up | Pass |
+
+### Network capture (acceptance criterion 7)
+
+**Not done** (skipped by the maintainer, 2026-11-04; it needs sudo). Criterion 7 rests on the automated host checks above. To run it later: during a real model download and `mangkon-cli endpoint test` against RM-1's llama-server, capture all traffic, then list the DNS names and TLS SNI. Expected: only `huggingface.co`, names under `cdn.hf.co` and the endpoint.
+
+```sh
+sudo tcpdump -i any -w /tmp/m5b.pcap &
+mangkon-cli model download nomic-embed-text-v1.5-q8_0 --app-data /tmp/mk-app
+mangkon-cli endpoint test http://127.0.0.1:8080 --model local
+sudo kill %1
+tshark -r /tmp/m5b.pcap -Y 'dns.flags.response == 0' -T fields -e dns.qry.name | sort -u
+tshark -r /tmp/m5b.pcap -Y 'tls.handshake.type == 1' -T fields -e tls.handshake.extensions_server_name | sort -u
+```
+
+### Rules and assumptions (M5b)
+
+- One download at a time (decided 2026-11-04; a queue can come later). State is kept in `app.db` (v3: `model_download`, `model_file`, `app_setting`) on every change of state, and the byte count about once a second. A download running when the app quits is Interrupted on the next start (domain §7.7), and resumes from its partial file.
+- Start guard (INV-MM-02, INV-MM-03): GPU and memory meet the minimum or the override is on; free disk ≥ the bytes still to download + 2 GB (decided 2026-11-04: remaining, not the whole model, so a resume near the end is not refused). The 30 GB of US-09.1 AC2 is a note in the hardware check, not part of the verdict or the start guard (decided 2026-11-04); a model whose download does not fit shows "Does not fit: needs N GB free disk" on its row.
+- `*.cdn.hf.co` matches any name below `cdn.hf.co` (decided 2026-11-04): Hugging Face controls that zone, and every file is checked against the catalog's SHA-256.
+- Resume re-requests the `resolve` URL (signed CDN links expire) and needs a 206 with exactly the expected `Content-Range`; anything else restarts the file from 0. The bytes already on disk are hashed before the rest arrives.
+- A stalled connection gives up after 30 s with no data and leaves the model Interrupted.
+- NVIDIA driver older than 525.60 (Linux) or 527.41 (Windows) gets a note to update (CUDA 12.0 minimums from NVIDIA's release notes). It never blocks. ASSUMPTION until M5c: the `llama-server` build chosen in the ADR-0015 follow-up may need a newer CUDA 12.x and driver; check the numbers then.
+
