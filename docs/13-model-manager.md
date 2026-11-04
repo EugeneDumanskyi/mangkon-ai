@@ -1,7 +1,7 @@
 # 13 — Model manager and egress gate
 
 > Input: `06-roadmap.md` §2 M5 (spike S5), ADR-0009, ADR-0012, ADR-0015, `02-requirements.md` E09, `03-nfr.md` (NFR-SEC-02/04/05/07, NFR-COMP-05), `04-domain.md` BC-11 and §7.6. **If this file disagrees with them, they win.**
-> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama, LM Studio and calls from RM-2 moved to M5c. §3: the release-app webview check moved to M5c. §4 (M5b): code and automated checks done on RM-1 (2026-11-04); resume after a killed download checked on the real CDN; the network capture was not done (skipped, 2026-11-04). Linux only; macOS and Windows are not verified here.
+> Status: M5a done on RM-1 (2026-11-03). §2: llama-server done; Ollama and LM Studio dropped (2026-11-04); calls from RM-2 moved to M10. §3: the release-app webview check moved to M10. §4 (M5b): code and automated checks done on RM-1 (2026-11-04); resume after a killed download checked on the real CDN; the network capture was not done (skipped, 2026-11-04; moved to M10). Linux only; macOS and Windows are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -55,15 +55,13 @@ Stable over 6 runs (≈ 0.2 s each). **S5 passed on the first choice; the socket
 
 ## 2. External path and endpoint suite (NFR-COMP-05)
 
-Moved from M1. llama-server run on RM-1 (2026-11-03). For M5a, the run against RM-1's own LAN address stands in for the Local network path. **Ollama, LM Studio and calls from RM-2 moved to M5c** (maintainer's call, 2026-11-03).
+Moved from M1. llama-server run on RM-1 (2026-11-03). For M5a, the run against RM-1's own LAN address stands in for the Local network path. Calls from RM-2 moved to M10; Ollama and LM Studio dropped from the test list (maintainer's calls, 2026-11-03 and 2026-11-04): they are OpenAI-compatible endpoints like any other, and the app does not depend on them.
 
 The suite is `mangkon-cli endpoint test`. It sends the app's fixed test texts (a chat call, a structured-output probe with a JSON schema the prompt does not mention, and an embeddings call), prints where the host points, the model it reports and the times, and saves nothing. The key is read from an environment variable and never printed.
 
 ```sh
 # On RM-1 (loopback) and from RM-2 (over the LAN, with RM-1's address):
 mangkon-cli endpoint test http://127.0.0.1:8080 --model <name> --json        # llama-server
-mangkon-cli endpoint test http://127.0.0.1:11434 --model <name> --json       # Ollama
-mangkon-cli endpoint test http://127.0.0.1:1234 --model <name> --json        # LM Studio
 MK_KEY=... mangkon-cli endpoint test https://<provider>/v1 --model <name> --api-key-env MK_KEY
 ```
 
@@ -71,11 +69,7 @@ MK_KEY=... mangkon-cli endpoint test https://<provider>/v1 --model <name> --api-
 |---|---|---|---|---|---|---|
 | llama-server | build 10863 | RM-1 (loopback) | ok | supported | ok, 1024 dimensions | Two servers, one per role. Chat: `Qwen_Qwen3.5-4B-Q4_K_M`, `--api-key`; embeddings answered 501 with llama-server's hint "Start it with `--embeddings`". Embeddings: `Qwen3-Embedding-0.6B-Q8_0` with `--embeddings`. Wrong key and no key → `key_refused`, exit 1; a port with nothing listening → `cannot_reach` |
 | llama-server | build 10863 | RM-1 (own LAN address 192.168.1.x) | ok | supported | — (chat server) | Classified Local network; the key was required |
-| llama-server | — | RM-2 (LAN) | — | — | — | |
-| Ollama | — | RM-1 | — | — | — | |
-| Ollama | — | RM-2 (LAN) | — | — | — | |
-| LM Studio | — | RM-1 | — | — | — | |
-| LM Studio | — | RM-2 (LAN) | — | — | — | |
+| llama-server | — | RM-2 (LAN) | — | — | — | M10 |
 
 Found by the real run: a thinking model (Qwen3.5-4B) used 222 tokens on reasoning before the reply. With the probe's old 64-token limit the reply came back empty (`finish_reason: length`), so structured output was wrongly reported as not supported. The probe now allows 1024 tokens; the plain chat probe still uses 16, since any well-formed reply passes it. llama-server does not check the model name (one model per server), so "Model '…' not found" cannot appear there.
 
@@ -89,7 +83,7 @@ The fake-server part of the suite runs in CI: `crates/mk-core/tests/m5a_egress.r
 | CLI output | `apps/cli/tests/endpoint.rs`: stdout and stderr of `endpoint test`, text and JSON, with a right and a wrong key | Pass |
 | Real keychain (GNOME Keyring, RM-1) | `nfr_sec_07_real_keychain` (ignored in CI): the key goes to the Secret Service under `mangkon-ai` / `endpoint:<id>`, a test and a gate call send it, no file holds it, a second workspace finds it in the keychain, and after delete the keychain has no entry | Pass |
 | No Secret Service | The same test with `DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent MK_EXPECT_SESSION_ONLY=1`: session-only store with the notice, no file holds the key, a second workspace shows the key as missing | Pass |
-| Release app, webview data folder | By hand: add an endpoint with a known key in the release app, test it, quit, then search the app-data folder, the project folder and the webview data folder (`~/.local/share/<identifier>/`) for the key | **Moved to M5c** (maintainer's call, 2026-11-03) |
+| Release app, webview data folder | By hand: add an endpoint with a known key in the release app, test it, quit, then search the app-data folder, the project folder and the webview data folder (`~/.local/share/<identifier>/`) for the key | **Moved to M10** (maintainer's calls, 2026-11-03 and 2026-11-04) |
 
 There is no log file yet (architecture §8), so "logs" is checked as stdout and stderr.
 
@@ -158,7 +152,7 @@ A fake Hugging Face (`mk-models` feature `testkit`) serves byte ranges over plai
 
 ### Network capture (acceptance criterion 7)
 
-**Not done** (skipped by the maintainer, 2026-11-04; it needs sudo). Criterion 7 rests on the automated host checks above. To run it later: during a real model download and `mangkon-cli endpoint test` against RM-1's llama-server, capture all traffic, then list the DNS names and TLS SNI. Expected: only `huggingface.co`, names under `cdn.hf.co` and the endpoint.
+**Not done** (skipped by the maintainer, 2026-11-04; it needs sudo; moved to M10). Criterion 7 rests on the automated host checks above. To run it later: during a real model download and `mangkon-cli endpoint test` against RM-1's llama-server, capture all traffic, then list the DNS names and TLS SNI. Expected: only `huggingface.co`, names under `cdn.hf.co` and the endpoint.
 
 ```sh
 sudo tcpdump -i any -w /tmp/m5b.pcap &
