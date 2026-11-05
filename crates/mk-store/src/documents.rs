@@ -263,11 +263,18 @@ pub(crate) fn progress_detail(
         let (n, bytes): (i64, i64) = conn
             .prepare_cached(
                 "SELECT COUNT(*), COALESCE(SUM(c.size), 0)
-                 FROM work_item w LEFT JOIN content c ON c.id = w.content_id
-                 WHERE w.finished_at >= ?1 AND w.state IN (?2, ?3)",
+                 FROM work_item w
+                 JOIN job j ON j.id = w.job_id
+                 LEFT JOIN content c ON c.id = w.content_id
+                 WHERE w.finished_at >= ?1 AND w.state IN (?2, ?3) AND j.stage = ?4",
             )?
             .query_row(
-                params![since, ItemState::Done.as_str(), ItemState::Failed.as_str()],
+                params![
+                    since,
+                    ItemState::Done.as_str(),
+                    ItemState::Failed.as_str(),
+                    Stage::A.as_str()
+                ],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
         out.finished = n as u64;

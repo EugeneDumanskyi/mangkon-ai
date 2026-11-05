@@ -10,6 +10,10 @@
 //! M5c: when a local model changes state, `llama-server` is checked again, a model is installed
 //! or deleted, or the AI choice changes, the open project's AI jobs are Blocked or run again to
 //! match (INV-PR-09). Quitting stops every `llama-server` (US-09.5 AC2).
+//!
+//! M6a: the AI lane has its own thread and holds no run lock, so pause and cancel never wait on a
+//! model. It starts after ingestion, on open, when a job is unblocked and on the user's action.
+//! Closing waits a moment for it; a reply after that is dropped by its token (NFR-REL-05).
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +31,8 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 const MAX_SKIPPED: usize = 100;
 /// How long closing waits for the stopped run's thread to let the project go.
 const CLOSE_WAIT: Duration = Duration::from_secs(10);
+/// How long closing waits for the AI lane: a call may take minutes, and its reply is dropped.
+const CLOSE_WAIT_AI: Duration = Duration::from_secs(2);
 
 /// One open project.
 pub struct Open {
@@ -37,6 +43,10 @@ pub struct Open {
     ingesting: AtomicBool,
     /// A source was added during the run: run again when it ends.
     again: AtomicBool,
+    /// The AI lane's thread is going on.
+    ai_running: AtomicBool,
+    /// A start came while the lane ran: it runs once more.
+    ai_again: AtomicBool,
     /// The project is closing: no run starts again.
     closed: AtomicBool,
 }
@@ -74,7 +84,14 @@ impl AppState {
         if let Some(w) = ws.as_ref() {
             return Ok(w.clone());
         }
-        let w = Arc::new(Workspace::open_default()?);
+        let w = self.listen(Workspace::open_default()?);
+        *ws = Some(w.clone());
+        Ok(w)
+    }
+
+    /// The workspace, telling the UI and the open project's AI jobs what changes in it.
+    fn listen(&self, w: Workspace) -> Arc<Workspace> {
+        let w = Arc::new(w);
         // Weak: the workspace holds these callbacks.
         let (events, open, weak) = (self.events.clone(), self.open.clone(), Arc::downgrade(&w));
         w.on_models_changed(move || {
@@ -95,8 +112,7 @@ impl AppState {
                 },
             )
         });
-        *ws = Some(w.clone());
-        Ok(w)
+        w
     }
 
     /// The open project's AI jobs follow what can run now (INV-PR-09).
@@ -127,10 +143,9 @@ impl AppState {
         let result = self.install(&mut open, project, dir, entry);
         drop(open);
         self.emit(UiEvent::ProjectChanged);
-        if let Ok(o) = &result {
-            self.start_ingest(o);
-        }
-        result
+        let o = self.start_work(result?);
+        self.start_ingest(&o);
+        Ok(o)
     }
 
     /// The open project, or a plain error.
@@ -189,7 +204,7 @@ impl AppState {
         let result = self.install(&mut open, project, dir, entry);
         drop(open);
         self.emit(UiEvent::ProjectChanged);
-        result
+        Ok(self.start_work(result?))
     }
 
     /// Opens a project (US-01.2). The open one is closed first; its run, if any, is stopped and
@@ -208,16 +223,18 @@ impl AppState {
         let result = self.install(&mut open, project, dir, entry);
         drop(open);
         self.emit(UiEvent::ProjectChanged);
-        result
+        Ok(self.start_work(result?))
     }
 
+    /// Makes `project` the open one; returns it and whether it has files waiting. Its work starts
+    /// in [`start_work`](Self::start_work), once the caller has let go of the `open` lock.
     fn install(
         &self,
         slot: &mut Option<Arc<Open>>,
         mut project: Project,
         dir: PathBuf,
         entry: RegistryEntry,
-    ) -> Result<Arc<Open>, IpcError> {
+    ) -> Result<(Arc<Open>, bool), IpcError> {
         // OCR language files: English is written there on first use (ADR-0018).
         project.set_tessdata_dir(mk_core::tessdata_dir());
         let changes = project.subscribe();
@@ -228,13 +245,11 @@ impl AppState {
             entry,
             ingesting: AtomicBool::new(false),
             again: AtomicBool::new(false),
+            ai_running: AtomicBool::new(false),
+            ai_again: AtomicBool::new(false),
             closed: AtomicBool::new(false),
         });
         *slot = Some(o.clone());
-        if let Some(ws) = lock(&self.workspace).as_ref() {
-            // A project made or opened now: its AI jobs follow what can run (INV-PR-09).
-            let _ = ws.refresh_ai_blocks(&o.project);
-        }
         // Forward ConnectionsChanged until the project closes (its sender goes with it).
         let events = self.events.clone();
         std::thread::Builder::new()
@@ -245,10 +260,24 @@ impl AppState {
                 }
             })
             .map_err(|e| IpcError::new("internal", e.to_string()))?;
+        Ok((o, runnable))
+    }
+
+    /// A project made or opened now: its AI jobs follow what can run (INV-PR-09) and its work
+    /// goes on. Never under the `open` lock: the first check of `llama-server` tells the
+    /// runtime's listeners on this thread, and they take that lock.
+    fn start_work(&self, (o, runnable): (Arc<Open>, bool)) -> Arc<Open> {
+        let ws = lock(&self.workspace).clone();
+        if let Some(ws) = &ws {
+            let _ = ws.refresh_ai_blocks(&o.project);
+        }
         if runnable {
             self.start_ingest(&o);
+        } else if let Some(ws) = ws {
+            // Ingestion would start the lane when it ends; with none, it goes on from here.
+            schedule_and_start_lane(&ws, &o, &self.events);
         }
-        Ok(o)
+        o
     }
 
     /// Closes the open project, stopping its run first (US-03.4 AC1).
@@ -313,16 +342,18 @@ impl AppState {
             return;
         }
         let (run, events) = (open.clone(), self.events.clone());
+        let ws = lock(&self.workspace).clone();
         let spawned = std::thread::Builder::new()
             .name("mk-desktop-ingest".into())
             .spawn(move || {
                 let open = run;
                 let ticker = spawn_ticker(&open, &events);
+                let mut stopped;
                 loop {
                     open.again.store(false, Ordering::SeqCst);
                     emit(&events, UiEvent::IngestStarted);
                     let result = open.project.ingest();
-                    let stopped = matches!(&result, Ok(s) if s.interrupted.is_some());
+                    stopped = matches!(&result, Ok(s) if s.interrupted.is_some());
                     let finished = finished_event(result);
                     open.ingesting.store(false, Ordering::SeqCst);
                     emit(&events, finished);
@@ -339,6 +370,14 @@ impl AppState {
                 if let Some(t) = ticker {
                     let _ = t.join();
                 }
+                // Stage A is done with what it could read: Stage B takes over, unless the run
+                // was stopped or another one has started and will do this when it ends.
+                if let Some(ws) = ws
+                    && !stopped
+                    && !open.is_ingesting()
+                {
+                    schedule_and_start_lane(&ws, &open, &events);
+                }
             });
         if let Err(e) = spawned {
             open.ingesting.store(false, Ordering::SeqCst);
@@ -347,6 +386,114 @@ impl AppState {
             });
         }
     }
+
+    /// Starts the AI lane on its own thread, unless it runs; then it looks for work once more.
+    pub fn start_ai_lane(&self, open: &Arc<Open>) {
+        if let Ok(ws) = self.workspace() {
+            start_lane(&ws, open, &self.events);
+        }
+    }
+}
+
+/// The units not covered yet go through the start rule (gap A3), then the lane runs what may run.
+fn schedule_and_start_lane(
+    ws: &Arc<Workspace>,
+    open: &Arc<Open>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
+) {
+    if open.closed.load(Ordering::SeqCst) {
+        return;
+    }
+    if let Err(e) = ws.schedule_stage_b(&open.project) {
+        emit(
+            events,
+            UiEvent::Error {
+                message: format!("Could not plan AI extraction: {e}"),
+            },
+        );
+        return;
+    }
+    emit(events, UiEvent::ProgressChanged);
+    start_lane(ws, open, events);
+}
+
+fn start_lane(
+    ws: &Arc<Workspace>,
+    open: &Arc<Open>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
+) {
+    if open.closed.load(Ordering::SeqCst) {
+        return;
+    }
+    open.ai_again.store(true, Ordering::SeqCst);
+    if open.ai_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let (lane_ws, run, lane_events) = (ws.clone(), open.clone(), events.clone());
+    let spawned = std::thread::Builder::new()
+        .name("mk-desktop-ai".into())
+        .spawn(move || {
+            let (ws, open, events) = (lane_ws, run, lane_events);
+            let ticker = spawn_ai_ticker(&ws, &open, &events);
+            loop {
+                open.ai_again.store(false, Ordering::SeqCst);
+                let result = ws.run_stage_b(&open.project);
+                open.ai_running.store(false, Ordering::SeqCst);
+                if let Err(e) = result {
+                    emit(
+                        &events,
+                        UiEvent::Error {
+                            message: format!("AI extraction stopped: {e}"),
+                        },
+                    );
+                }
+                emit(&events, UiEvent::ProgressChanged);
+                if open.closed.load(Ordering::SeqCst)
+                    || !open.ai_again.load(Ordering::SeqCst)
+                    || open.ai_running.swap(true, Ordering::SeqCst)
+                {
+                    break;
+                }
+            }
+            if let Some(t) = ticker {
+                let _ = t.join();
+            }
+        });
+    if let Err(e) = spawned {
+        open.ai_running.store(false, Ordering::SeqCst);
+        emit(
+            events,
+            UiEvent::Error {
+                message: format!("Could not start AI extraction: {e}"),
+            },
+        );
+    }
+}
+
+/// `ProgressChanged` while the lane runs, when its row would change.
+fn spawn_ai_ticker(
+    ws: &Arc<Workspace>,
+    open: &Arc<Open>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
+) -> Option<std::thread::JoinHandle<()>> {
+    let (ws, open, events) = (ws.clone(), open.clone(), events.clone());
+    std::thread::Builder::new()
+        .name("mk-desktop-ai-progress".into())
+        .spawn(move || {
+            let mut last = None;
+            while open.ai_running.load(Ordering::SeqCst) {
+                std::thread::sleep(PROGRESS_EVERY);
+                let Ok(v) = ws.ai_extraction_view(&open.project) else {
+                    continue;
+                };
+                let now = Some((v.units_done, v.units_total, v.state));
+                if now != last {
+                    last = now;
+                    emit(&events, UiEvent::ProgressChanged);
+                }
+            }
+        })
+        .ok()
 }
 
 /// Stops the run of a project that is closing and waits until its threads let it go, so its
@@ -359,6 +506,11 @@ fn close_open(open: Option<Arc<Open>>) {
     open.project.stop_for_close();
     let start = Instant::now();
     while open.is_ingesting() && start.elapsed() < CLOSE_WAIT {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // A call in flight may take minutes: its reply fails its token and is dropped (NFR-REL-05).
+    let start = Instant::now();
+    while open.ai_running.load(Ordering::SeqCst) && start.elapsed() < CLOSE_WAIT_AI {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -427,13 +579,15 @@ fn finished_event(result: Result<IngestSummary, ProjectError>) -> UiEvent {
 fn refresh_blocks(
     ws: &Weak<Workspace>,
     open: &Mutex<Option<Arc<Open>>>,
-    events: &Mutex<Option<Channel<UiEvent>>>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
 ) {
     let (Some(ws), Some(o)) = (ws.upgrade(), lock(open).clone()) else {
         return;
     };
     if ws.refresh_ai_blocks(&o.project).unwrap_or(false) {
         emit(events, UiEvent::ProgressChanged);
+        // A job was unblocked, or the lane finds out that it was blocked.
+        start_lane(&ws, &o, events);
     }
 }
 
@@ -441,5 +595,124 @@ fn emit(events: &Mutex<Option<Channel<UiEvent>>>, event: UiEvent) {
     if let Some(c) = lock(events).as_ref() {
         // The page may be reloading; the next `subscribe` brings a new channel.
         let _ = c.send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use mk_core::{
+        AiChoice, DownloadState, EgressConfig, FixedProbe, Gpu, GpuVendor, HardwareProfile,
+        ModelRole, ModelsConfig, RuntimeConfig, TlsRoots,
+    };
+    use mk_egress::testkit::{FakeKeyring, ScriptedResolver};
+    use mk_models::GB;
+    use mk_models::testkit::{
+        FakeHf, NamedResolver, ORIGIN_HOST, test_bytes, test_catalog, test_model,
+    };
+
+    use super::*;
+
+    const WAIT: Duration = Duration::from_secs(30);
+
+    /// An app whose `llama-server` was not checked yet, as just after launch, with a model
+    /// installed and chosen.
+    fn just_launched(tmp: &Path) -> (AppState, Arc<Workspace>, FakeHf) {
+        let bytes = test_bytes(64 * 1024, 1);
+        let model = test_model("x", ModelRole::Extraction, std::slice::from_ref(&bytes));
+        let hf = FakeHf::serving(&[(&model, std::slice::from_ref(&bytes))]);
+        let ws = Workspace::open_with_runtime(
+            &tmp.join("app"),
+            EgressConfig {
+                resolver: Arc::new(ScriptedResolver::new()),
+                secrets: Some(Arc::new(FakeKeyring::new())),
+                roots: TlsRoots::Platform,
+                call_timeout: Duration::from_secs(5),
+            },
+            ModelsConfig {
+                models_dir: Some(tmp.join("models")),
+                catalog: test_catalog(vec![model]),
+                probe: Arc::new(FixedProbe(HardwareProfile {
+                    os_family: "linux".into(),
+                    os: "Linux test".into(),
+                    cpu: "Test CPU (8 threads)".into(),
+                    ram_bytes: 64 * GB,
+                    gpus: vec![Gpu {
+                        vendor: GpuVendor::Nvidia,
+                        name: "NVIDIA Test".into(),
+                        vram_bytes: Some(8_550_000_000),
+                        driver: Some("580.10".into()),
+                    }],
+                    unified_bytes: None,
+                    apple_silicon: false,
+                    free_disk_bytes: Some(100 * GB),
+                    disk_path: "/models".into(),
+                })),
+                download: hf.config(NamedResolver::new(&[ORIGIN_HOST])),
+            },
+            RuntimeConfig {
+                path_var: Some(Default::default()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        ws.start_download("x").unwrap();
+        let end = Instant::now() + WAIT;
+        while !ws
+            .model_catalog()
+            .unwrap()
+            .iter()
+            .any(|m| m.state == DownloadState::Installed)
+        {
+            assert!(Instant::now() < end, "the model did not install");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        ws.set_ai_choice(ModelRole::Extraction, Some(AiChoice::Local("x".into())))
+            .unwrap();
+        let state = AppState::default();
+        let ws = state.listen(ws);
+        *lock(&state.workspace) = Some(ws.clone());
+        (state, ws, hf)
+    }
+
+    /// `f` on its own thread: a hang fails the test instead of stopping the whole run.
+    fn must_return(what: &str, f: impl FnOnce() -> Result<(), IpcError> + Send + 'static) {
+        let (done, ended) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(f());
+        });
+        match ended.recv_timeout(WAIT) {
+            Ok(result) => result.unwrap(),
+            Err(_) => panic!("{what} never returned"),
+        }
+    }
+
+    /// Checking `llama-server` for the first time tells the runtime's listeners, and they take
+    /// the `open` lock: making a project must not hold it then (US-01.1, INV-PR-09).
+    #[test]
+    fn us_01_1_creating_a_project_just_after_launch_does_not_hang() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, _ws, _hf) = just_launched(tmp.path());
+        let location = tmp.path().to_path_buf();
+        must_return("creating the project", move || {
+            state.create("Case", &location)?;
+            state.close();
+            Ok(())
+        });
+    }
+
+    /// The same for a project opened from its folder (US-01.2, INV-PR-09).
+    #[test]
+    fn us_01_2_opening_a_project_just_after_launch_does_not_hang() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, ws, _hf) = just_launched(tmp.path());
+        let (project, entry) = ws.create("Case", tmp.path()).unwrap();
+        drop(project);
+        must_return("opening the project", move || {
+            state.open(Target::Folder(Path::new(&entry.path)))?;
+            state.close();
+            Ok(())
+        });
     }
 }

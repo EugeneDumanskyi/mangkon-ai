@@ -4,11 +4,20 @@ import { commands, errorMessage } from "../ipc/commands";
 import type { Progress } from "../ipc/bindings/Progress";
 import { fileName, plural } from "../lib/labels";
 import { etaLabel } from "../lib/progress";
+import { useAiExtraction } from "../lib/useAiExtraction";
+import { AiProgressRow } from "./AiExtraction";
 
 const button = "rounded border border-border px-2 py-0.5 text-sm disabled:opacity-50";
 
 /** What the panel shows (US-03.1 AC1–AC2): stage, files, current file, time left. */
-export function ProgressSummary({ progress: p }: { progress: Progress }) {
+export function ProgressSummary({
+  progress: p,
+  aiShown = false,
+}: {
+  progress: Progress;
+  /** The AI row is there: "Idle" would be wrong, and it says itself why AI work waits. */
+  aiShown?: boolean;
+}) {
   const eta = etaLabel(p.eta);
   const current = p.currentFiles[0];
   const others = p.currentFiles.length - 1;
@@ -26,8 +35,10 @@ export function ProgressSummary({ progress: p }: { progress: Progress }) {
           of {plural(p.runTotal, "file")}
           {eta !== null && ` · ${eta}`}
         </span>
+      ) : p.ingesting ? (
+        <span className="text-muted">Looking for new files…</span>
       ) : (
-        <span className="text-muted">{p.ingesting ? "Looking for new files…" : "Idle"}</span>
+        !aiShown && <span className="text-muted">Idle</span>
       )}
       {!p.paused && current !== undefined && (
         <span className="truncate text-muted" title={p.currentFiles.join("\n")}>
@@ -41,7 +52,7 @@ export function ProgressSummary({ progress: p }: { progress: Progress }) {
         {p.notProcessed > 0 && ` · ${p.notProcessed.toLocaleString()} not processed`} ·{" "}
         {plural(p.total, "file")}
       </span>
-      {p.blocked !== null && <span data-blocked>AI work waits: {p.blocked}</span>}
+      {p.blocked !== null && !aiShown && <span data-blocked>AI work waits: {p.blocked}</span>}
     </div>
   );
 }
@@ -64,10 +75,12 @@ export function ProgressPanel({ progress }: { progress: Progress }) {
   const busy = pause.isPending || resume.isPending || cancel.isPending;
   const open = progress.stage !== null;
   const error = pause.error ?? resume.error ?? cancel.error;
+  const ai = useAiExtraction();
+  const aiShown = ai.data !== undefined && ai.data.state !== "idle";
 
   return (
     <div className="flex min-w-0 flex-1 basis-80 flex-wrap items-center gap-2">
-      <ProgressSummary progress={progress} />
+      <ProgressSummary progress={progress} aiShown={aiShown} />
       {open &&
         (progress.paused ? (
           <button
@@ -133,6 +146,7 @@ export function ProgressPanel({ progress }: { progress: Progress }) {
           {errorMessage(error)}
         </span>
       )}
+      {ai.data && <AiProgressRow info={ai.data} showPause={!open} />}
     </div>
   );
 }

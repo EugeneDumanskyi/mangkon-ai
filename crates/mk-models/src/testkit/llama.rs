@@ -2,12 +2,16 @@
 //! answers `--version` and `--list-devices`, then listens where it is told and serves
 //! `/health`, `/v1/chat/completions` and `/v1/embeddings`, checking `--api-key` as the real
 //! one does. What it does wrong comes from a JSON control file named by
-//! [`CONTROL_ENV`], read at every start, so a test can change it between restarts.
+//! [`CONTROL_ENV`], read at every start, so a test can change it between restarts. Extraction
+//! replies follow rules per model file ([`FakeExtraction`]), so a test can run two "models".
 
+use std::collections::HashMap;
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -37,6 +41,139 @@ pub struct Control {
     pub dims: Option<usize>,
     /// Every start appends `<pid> <port>` here.
     pub starts_log: Option<PathBuf>,
+    /// Rules for extraction replies, by model file name; `*` for any other.
+    pub extraction: HashMap<String, FakeExtraction>,
+    /// Every chat request's body is appended here, one JSON line, with the model file name.
+    pub requests_log: Option<PathBuf>,
+    /// The most chat requests in flight at once is written here (NFR-PERF-25).
+    pub in_flight_log: Option<PathBuf>,
+}
+
+/// One name a fake model finds.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct FakeName {
+    pub name: String,
+    /// `person` or `org`; `person` when empty.
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// 0.9 when unset.
+    pub confidence: Option<f64>,
+    /// What it quotes; the name itself when unset.
+    pub evidence: Option<String>,
+    /// Reply with it only if the text holds this; the name itself when unset.
+    pub when: Option<String>,
+}
+
+/// How a fake model answers a request with the `mentions` schema.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct FakeExtraction {
+    pub names: Vec<FakeName>,
+    /// Bad JSON on the first try of every text; the retry is right.
+    pub bad_first: bool,
+    /// Bad JSON on every try.
+    pub bad_always: bool,
+    /// Every reply takes this long.
+    pub delay_ms: u64,
+    /// A text holding `hang_text` takes `hang_ms`.
+    pub hang_text: Option<String>,
+    pub hang_ms: u64,
+    /// A text holding this answers HTTP 500.
+    pub error_text: Option<String>,
+}
+
+impl FakeExtraction {
+    /// The fake's reply to `text`; `None` for an HTTP error.
+    fn reply(&self, text: &str, retry: bool) -> Option<String> {
+        if self.error_text.as_deref().is_some_and(|e| text.contains(e)) {
+            return None;
+        }
+        if self.bad_always || (self.bad_first && !retry) {
+            return Some("{\"mentions\":[{\"name\":".to_string());
+        }
+        let mentions: Vec<serde_json::Value> = self
+            .names
+            .iter()
+            .filter(|n| text.contains(n.when.as_deref().unwrap_or(&n.name)))
+            .map(|n| {
+                serde_json::json!({
+                    "name": n.name,
+                    "type": if n.kind.is_empty() { "person" } else { n.kind.as_str() },
+                    "evidence": n.evidence.as_deref().unwrap_or(&n.name),
+                    "confidence": n.confidence.unwrap_or(0.9),
+                })
+            })
+            .collect();
+        Some(serde_json::json!({ "mentions": mentions }).to_string())
+    }
+}
+
+/// What every connection of one fake process shares.
+struct Shared {
+    control: Control,
+    key: String,
+    ready_at: Instant,
+    dims: usize,
+    model: String,
+    in_flight: AtomicUsize,
+    max_in_flight: AtomicUsize,
+}
+
+impl Shared {
+    fn rules(&self) -> Option<&FakeExtraction> {
+        self.control
+            .extraction
+            .get(&self.model)
+            .or_else(|| self.control.extraction.get("*"))
+    }
+
+    fn log_request(&self, body: &serde_json::Value) {
+        if let Some(log) = &self.control.requests_log {
+            let line = serde_json::json!({ "model": self.model, "body": body }).to_string() + "\n";
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log)
+                .and_then(|mut f| f.write_all(line.as_bytes()));
+        }
+    }
+
+    /// One chat request starts; the guard ends it.
+    fn enter(self: &Arc<Self>) -> InFlight {
+        let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+        let max = self.max_in_flight.fetch_max(now, Ordering::SeqCst).max(now);
+        if let Some(log) = &self.control.in_flight_log {
+            let _ = std::fs::write(log, max.to_string());
+        }
+        InFlight(self.clone())
+    }
+}
+
+struct InFlight(Arc<Shared>);
+
+impl Drop for InFlight {
+    fn drop(&mut self) {
+        self.0.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// The extraction reply to a chat request with the `mentions` schema, if it is one: `Ok(body)`,
+/// or `Err(())` for an HTTP error.
+fn extraction_reply(shared: &Shared, body: &serde_json::Value) -> Option<Result<String, ()>> {
+    if body["response_format"]["json_schema"]["name"] != "mentions" {
+        return None;
+    }
+    let rules = shared.rules().cloned().unwrap_or_default();
+    let messages = body["messages"].as_array()?;
+    let text = messages.get(1)?["content"].as_str().unwrap_or_default();
+    if rules.delay_ms > 0 {
+        std::thread::sleep(Duration::from_millis(rules.delay_ms));
+    }
+    if rules.hang_text.as_deref().is_some_and(|h| text.contains(h)) {
+        std::thread::sleep(Duration::from_millis(rules.hang_ms));
+    }
+    Some(rules.reply(text, messages.len() > 2).ok_or(()))
 }
 
 impl Control {
@@ -62,7 +199,13 @@ fn reply(w: &mut TcpStream, status: u16, body: &str) {
     let _ = w.flush();
 }
 
-fn handle(stream: TcpStream, key: &str, ready_at: Instant, dims: usize, model: &str) {
+fn handle(stream: TcpStream, shared: &Arc<Shared>) {
+    let (key, ready_at, dims, model) = (
+        shared.key.as_str(),
+        shared.ready_at,
+        shared.dims,
+        shared.model.as_str(),
+    );
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let mut r = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -105,10 +248,22 @@ fn handle(stream: TcpStream, key: &str, ready_at: Instant, dims: usize, model: &
     }
     match path.as_str() {
         "/v1/chat/completions" => {
-            let content = if body.get("response_format").is_some() {
-                r#"{"greeting":"Hello","words":1}"#
-            } else {
-                "Hello"
+            let _running = shared.enter();
+            shared.log_request(&body);
+            let content = match extraction_reply(shared, &body) {
+                Some(Ok(c)) => c,
+                Some(Err(())) => {
+                    reply(
+                        &mut w,
+                        500,
+                        r#"{"error":{"code":500,"message":"Context size has been exceeded"}}"#,
+                    );
+                    return;
+                }
+                None if body.get("response_format").is_some() => {
+                    r#"{"greeting":"Hello","words":1}"#.to_string()
+                }
+                None => "Hello".to_string(),
             };
             let out = serde_json::json!({
                 "model": model,
@@ -221,10 +376,18 @@ pub fn main() -> ExitCode {
     let model_name = Path::new(&model)
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let shared = Arc::new(Shared {
+        control,
+        key,
+        ready_at,
+        dims,
+        model: model_name,
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    });
     for stream in listener.incoming().flatten() {
-        let key = key.clone();
-        let model_name = model_name.clone();
-        std::thread::spawn(move || handle(stream, &key, ready_at, dims, &model_name));
+        let shared = shared.clone();
+        std::thread::spawn(move || handle(stream, &shared));
     }
     ExitCode::SUCCESS
 }

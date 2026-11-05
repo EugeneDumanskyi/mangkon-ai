@@ -7,6 +7,7 @@ import type { DocumentFilter } from "../ipc/bindings/DocumentFilter";
 import type { DocumentItem } from "../ipc/bindings/DocumentItem";
 import { PAGE_SIZE } from "../lib/keyset";
 import { fileName, mappingStateLabel, plural } from "../lib/labels";
+import { FindPeople } from "./AiExtraction";
 import { MappingScreen } from "./MappingScreen";
 import { STATUS_LABELS, canRetry, sizeLabel, statusLabel, unitsLabel } from "../lib/progress";
 import { useKeysetList } from "../lib/useKeysetList";
@@ -251,6 +252,7 @@ export function DocumentsList() {
         >
           Retry failed and not processed
         </button>
+        <FindPeople contentIds={[...new Set([...selected.values()].map((r) => r.contentId))]} />
         {selected.size > 0 &&
           (impact === null ? (
             <button

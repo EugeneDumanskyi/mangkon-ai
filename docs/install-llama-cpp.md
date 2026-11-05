@@ -96,7 +96,7 @@ You do not start `llama-server` yourself; the app starts its own process for eac
 
 ```text
 # extraction model
-llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> -c <context> -np 1 --cache-ram 0 --reasoning off
+llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> -c <context × 4> -np 4 --cache-ram 0 --reasoning off
 # embedding model
 llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> --embedding -c 2048 -np 1 -b 2048 -ub 2048 --cache-ram 0
 ```
@@ -104,6 +104,7 @@ llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m
 - It starts when AI work (or "Try" on the AI models screen) needs the model, and stops after 10 minutes without a call, when you choose another model, and when the app quits.
 - It listens on `127.0.0.1` only, on a new random port with a new random key at every start (NFR-SEC-06). Other machines cannot reach it.
 - If it cannot start or keeps stopping, AI work waits with the reason ("Not enough GPU memory", "The model file could not be loaded", …) and everything else goes on. After a crash it is started again at most twice. "Show details" on the AI models screen has its last output; "Retry" starts it again.
+- If the app itself is killed or crashes, a small `sh` process it started beside `llama-server` stops it (SIGTERM, then a kill after 5 s), so a model does not keep the GPU's memory. Linux and macOS; not on Windows yet.
 - A request without the key gets HTTP 401; only `/health` answers without one.
 - Models come from Hugging Face, checked by SHA-256 against the app's catalog (NFR-SEC-11). The app downloads models, never programs.
 

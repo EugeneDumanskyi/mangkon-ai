@@ -129,7 +129,7 @@ fn open(dir: &Path, tessdata: Option<&PathBuf>) -> Result<Project> {
     Ok(project)
 }
 
-fn all_rows(project: &Project) -> Result<Vec<DocumentRow>> {
+pub(crate) fn all_rows(project: &Project) -> Result<Vec<DocumentRow>> {
     let filter = DocumentFilter::default();
     let mut rows = Vec::new();
     let mut after = None;
@@ -152,7 +152,10 @@ fn row_path(r: &DocumentRow) -> PathBuf {
 }
 
 /// The rows at each of `paths` or inside it. A path that matches nothing is an error.
-fn rows_at<'a>(rows: &'a [DocumentRow], paths: &[PathBuf]) -> Result<Vec<&'a DocumentRow>> {
+pub(crate) fn rows_at<'a>(
+    rows: &'a [DocumentRow],
+    paths: &[PathBuf],
+) -> Result<Vec<&'a DocumentRow>> {
     let mut out = Vec::new();
     for p in paths {
         let want = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());

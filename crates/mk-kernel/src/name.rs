@@ -101,20 +101,20 @@ fn words(raw: &str) -> Vec<String> {
 fn normalize(entity_type: EntityType, raw: &str) -> String {
     let mut words = words(raw);
     if entity_type == EntityType::Org {
-        // "S.A." splits into "s" "a"; join single letters at the end first.
-        while words.len() >= 2
-            && words[words.len() - 1].chars().count() == 1
-            && words[words.len() - 2].chars().count() == 1
-        {
-            let joined = format!("{}{}", words[words.len() - 2], words[words.len() - 1]);
-            if LEGAL_SUFFIXES.contains(&joined.as_str()) {
-                words.truncate(words.len() - 2);
+        // Until nothing changes, so that a key normalizes to itself: "U. S. A. Inc." loses "inc"
+        // and only then shows "s" "a". "S.A." splits into "s" "a", so single letters are joined.
+        loop {
+            let n = words.len();
+            let joined =
+                (n >= 2 && words[n - 1].chars().count() == 1 && words[n - 2].chars().count() == 1)
+                    .then(|| format!("{}{}", words[n - 2], words[n - 1]));
+            if joined.is_some_and(|j| LEGAL_SUFFIXES.contains(&j.as_str())) {
+                words.truncate(n - 2);
+            } else if n > 1 && LEGAL_SUFFIXES.contains(&words[n - 1].as_str()) {
+                words.pop();
             } else {
                 break;
             }
-        }
-        while words.len() > 1 && LEGAL_SUFFIXES.contains(&words[words.len() - 1].as_str()) {
-            words.pop();
         }
     }
     words.join(" ")
@@ -191,6 +191,31 @@ mod tests {
         assert!("org:acme ltd".parse::<NameKey>().is_err());
         assert!("email:a@b.example".parse::<NameKey>().is_err());
         assert!("org:".parse::<NameKey>().is_err());
+    }
+
+    /// Found on real model output: `rebuild_all` parses stored keys, so one key that does not
+    /// parse back stopped every rebuild, and a re-run's switch with it.
+    #[test]
+    fn a_suffix_under_a_suffix_goes_too() {
+        assert_eq!(
+            key(EntityType::Org, "Chevron U. S. A. Inc."),
+            key(EntityType::Org, "Chevron U.S.A.")
+        );
+        assert_eq!(key(EntityType::Org, "Foo S.A. Ltd"), "org:foo");
+        assert_eq!(key(EntityType::Org, "Foo Co S.A."), "org:foo");
+        assert!(NameKey::new(EntityType::Org, "S.A. Co").is_none());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn every_key_parses_back(
+            t in proptest::sample::select(EntityType::ALL.to_vec()),
+            raw in "(foo|bar|u|s|a|c|o|sa|co|ltd|inc|S\\.A\\.|U\\. S\\.| |\\.|-|é){0,8}",
+        ) {
+            if let Some(k) = NameKey::new(t, &raw) {
+                proptest::prop_assert_eq!(k.to_string().parse::<NameKey>(), Ok(k));
+            }
+        }
     }
 
     #[test]

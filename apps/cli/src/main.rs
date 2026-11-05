@@ -1,8 +1,9 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
 //! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b),
 //! `endpoint test` (M5a), `hardware`, `models` and `model download|delete` (M5b), `runtime`
-//! and `model try` (M5c) and the `--worker` entry.
+//! and `model try` (M5c), `ai` (M6a) and the `--worker` entry.
 
+mod ai;
 mod bench;
 mod endpoint;
 mod ingest;
@@ -34,6 +35,8 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli model (download ID | delete ID) [--app-data DIR] [--dir DIR] [--json]
        mangkon-cli runtime [--llama-server PATH] [--app-data DIR] [--json]
        mangkon-cli model try ID [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli ai (status | run [--all | --documents PATH...] | rerun | cancel) --project DIR
+                      [--model ID] [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -108,7 +111,19 @@ Commands:
                               then PATH); the setting is not changed
   runtime     The llama-server the app would use: where it was found (settings or PATH), its
               build and backends (from --list-devices), and why it cannot be used, if so.
-              Exits 1 if it cannot be used.";
+              Exits 1 if it cannot be used.
+  ai          People and organizations found by the AI chosen for extraction. Text of the
+              project goes to it. `ingest` does not start this.
+              status: what it is doing, the model behind the results, and the counts.
+              run: find them in what has not been read yet, and go on with a run that was
+              stopped. Up to 1,600 units start by themselves; with more, nothing starts and the
+              estimate is printed: pick with --documents PATH..., or --all.
+              rerun: read everything again with the chosen model. The results stay as they are
+              until it is done, then all change at once.
+              cancel: cancel the re-run (the results do not change), or else the rest of the run
+              (what it found stays).
+              --model  the local model ID to use from now on (changes the app's AI choice)
+              Exits 1 if it is Blocked; the reason is printed.";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -168,6 +183,10 @@ fn main() -> ExitCode {
                 Err(e) => usage_error(&e),
             }
         }
+        Some("ai") => match ai_options(&args[1..]) {
+            Ok(opts) => ai::run(&opts),
+            Err(e) => usage_error(&e),
+        },
         Some("bench") => match bench_options(&args[1..]) {
             Ok(opts) => bench::run(&opts),
             Err(e) => usage_error(&e),
@@ -395,6 +414,56 @@ fn models_options(cmd: &str, args: &[String]) -> Result<models::Options, String>
         app_data,
         dir,
         llama_server,
+        json,
+    })
+}
+
+fn ai_options(args: &[String]) -> Result<ai::Options, String> {
+    let (mut project, mut app_data, mut dir) = (None, None, None);
+    let (mut llama_server, mut model, mut json) = (None, None, false);
+    let (mut all, mut documents) = (false, false);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--app-data" => app_data = Some(PathBuf::from(value()?)),
+            "--dir" => dir = Some(PathBuf::from(value()?)),
+            "--llama-server" => llama_server = Some(PathBuf::from(value()?)),
+            "--model" => model = Some(value()?.clone()),
+            "--all" => all = true,
+            "--documents" => documents = true,
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown ai argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let command = match words.split_first() {
+        Some((&"status", [])) => ai::Command::Status,
+        Some((&"cancel", [])) => ai::Command::Cancel,
+        Some((&"rerun", [])) => ai::Command::Rerun,
+        Some((&"run", paths)) if documents && !all && !paths.is_empty() => ai::Command::Run(
+            ai::Scope::Documents(paths.iter().map(PathBuf::from).collect()),
+        ),
+        Some((&"run", [])) if !documents => {
+            ai::Command::Run(if all { ai::Scope::All } else { ai::Scope::Auto })
+        }
+        Some((&"run", _)) => return Err("ai run takes --all or --documents PATH...".into()),
+        _ => return Err("ai takes status, run, rerun or cancel".into()),
+    };
+    if (all || documents) && !matches!(command, ai::Command::Run(_)) {
+        return Err("--all and --documents are for ai run".into());
+    }
+    Ok(ai::Options {
+        command,
+        project: project.ok_or("ai needs --project DIR")?,
+        app_data,
+        dir,
+        llama_server,
+        model,
         json,
     })
 }

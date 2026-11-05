@@ -144,7 +144,7 @@ All project contexts use these. Change them only with care, because every contex
 | **Source content** | The bytes of a file, known by content hash. Processed once, no matter how many paths point to it. |
 | **Extraction result** | All output of one step (e.g. identifiers, Stage B) for one content or one segment. Written and replaced as one unit. |
 | **AI run** | One pass of one AI stage (Stage B, Stage C, or embeddings) with one model and one destination. |
-| **Work item** | One unit of background work. Stage A: one source content. Stage B/C and embeddings: one segment. |
+| **Work item** | One unit of background work. Stage A: one source content. Stage B: adjacent segments of one document up to 2,000 characters, or one window of a longer segment (decided 2026-11-05); mentions are still stored against an exact segment and span. Stage C and embeddings: one segment. |
 | **Anchor** | The stable key a user decision points to (section 9.5). |
 | **Orphaned decision** | A decision whose anchor is not found after a re-run. It is kept, not deleted. |
 | **Egress gate** | The one check every AI call passes before data leaves the app. |
@@ -308,7 +308,7 @@ erDiagram
         text modelIdentity
         text destinationHost
         text destinationClass
-        state state "active or superseded"
+        state state "pending, active, or superseded"
         number discardedCount
         number invalidResponseCount
     }
@@ -372,7 +372,7 @@ erDiagram
     }
     WORK_ITEM {
         key workItemId PK
-        text target "content hash or segment"
+        text target "content hash; Stage B: first and last segment and a character range"
         number priority
         state state "see 7.2"
         number attempts
@@ -599,11 +599,12 @@ Notes (M4c):
 
 | ID | Rule | Source |
 |---|---|---|
-| INV-AI-01 | An AI mention is kept only if its evidence text is found in its segment's text (after whitespace normalization). Otherwise it is discarded and counted. It is never stored. | US-10.2, NFR-QA-11 |
+| INV-AI-01 | An AI mention is kept only if its evidence text is found in its segment's text (after whitespace normalization). Otherwise it is discarded and counted. It is never stored. M6a also needs the name inside the evidence (ignoring case) and in one segment; the stored `raw` is the source's text, not the model's spelling. | US-10.2, NFR-QA-11 |
 | INV-AI-02 | Every AI mention records the AI run that made it. The run records the model and the destination. | US-10.4 AC1 |
 | INV-AI-03 | A response that does not match the output schema is retried once. Then it is logged and skipped. | US-10.1 AC2 |
 | INV-AI-04 | A re-run with another model replaces all AI mentions of that stage. It never changes table mentions or user decisions. The old run becomes "superseded". | US-10.4 |
 | INV-AI-05 | Mentions below 0.5 confidence are stored but hidden by default. | US-10.1 AC3 |
+| INV-AI-08 | A name whose span overlaps a Stage A identifier mention is dropped and counted on its own. So "John Smith <john@x.example>" keeps John Smith, and "john" from the address goes (M6a, `09-model-check.md` §5.3). | US-10.1 |
 | INV-AI-06 | A relation type is one of: `works_for`, `owns`, `director_of`, `paid`, `sent_to`, `related_to`. Its subject and object are entity mentions in the same segment. ASSUMPTION (same segment). | US-13.1 |
 | INV-AI-07 | An event date is a full or partial ISO 8601 date, or "unknown". A date is never guessed. | US-13.2 |
 
@@ -777,6 +778,10 @@ stateDiagram-v2
 
 Rules:
 - An AI response that is still invalid after one retry ends the item as **Done** with zero mentions and an "invalid response" count. The batch goes on (INV-AI-03).
+- A call to a model cannot be interrupted, so pause, cancel and close move AI items out of In progress at once, in the transaction that changes the job. A reply that comes later fails its `(In progress, attempt N)` check inside the commit and is dropped (M6a, NFR-REL-05, INV-PR-04).
+- A Stage B job holds one run. If the chosen model is no longer that run's, the job is Blocked with a reason: choosing the model again unblocks it, "Re-run with Y" replaces it (decided 2026-11-05).
+- Stage B starts by itself when at most 1,600 units wait (about 20 min at 1.39/s, ASSUMPTION). With more, nothing starts until the user picks documents or chooses all (gap A3, decided 2026-11-05).
+- A document is Done after Stage A (D9): Stage B work never changes its state.
 - The progress panel (US-03.1) reads job and item counts. The ETA needs at least 5 finished items.
 - Queued → Paused: a project-wide pause also covers jobs that have not started, and a job created while the queue is paused starts Paused. ASSUMPTION (M3c), D11.
 - On pause, an item in progress gets 4 s to finish. Then its worker is stopped and the item goes back to Pending, so the pause takes effect within 5 s (NFR-REL-05, ADR-0006).

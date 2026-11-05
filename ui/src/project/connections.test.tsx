@@ -36,6 +36,7 @@ const row = (over: Partial<ConnectionItem> = {}): ConnectionItem => ({
   mentionCount: 5,
   fileTypes: ["csv", "eml", "pdf"],
   lowConfidence: false,
+  lowOnly: false,
   ignored: false,
   ...over,
 });
@@ -48,6 +49,8 @@ const occurrence = (over: Partial<Occurrence>): Occurrence => ({
   location: { kind: "cell", row: 3, columnName: "email", columnIndex: null },
   raw: "ann@x.example",
   lowConfidence: false,
+  confidence: 1,
+  aiModel: null,
   documentId: 10,
   snippet: [
     { text: "Ann, ", hit: false },
@@ -247,7 +250,7 @@ describe("evidence by document (US-07.3 AC1, NFR-USE-04)", () => {
 
   it("shows each document with its type, places and highlighted snippets; one button per mention", () => {
     const client = new QueryClient();
-    client.setQueryData(["occurrences", "email:ann@x.example"], items);
+    client.setQueryData(["occurrences", "email:ann@x.example", false], items);
     const html = renderToStaticMarkup(
       <QueryClientProvider client={client}>
         <OccurrencesPanel connection={row()} selected={2} onSelect={none} />

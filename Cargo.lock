@@ -2882,9 +2882,12 @@ dependencies = [
 name = "mangkon-cli"
 version = "0.0.0"
 dependencies = [
+ "mangkon-cli",
  "mk-bench",
  "mk-core",
  "mk-egress",
+ "mk-models",
+ "mk-store",
  "serde_json",
  "tempfile",
 ]
@@ -2895,11 +2898,14 @@ version = "0.0.0"
 dependencies = [
  "dbus",
  "mk-core",
+ "mk-egress",
+ "mk-models",
  "rfd",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "ts-rs",
 ]
 
@@ -2983,6 +2989,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mk-ai"
+version = "0.0.0"
+dependencies = [
+ "mk-kernel",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mk-bench"
 version = "0.0.0"
 dependencies = [
@@ -3000,6 +3016,7 @@ name = "mk-core"
 version = "0.0.0"
 dependencies = [
  "getrandom 0.3.4",
+ "mk-ai",
  "mk-bench",
  "mk-core",
  "mk-corpus",
@@ -3150,6 +3167,7 @@ dependencies = [
 name = "mk-store"
 version = "0.0.0"
 dependencies = [
+ "mk-ai",
  "mk-corpus",
  "mk-graph",
  "mk-identifiers",

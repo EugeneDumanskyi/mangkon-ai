@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { staleKeys } from "./events";
-import { PREFETCH_ROWS, needsNextPage } from "./keyset";
+import { PREFETCH_ROWS, heldLength, needsNextPage } from "./keyset";
 import { fileName, locationLabel, plural } from "./labels";
 
 describe("cursor paging", () => {
@@ -67,5 +67,26 @@ describe("event → invalidation", () => {
       }),
     ).toContainEqual(["progress"]);
     expect(staleKeys({ kind: "error", message: "x" })).toEqual([]);
+  });
+});
+
+describe("a list on hold (US-07.5)", () => {
+  it("keeps the count it started with while the live one moves", () => {
+    expect(heldLength(null, true, 7)).toBe(7);
+    expect(heldLength(7, true, 9)).toBe(7);
+  });
+
+  it("waits for a count still loading: a filter changed under an open row", () => {
+    expect(heldLength(null, true, undefined)).toBeNull();
+    expect(heldLength(null, true, 1)).toBe(1);
+  });
+
+  it("holds an empty list too once it is known to be empty", () => {
+    expect(heldLength(null, true, 0)).toBe(0);
+    expect(heldLength(0, true, 4)).toBe(0);
+  });
+
+  it("holds nothing when not paused", () => {
+    expect(heldLength(7, false, 9)).toBeNull();
   });
 });

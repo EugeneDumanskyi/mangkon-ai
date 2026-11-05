@@ -59,6 +59,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "egress",
         sql: include_str!("../migrations/0008_egress.sql"),
     },
+    Migration {
+        version: 9,
+        name: "ai",
+        sql: include_str!("../migrations/0009_ai.sql"),
+    },
 ];
 
 /// What opening did.

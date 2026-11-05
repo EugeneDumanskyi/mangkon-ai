@@ -4,7 +4,10 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { AiActivityInfo } from "./bindings/AiActivityInfo";
 import type { AiChoice } from "./bindings/AiChoice";
 import type { AiChoiceInfo } from "./bindings/AiChoiceInfo";
+import type { AiEstimate } from "./bindings/AiEstimate";
+import type { AiExtractionInfo } from "./bindings/AiExtractionInfo";
 import type { AiReadinessInfo } from "./bindings/AiReadinessInfo";
+import type { AiScope } from "./bindings/AiScope";
 import type { AllowPrompt } from "./bindings/AllowPrompt";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { CatalogModel } from "./bindings/CatalogModel";
@@ -138,7 +141,9 @@ export const commands = {
   connectionsSummary: () => invoke<ConnectionsSummary>("connections_summary"),
   /** Ignores or un-ignores a connection (US-07.4). */
   setIgnored: (key: string, ignored: boolean) => invoke<null>("set_ignored", { key, ignored }),
-  occurrences: (key: string) => invoke<Occurrence[]>("occurrences", { key }),
+  /** `includeLow`: also mentions under 0.5 confidence ("Show low confidence", US-10.1 AC3). */
+  occurrences: (key: string, includeLow = false) =>
+    invoke<Occurrence[]>("occurrences", { key, includeLow }),
   sourceContext: (mentionId: number) => invoke<SourceView>("source_context", { mentionId }),
   /** A document from its start: an attachment, or the email it came in. */
   sourceDocument: (documentId: number) => invoke<SourceView>("source_document", { documentId }),
@@ -215,6 +220,16 @@ export const commands = {
   aiReadiness: () => invoke<AiReadinessInfo[]>("ai_readiness"),
   /** Where data goes now, if an AI call is on its way (US-09.8 AC1). */
   aiActivity: () => invoke<AiActivityInfo | null>("ai_activity"),
+  /** What AI extraction is doing (US-10.2 AC2, US-10.3, US-10.4). */
+  aiExtractionStatus: () => invoke<AiExtractionInfo>("ai_extraction_status"),
+  /** How much `scope` would be, to show before it starts (gap A3). */
+  aiExtractionEstimate: (scope: AiScope) => invoke<AiEstimate>("ai_extraction_estimate", { scope }),
+  /** "Find people and organizations" for the picked files, or all (gap A3). */
+  aiExtractionRun: (scope: AiScope) => invoke<null>("ai_extraction_run", { scope }),
+  /** "Re-run with Y": nothing visible changes until it is done (US-10.4, ADR-0005). */
+  aiExtractionRerun: () => invoke<AiEstimate>("ai_extraction_rerun"),
+  /** Cancels the re-run, or else the rest of the run. False when nothing was running. */
+  aiExtractionCancel: () => invoke<boolean>("ai_extraction_cancel"),
   /** Whether to show the first-run screen, and where the demo files are (US-14.4). */
   firstRun: () => invoke<FirstRunInfo>("first_run"),
   firstRunFinish: () => invoke<null>("first_run_finish"),

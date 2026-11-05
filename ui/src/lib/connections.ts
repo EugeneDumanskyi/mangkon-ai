@@ -15,6 +15,7 @@ export const DEFAULT_FILTER: ConnectionFilter = {
   sort: "rank",
   descending: false,
   includeIgnored: false,
+  includeLow: false,
 };
 
 /** The type choices of the filter: a label and the connection types it stands for. */

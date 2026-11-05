@@ -27,3 +27,16 @@ export function needsNextPage(
 ): boolean {
   return hasNext && !fetching && lastVisible >= loaded - PREFETCH_ROWS;
 }
+
+/**
+ * The length a list on hold shows (US-07.5): the first known count since the hold began, kept
+ * until it ends. A count still loading holds nothing yet, or a filter changed under an open row
+ * would show an empty list for as long as the row stays open.
+ */
+export function heldLength(
+  held: number | null,
+  paused: boolean,
+  count: number | undefined,
+): number | null {
+  return paused ? (held ?? count ?? null) : null;
+}

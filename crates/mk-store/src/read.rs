@@ -191,6 +191,8 @@ pub struct ConnectionQuery {
     pub sort: SortColumn,
     pub descending: bool,
     pub include_ignored: bool,
+    /// "Show low confidence": also connections only mentions under 0.5 make (US-10.1 AC3).
+    pub include_low: bool,
 }
 
 /// A connection row with what the list shows of it (M4d).
@@ -243,10 +245,12 @@ fn like_escape(text: &str) -> String {
 /// The WHERE conditions of a query and their parameters (the parameters are `?1..`).
 fn connection_filter(query: &ConnectionQuery) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
-    let mut sql = String::from("(?1 OR ignored = 0) AND source_count >= ?2");
+    let mut sql =
+        String::from("(?1 OR ignored = 0) AND source_count >= ?2 AND (?3 OR low_only = 0)");
     let mut args: Vec<Value> = vec![
         Value::Integer(i64::from(query.include_ignored)),
         Value::Integer(i64::try_from(query.min_sources).unwrap_or(i64::MAX)),
+        Value::Integer(i64::from(query.include_low)),
     ];
     if !query.kinds.is_empty() {
         let marks: Vec<String> = query
@@ -339,17 +343,17 @@ pub(crate) fn connections_page(
     let limit_param = next(Value::Integer(limit as i64));
     let sql = format!(
         "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                ignored, subject_kind, kind, value, file_types
+                ignored, subject_kind, low_only, kind, value, file_types
          FROM connection WHERE {sql} ORDER BY {order} LIMIT {limit_param}"
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let rows = stmt.query_map(rusqlite::params_from_iter(args), |r| {
         Ok(ListedConnection {
             row: row_to_connection(r)?,
-            kind: r.get(7)?,
-            value: r.get(8)?,
+            kind: r.get(8)?,
+            value: r.get(9)?,
             file_types: r
-                .get::<_, String>(9)?
+                .get::<_, String>(10)?
                 .split(',')
                 .filter(|t| !t.is_empty())
                 .map(str::to_string)
@@ -517,7 +521,7 @@ pub(crate) fn derived_state(conn: &Connection) -> Result<DerivedState, StoreErro
     {
         let mut stmt = conn.prepare(
             "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                    ignored, subject_kind
+                    ignored, subject_kind, low_only
              FROM connection",
         )?;
         let rows = stmt.query_map([], row_to_connection)?;
@@ -633,7 +637,8 @@ pub(crate) fn weak_connections(conn: &Connection, limit: usize) -> Result<Vec<St
            CASE k.subject_kind WHEN 'entity' THEN
              (SELECT COUNT(DISTINCT m.document_id) FROM entity_mention m
                 JOIN content c ON c.id = m.content_id
-                WHERE m.name_key = k.subject_key AND c.state != ?1 AND m.confidence >= 0.5)
+                WHERE m.name_key = k.subject_key AND c.state != ?1
+                  AND (k.low_only = 1 OR m.confidence >= 0.5))
            ELSE
              (SELECT COUNT(DISTINCT m.document_id) FROM identifier_mention m
                 JOIN content c ON c.id = m.content_id
@@ -674,13 +679,15 @@ pub struct OccurrenceRow {
     pub snippet: Vec<mk_search::Run>,
     /// The identifier key, such as `email:a@x.example`, or the entity's name key.
     pub key: String,
+    /// The model an AI mention came from (US-10.4 AC1, INV-AI-02); `None` otherwise.
+    pub ai_model: Option<String>,
 }
 
 const OCCURRENCE_SELECT: &str = "
     SELECT m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
            s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
            m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr,
-           m.identifier_key
+           m.identifier_key, NULL
     FROM identifier_mention m
     JOIN segment s ON s.id = m.segment_id
     JOIN content c ON c.id = m.content_id
@@ -694,10 +701,11 @@ const ENTITY_OCCURRENCE_SELECT: &str = "
     SELECT -m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
            s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
            m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr,
-           m.name_key
+           m.name_key, a.model_name
     FROM entity_mention m
     JOIN segment s ON s.id = m.segment_id
     JOIN content c ON c.id = m.content_id
+    LEFT JOIN ai_run a ON a.id = m.ai_run_id
     LEFT JOIN file_ref f ON f.id = (
         SELECT id FROM file_ref WHERE content_id = m.content_id AND present = 1
         ORDER BY id LIMIT 1)
@@ -761,32 +769,35 @@ fn occurrence_from(r: &rusqlite::Row<'_>) -> Result<(OccurrenceRow, bool), Store
             confidence: r.get::<_, f64>(14)? as f32,
             snippet,
             key: r.get(19)?,
+            ai_model: r.get(20)?,
         },
         counted,
     ))
 }
 
 /// The counted mentions of `key` (INV-CO-07), by content, then document, then position in it.
-/// At most `limit`. Reads the `identifier_mention_key` index.
+/// At most `limit`. Reads the `identifier_mention_key` index. An entity's mentions under 0.5
+/// come only with `include_low` (INV-AI-05).
 pub(crate) fn mentions_of(
     conn: &Connection,
     key: &str,
     limit: usize,
+    include_low: bool,
 ) -> Result<Vec<OccurrenceRow>, StoreError> {
     let sql = match SubjectKind::of_key(key) {
         SubjectKind::Identifier => format!(
             "{OCCURRENCE_SELECT}
-             WHERE m.identifier_key = ?1
+             WHERE m.identifier_key = ?1 AND ?2 IN (0, 1)
              ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
         ),
         SubjectKind::Entity => format!(
             "{ENTITY_OCCURRENCE_SELECT}
-             WHERE m.name_key = ?1
+             WHERE m.name_key = ?1 AND (?2 OR m.confidence >= 0.5)
              ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
         ),
     };
     let mut stmt = conn.prepare_cached(&sql)?;
-    let mut rows = stmt.query([key])?;
+    let mut rows = stmt.query(params![key, include_low])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         if out.len() >= limit {
@@ -806,25 +817,26 @@ pub(crate) fn mentions_in_document(
     conn: &Connection,
     key: &str,
     document: i64,
+    include_low: bool,
 ) -> Result<Vec<i64>, StoreError> {
     let sql = match SubjectKind::of_key(key) {
         SubjectKind::Identifier => {
             "SELECT m.id, c.state FROM identifier_mention m
              JOIN segment s ON s.id = m.segment_id
              JOIN content c ON c.id = m.content_id
-             WHERE m.identifier_key = ?1 AND m.document_id = ?2
+             WHERE m.identifier_key = ?1 AND m.document_id = ?2 AND ?3 IN (0, 1)
              ORDER BY s.ordinal, m.span_start, m.id"
         }
         SubjectKind::Entity => {
             "SELECT -m.id, c.state FROM entity_mention m
              JOIN segment s ON s.id = m.segment_id
              JOIN content c ON c.id = m.content_id
-             WHERE m.name_key = ?1 AND m.document_id = ?2
+             WHERE m.name_key = ?1 AND m.document_id = ?2 AND (?3 OR m.confidence >= 0.5)
              ORDER BY s.ordinal, m.span_start, m.id"
         }
     };
     let mut stmt = conn.prepare_cached(sql)?;
-    let mut rows = stmt.query(params![key, document])?;
+    let mut rows = stmt.query(params![key, document, include_low])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
         let state: String = r.get(1)?;

@@ -4,7 +4,7 @@
 //! M2b: every state of domain §7.2 (so schema v1 needs no migration later), the Stage A lane
 //! and the restart rule. M2c: the worker memory budget ([`pick_next`], gap A2). M3c: the move
 //! Queued → Paused (a project-wide pause covers jobs not started yet) and the ETA rule
-//! ([`estimate`]). AI lanes come in M5.
+//! ([`estimate`]). M6a: the Stage B lane limit, its priority and start rule.
 
 use std::fmt;
 use std::time::Duration;
@@ -200,6 +200,29 @@ pub fn stage_a_limit(cores: usize) -> usize {
     cores.saturating_sub(1).max(1)
 }
 
+/// Stage B lane limit: 4 parallel requests on the local model, whose server has 4 slots
+/// (NFR-PERF-25), 1 on an endpoint (ASSUMPTION: its limits are not known).
+pub fn stage_b_limit(local: bool) -> usize {
+    if local { 4 } else { 1 }
+}
+
+/// Stage B priority (gap A3): units with a Stage A identifier first, so the results that link
+/// to something come early. Lower runs first.
+pub fn stage_b_priority(has_identifiers: bool) -> i64 {
+    i64::from(!has_identifiers)
+}
+
+/// The start rule (decided 2026-11-05): Stage B starts by itself when at most this many units
+/// wait. About 20 min at [`STAGE_B_UNITS_PER_SECOND`] (ASSUMPTION). Above it, the user picks.
+pub const STAGE_B_AUTO_UNITS: u64 = 1600;
+/// M1's rate with 4 slots on the minimum-tier model (`09-model-check.md` §5.1).
+pub const STAGE_B_UNITS_PER_SECOND: f64 = 1.39;
+
+/// How long `units` would take at [`STAGE_B_UNITS_PER_SECOND`].
+pub fn stage_b_estimate(units: u64) -> Duration {
+    Duration::from_secs_f64(units as f64 / STAGE_B_UNITS_PER_SECOND)
+}
+
 /// A pending Stage A item as the scheduler sees it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PendingItem {
@@ -340,6 +363,21 @@ mod tests {
         assert_eq!(stage_a_limit(2), 1);
         assert_eq!(stage_a_limit(1), 1);
         assert_eq!(stage_a_limit(0), 1);
+    }
+
+    /// NFR-PERF-25: 4 slots on the local model, 1 on an endpoint.
+    #[test]
+    fn nfr_perf_25_stage_b_limit() {
+        assert_eq!(stage_b_limit(true), 4);
+        assert_eq!(stage_b_limit(false), 1);
+    }
+
+    /// Gap A3: identifiers first; 1,600 units is about 20 min.
+    #[test]
+    fn a3_stage_b_order_and_estimate() {
+        assert!(stage_b_priority(true) < stage_b_priority(false));
+        let minutes = stage_b_estimate(STAGE_B_AUTO_UNITS).as_secs() / 60;
+        assert_eq!(minutes, 19);
     }
 
     /// INV-PR-03: text-native first, then by priority and age; never more than the lane limit.

@@ -23,6 +23,14 @@ path: string | null, location: Location,
  */
 raw: string, lowConfidence: boolean, 
 /**
+ * 0–1: the model's own value on a person or organization (US-10.1 AC1).
+ */
+confidence: number, 
+/**
+ * The model a person or organization came from (US-10.4 AC1); `null` otherwise.
+ */
+aiModel: string | null, 
+/**
  * The document the mention is in: occurrences are grouped by it (US-07.3 AC1).
  */
 documentId: number, 

@@ -35,6 +35,11 @@ fileTypes: Array<string>,
  */
 lowConfidence: boolean, 
 /**
+ * It connects two documents only because of mentions below 0.5 (US-10.1 AC3); listed only
+ * with "Show low confidence".
+ */
+lowOnly: boolean, 
+/**
  * Ignored by the user (US-07.4); only listed with "Show ignored".
  */
 ignored: boolean, };

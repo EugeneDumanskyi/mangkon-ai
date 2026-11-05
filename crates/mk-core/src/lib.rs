@@ -32,6 +32,8 @@
 //!   [`Workspace::ai_client`] for the M6 stages, and where data goes now
 //!   ([`Workspace::on_ai_activity`]); the first-run screen and the demo project
 //!   ([`Workspace::first_run`], [`Workspace::open_demo`]).
+//! - M6a: AI extraction (Stage B, [`Workspace::schedule_stage_b`], [`Workspace::run_stage_b`]):
+//!   people and organizations with checked evidence, and a re-run that never mixes two models.
 
 mod ai;
 mod control;
@@ -48,6 +50,7 @@ mod project;
 mod runtime;
 mod search;
 pub mod stage_a;
+mod stage_b;
 mod view;
 mod workers;
 mod workspace;
@@ -100,6 +103,7 @@ pub use mk_models::runtime::{
 pub use mk_models::state::DownloadState;
 pub use mk_models::{Catalog, Role as ModelRole};
 pub use mk_search::Run as SnippetRun;
+pub use mk_store::{AiCancelled, AiRunRow, ScheduleOutcome, UnitScope};
 pub use mk_store::{
     CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,
     DocumentInfo, DocumentRow, FailedFile, KnownFile, ListCursor, ListedConnection, MappingView,
@@ -116,6 +120,7 @@ pub use project::{
 };
 pub use runtime::{RuntimeView, backend_note};
 pub use search::{SEARCH_PAGE, SearchHit, SearchPage, SegmentHit};
+pub use stage_b::{AiExtractionView, AiLaneState, StageBSummary, UnitEstimate};
 pub use view::{
     CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ConnectionsSummary, ContextLine, ContextRow,
     DocumentLink, EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original,

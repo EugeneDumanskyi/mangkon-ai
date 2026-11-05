@@ -118,7 +118,9 @@ pub(crate) fn apply_table_step(
 ) -> Result<(), StoreError> {
     content_entity_keys(conn, content, touched)?;
     for sql in [
-        "DELETE FROM entity_mention WHERE content_id = ?1",
+        // Table mentions only: AI mentions are not this step's, and a mapping never changes them
+        // (INV-AI-04).
+        "DELETE FROM entity_mention WHERE content_id = ?1 AND producer = 'table'",
         "DELETE FROM record_link WHERE content_id = ?1",
         "DELETE FROM column_suggestion WHERE content_id = ?1",
         "DELETE FROM table_document WHERE content_id = ?1",

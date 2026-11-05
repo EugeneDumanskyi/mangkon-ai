@@ -1146,6 +1146,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 - **Given** a model is available and allowed for the project
 - **When** Stage B runs on a segment
 - **Then** each found person or organization is stored as a mention with: name as written, type, evidence span (exact text), locator, and confidence (0–1)
+- M6a: one model call may cover several adjacent segments of a document, up to 2,000 characters (decided 2026-11-05). Each mention is still stored against its exact segment and span.
 
 **AC2 — Structured output**
 - **Then** the model is called with a JSON schema (grammar-constrained), and any response that does not match the schema is retried once, then logged and skipped

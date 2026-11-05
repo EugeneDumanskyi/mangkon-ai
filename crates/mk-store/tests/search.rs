@@ -275,27 +275,34 @@ fn migration_v4_to_v5_fills_the_index() {
     let db = dir.path().join("project.db");
     let backups = dir.path().join("backups");
     {
-        // A v4 project with segments: a commit writes the index, so build at the latest
-        // version and take the index (and the v6, v7 and v8 objects) back out.
-        let store = open(dir.path());
-        ingest(&store, 1, "txt", &["before search existed", "second line"]);
+        // A v4 project with segments, written as that schema stored them.
+        let v4: Vec<_> = mk_store::MIGRATIONS
+            .iter()
+            .copied()
+            .filter(|m| m.version <= 4)
+            .collect();
+        let (store, _) = Store::open_with(&db, &backups, &v4).unwrap();
+        store
+            .enqueue_contents(vec![NewContent {
+                hash: ContentHash::from_bytes([1; 32]),
+                file_type: "txt".into(),
+                size: 10,
+            }])
+            .unwrap();
         store
             .write_raw(|c| {
                 c.execute_batch(
-                    "DROP TRIGGER segment_fts_delete; DROP TRIGGER segment_fts_update;
-                     DROP TABLE segment_fts; DROP TABLE sensitive_flag;
-                     DROP INDEX identifier_mention_content; DROP TABLE custom_pattern;
-                     DROP TABLE record_link; DROP TABLE entity_mention;
-                     DROP TABLE column_suggestion; DROP TABLE table_document;
-                     DROP TABLE endpoint_permission; DROP TABLE egress_record;
-                     PRAGMA user_version = 4;",
+                    "INSERT INTO document (id, content_id, position, kind) VALUES (1, 1, 'whole', 'txt');
+                     INSERT INTO segment (id, document_id, ordinal, loc_kind, loc_pos, text)
+                         VALUES (1, 1, 0, 'text_line', 1, 'before search existed'),
+                                (2, 1, 1, 'text_line', 2, 'second line');",
                 )?;
                 Ok(())
             })
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 8));
+    assert_eq!((report.from_version, report.to_version), (4, 9));
     assert!(report.backup.unwrap().exists());
     assert_eq!(store.search_index_rows().unwrap(), 2);
     assert_eq!(

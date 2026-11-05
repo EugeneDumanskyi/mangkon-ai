@@ -39,3 +39,8 @@ dbus = "0.9.12"
 
 [build-dependencies]
 tauri-build = "=2.7.4"
+
+[dev-dependencies]
+mk-egress = { workspace = true, features = ["testkit"] }
+mk-models = { workspace = true, features = ["testkit"] }
+tempfile = "3.27.0"

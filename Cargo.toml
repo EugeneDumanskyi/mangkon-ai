@@ -10,6 +10,7 @@ members = [
     "crates/mk-mapping",
     "crates/mk-jobs",
     "crates/mk-graph",
+    "crates/mk-ai",
     "crates/mk-search",
     "crates/mk-store",
     "crates/mk-worker",
@@ -48,6 +49,7 @@ mk-identifiers = { path = "crates/mk-identifiers" }
 mk-mapping = { path = "crates/mk-mapping" }
 mk-jobs = { path = "crates/mk-jobs" }
 mk-graph = { path = "crates/mk-graph" }
+mk-ai = { path = "crates/mk-ai" }
 mk-search = { path = "crates/mk-search" }
 mk-store = { path = "crates/mk-store" }
 mk-worker = { path = "crates/mk-worker" }

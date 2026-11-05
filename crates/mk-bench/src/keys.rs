@@ -35,20 +35,19 @@ pub fn name_key(kind: EntityKind, raw: &str) -> String {
     let prefix = match kind {
         EntityKind::Person => "person",
         EntityKind::Org => {
-            // "S.A." splits into "s" "a"; join single letters at the end first.
-            while words.len() >= 2
-                && words[words.len() - 1].len() == 1
-                && words[words.len() - 2].len() == 1
-            {
-                let joined = format!("{}{}", words[words.len() - 2], words[words.len() - 1]);
-                if LEGAL_SUFFIXES.contains(&joined.as_str()) {
-                    words.truncate(words.len() - 2);
+            // Until nothing changes: "U. S. A. Inc." loses "inc" and only then shows "s" "a".
+            // "S.A." splits into "s" "a", so single letters are joined.
+            loop {
+                let n = words.len();
+                let joined = (n >= 2 && words[n - 1].len() == 1 && words[n - 2].len() == 1)
+                    .then(|| format!("{}{}", words[n - 2], words[n - 1]));
+                if joined.is_some_and(|j| LEGAL_SUFFIXES.contains(&j.as_str())) {
+                    words.truncate(n - 2);
+                } else if n > 1 && LEGAL_SUFFIXES.contains(&words[n - 1]) {
+                    words.pop();
                 } else {
                     break;
                 }
-            }
-            while words.len() > 1 && LEGAL_SUFFIXES.contains(words.last().unwrap()) {
-                words.pop();
             }
             "org"
         }

@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
+import { aiMentionNote } from "../lib/aiExtraction";
 import { groupByDocument } from "../lib/connections";
 import { fileName, locationLabel, plural } from "../lib/labels";
+import { useAiExtraction } from "../lib/useAiExtraction";
 import { Snippet } from "./SearchPanel";
 
 /** Where one connection's identifier was found (US-07.3 AC2): one click opens the spot. */
@@ -18,11 +20,17 @@ export function OccurrencesPanel({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const key = connection?.key ?? null;
+  const isName = connection?.kind === "person" || connection?.kind === "org";
+  // A connection only low-confidence mentions make has nothing to show without them.
+  const [showLow, setShowLow] = useState(false);
+  const includeLow = isName && (showLow || connection.lowOnly);
   const occurrences = useQuery({
-    queryKey: ["occurrences", key],
-    queryFn: () => (key === null ? Promise.resolve([]) : commands.occurrences(key)),
+    queryKey: ["occurrences", key, includeLow],
+    queryFn: () => (key === null ? Promise.resolve([]) : commands.occurrences(key, includeLow)),
     enabled: key !== null,
   });
+  const ai = useAiExtraction();
+  const experimental = ai.data?.experimental ?? false;
 
   // Keep the shown mention's row in view as Next / Previous move it (US-08.2 AC1).
   useEffect(() => {
@@ -51,6 +59,19 @@ export function OccurrencesPanel({
         <span className="font-mono font-semibold">{connection.value}</span>
         <span className="text-muted"> · {plural(rows.length, "mention")}</span>
       </h2>
+      {isName && (
+        <label className="flex items-center gap-1 border-b border-border px-3 py-1 text-xs">
+          <input
+            type="checkbox"
+            checked={includeLow}
+            disabled={connection.lowOnly}
+            onChange={(e) => {
+              setShowLow(e.target.checked);
+            }}
+          />
+          Show low confidence
+        </label>
+      )}
       {occurrences.error && (
         <p role="alert" className="px-3 py-2 text-sm">
           {errorMessage(occurrences.error)}
@@ -102,6 +123,7 @@ export function OccurrencesPanel({
                       <div className={isSelected ? "text-xs" : "text-xs text-muted"}>
                         {locationLabel(o.location)}
                         {o.lowConfidence ? " · low confidence" : ""}
+                        {aiMentionNote(o, experimental)}
                       </div>
                       <Snippet pieces={o.snippet} />
                     </button>

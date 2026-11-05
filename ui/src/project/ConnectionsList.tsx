@@ -47,13 +47,19 @@ export function ConnectionSummary({
   return (
     <div className={row.ignored ? "opacity-60" : undefined} data-ignored={row.ignored || undefined}>
       <div className="flex items-baseline gap-2">
-        <span className={row.fromTable ? "truncate" : "truncate font-mono"}>{row.value}</span>
+        <span
+          className={
+            row.kind === "person" || row.kind === "org" ? "truncate" : "truncate font-mono"
+          }
+        >
+          {row.value}
+        </span>
         {row.fromTable && (
           <span className="shrink-0 rounded border border-current px-1 text-xs">
             Name (from table)
           </span>
         )}
-        {row.lowConfidence && (
+        {(row.lowConfidence || row.lowOnly) && (
           <span className="shrink-0 rounded border border-current px-1 text-xs">
             Low confidence
           </span>
@@ -214,7 +220,17 @@ export function FilterBar({
         />
         Show ignored{ignored > 0 ? ` (${ignored.toLocaleString()})` : ""}
       </label>
-      {(isFiltered(filter) || filter.includeIgnored) && (
+      <label className="flex items-center gap-1 text-xs">
+        <input
+          type="checkbox"
+          checked={filter.includeLow}
+          onChange={(e) => {
+            onChange({ includeLow: e.target.checked });
+          }}
+        />
+        Show low confidence
+      </label>
+      {(isFiltered(filter) || filter.includeIgnored || filter.includeLow) && (
         <button
           type="button"
           className={small}
@@ -393,7 +409,7 @@ export function ConnectionsList({
 
   return (
     <section
-      className="flex min-h-0 flex-col border-r border-border"
+      className="flex min-h-0 flex-col overflow-y-auto border-r border-border"
       aria-label="Connections"
       onKeyDown={(e) => {
         const target = e.target as HTMLElement;
@@ -437,7 +453,7 @@ export function ConnectionsList({
       <div
         ref={scrollRef}
         data-scroll="connections"
-        className="min-h-0 flex-1 overflow-auto focus:outline-2 focus:outline-accent"
+        className="min-h-24 flex-1 overflow-auto focus:outline-2 focus:outline-accent"
         role="listbox"
         aria-label="Connections list"
         aria-activedescendant={list.total > 0 ? `connection-${String(active)}` : undefined}

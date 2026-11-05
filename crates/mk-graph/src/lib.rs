@@ -7,8 +7,10 @@
 //!
 //! M2b: identifier connections and the ignore / un-ignore decisions. M4c: entities from
 //! confirmed table columns ("Name (from table)", US-05.3): grouped by name key, with a display
-//! name and their own connections and ignore decisions (domain §9.3 steps 1, 2 and 4). Merges,
-//! splits and AI entities come in M6–M7.
+//! name and their own connections and ignore decisions (domain §9.3 steps 1, 2 and 4). M6a: AI
+//! mentions join the same entities; a connection that exists only because of mentions under 0.5
+//! is marked [`ConnectionRow::low_only`] and hidden by default (INV-AI-05). Merges and splits
+//! come in M7.
 
 pub mod model;
 
@@ -79,6 +81,9 @@ pub struct ConnectionRow {
     pub mention_count: u64,
     pub low_confidence: bool,
     pub ignored: bool,
+    /// Exists only because of mentions under 0.5: hidden unless "Show low confidence" is on
+    /// (US-10.1 AC3, INV-AI-05).
+    pub low_only: bool,
 }
 
 /// The project's domain stop list (US-04.3 AC3): registrable domains, lower case.
@@ -123,33 +128,62 @@ pub fn connection_for(
         mention_count: stats.mentions,
         low_confidence: stats.max_confidence < LOW_CONFIDENCE,
         ignored,
+        low_only: false,
     })
 }
 
 /// Counted mentions of one entity (domain §9.1): mentions whose content is not Missing and
-/// whose confidence is at least [`LOW_CONFIDENCE`] (table mentions are 1.0).
+/// whose confidence is at least [`LOW_CONFIDENCE`] (table mentions are 1.0). `low` holds the
+/// same counts with the mentions under it included.
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct EntityStats {
+    pub documents: u64,
+    pub file_types: u64,
+    pub mentions: u64,
+    pub low: EntityCounts,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct EntityCounts {
     pub documents: u64,
     pub file_types: u64,
     pub mentions: u64,
 }
 
 /// The connection row for an entity, if it is one (INV-LK-01): counted mentions in two or more
-/// distinct documents. Never low confidence: its uncounted mentions are already left out.
+/// distinct documents. Its mentions under 0.5 are left out of the counts, so it is never low
+/// confidence; unless only they make it a connection: then the row is marked `low_only`, with
+/// every mention counted, and hidden by default (INV-AI-05).
 pub fn entity_connection_for(
     key: &NameKey,
     stats: &EntityStats,
     ignored: bool,
 ) -> Option<ConnectionRow> {
-    (stats.documents >= 2).then(|| ConnectionRow {
+    let row = |documents, file_types, mentions, low_only| ConnectionRow {
         subject_key: key.to_string(),
         subject_kind: SubjectKind::Entity,
-        source_count: stats.documents,
-        file_type_count: stats.file_types,
-        mention_count: stats.mentions,
-        low_confidence: false,
+        source_count: documents,
+        file_type_count: file_types,
+        mention_count: mentions,
+        low_confidence: low_only,
         ignored,
+        low_only,
+    };
+    if stats.documents >= 2 {
+        return Some(row(
+            stats.documents,
+            stats.file_types,
+            stats.mentions,
+            false,
+        ));
+    }
+    (stats.low.documents >= 2).then(|| {
+        row(
+            stats.low.documents,
+            stats.low.file_types,
+            stats.low.mentions,
+            true,
+        )
     })
 }
 
@@ -434,6 +468,7 @@ mod tests {
             mention_count: m,
             low_confidence: low,
             ignored: false,
+            low_only: false,
         };
         let mut rows = [
             row("e", true, 9, 9, 9),
@@ -495,6 +530,11 @@ mod tests {
             documents,
             file_types: 1,
             mentions: documents,
+            low: EntityCounts {
+                documents,
+                file_types: 1,
+                mentions: documents,
+            },
         };
         assert_eq!(entity_connection_for(&k, &stats(1), false), None);
         let row = entity_connection_for(&k, &stats(3), false).unwrap();
@@ -508,6 +548,53 @@ mod tests {
         assert!(r.ignored);
         assert!(!resolve(&[d(1, DecisionKind::UnignoreEntity)], true).ignored);
         assert!(!DecisionKind::ConfirmMapping.on_connection());
+    }
+
+    /// US-10.1 AC3, INV-AI-05: a connection only low-confidence mentions make is marked and
+    /// counts them; once high-confidence mentions make it alone, they are all it counts.
+    #[test]
+    fn us_10_1_ac3_low_only_connection() {
+        let k: NameKey = "person:anna berg".parse().unwrap();
+        let low = EntityCounts {
+            documents: 3,
+            file_types: 2,
+            mentions: 5,
+        };
+        let row = entity_connection_for(
+            &k,
+            &EntityStats {
+                documents: 1,
+                file_types: 1,
+                mentions: 1,
+                low,
+            },
+            false,
+        )
+        .unwrap();
+        assert!(row.low_only && row.low_confidence);
+        assert_eq!((row.source_count, row.mention_count), (3, 5));
+        let row = entity_connection_for(
+            &k,
+            &EntityStats {
+                documents: 2,
+                file_types: 1,
+                mentions: 2,
+                low,
+            },
+            false,
+        )
+        .unwrap();
+        assert!(!row.low_only && !row.low_confidence);
+        assert_eq!((row.source_count, row.mention_count), (2, 2));
+        let none = EntityStats {
+            low: EntityCounts {
+                documents: 1,
+                file_types: 1,
+                mentions: 4,
+            },
+            ..EntityStats::default()
+        };
+        assert_eq!(entity_connection_for(&k, &none, false), None);
     }
 
     /// INV-CU-04: without its anchor the newest decision is orphaned and applies nothing; it

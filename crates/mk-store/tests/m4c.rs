@@ -290,7 +290,7 @@ fn us_05_2_confirm_and_reuse_make_table_entities() {
     // A tie (one each): A→Z.
     assert_eq!(entity.display_name, "BRIGHTWATER LOGISTICS LIMITED");
 
-    let occurrences = store.mentions_of(key, 10).unwrap();
+    let occurrences = store.mentions_of(key, 10, false).unwrap();
     assert_eq!(occurrences.len(), 2);
     for o in &occurrences {
         assert!(o.mention_id < 0);
@@ -310,7 +310,9 @@ fn us_05_2_confirm_and_reuse_make_table_entities() {
             .collect();
         assert_eq!(text, o.raw);
         assert_eq!(
-            store.mentions_in_document(key, o.document_id).unwrap(),
+            store
+                .mentions_in_document(key, o.document_id, false)
+                .unwrap(),
             vec![o.mention_id]
         );
     }
@@ -463,7 +465,9 @@ fn inv_cm_05_json_records() {
             ),
         ]
     );
-    let occurrences = store.mentions_of("person:irene vasquez", 10).unwrap();
+    let occurrences = store
+        .mentions_of("person:irene vasquez", 10, false)
+        .unwrap();
     assert!(matches!(
         &occurrences[0].locator,
         Locator::JsonValue { pointer, .. } if pointer == "/officers/1/name"

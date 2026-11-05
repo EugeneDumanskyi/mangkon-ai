@@ -481,8 +481,12 @@ pub async fn set_ignored(
 pub async fn occurrences(
     state: State<'_, AppState>,
     key: String,
+    include_low: bool,
 ) -> Result<Vec<ipc::Occurrence>, IpcError> {
-    let rows = state.current()?.project.occurrences(&key)?;
+    let rows = state
+        .current()?
+        .project
+        .occurrences_with(&key, include_low)?;
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
@@ -1054,6 +1058,65 @@ pub async fn ai_activity(
     state: State<'_, AppState>,
 ) -> Result<Option<ipc::AiActivityInfo>, IpcError> {
     Ok(state.workspace()?.ai_activity().map(Into::into))
+}
+
+/// What AI extraction is doing, for the progress panel and Settings (US-10.2 AC2, US-10.3).
+#[tauri::command]
+pub async fn ai_extraction_status(
+    state: State<'_, AppState>,
+) -> Result<ipc::AiExtractionInfo, IpcError> {
+    let open = state.current()?;
+    Ok(state.workspace()?.ai_extraction_view(&open.project)?.into())
+}
+
+/// How many units `scope` would make and about how long they take, to show before starting.
+#[tauri::command]
+pub async fn ai_extraction_estimate(
+    state: State<'_, AppState>,
+    scope: ipc::AiScope,
+) -> Result<ipc::AiEstimate, IpcError> {
+    let open = state.current()?;
+    Ok(state
+        .workspace()?
+        .stage_b_estimate(&open.project, &scope.into())?
+        .into())
+}
+
+/// "Find people and organizations" for the picked documents, or all (gap A3).
+#[tauri::command]
+pub async fn ai_extraction_run(
+    state: State<'_, AppState>,
+    scope: ipc::AiScope,
+) -> Result<(), IpcError> {
+    let open = state.current()?;
+    state
+        .workspace()?
+        .run_documents(&open.project, scope.into())?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    state.start_ai_lane(&open);
+    Ok(())
+}
+
+/// "Re-run with Y" (US-10.4): the results stay as they are until it is done (ADR-0005).
+#[tauri::command]
+pub async fn ai_extraction_rerun(state: State<'_, AppState>) -> Result<ipc::AiEstimate, IpcError> {
+    let open = state.current()?;
+    let out = state.workspace()?.start_rerun(&open.project)?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    state.start_ai_lane(&open);
+    Ok(out.into())
+}
+
+/// Cancels the re-run under way, which changes nothing visible (ADR-0005), or else the run's
+/// remaining work. False when nothing was running.
+#[tauri::command]
+pub async fn ai_extraction_cancel(state: State<'_, AppState>) -> Result<bool, IpcError> {
+    let open = state.current()?;
+    let out = state.workspace()?.cancel_extraction(&open.project)?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    // The job a model change Blocked may be gone: what is left can run again.
+    state.start_ai_lane(&open);
+    Ok(out != mk_core::AiCancelled::Nothing)
 }
 
 /// Whether to show the first-run screen, and where the demo files are (US-14.4).

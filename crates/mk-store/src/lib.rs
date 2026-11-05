@@ -9,6 +9,7 @@
 //!
 //! Plain `std` threads and channels, no async runtime.
 
+mod ai;
 mod app_store;
 mod codec;
 mod derive;
@@ -35,6 +36,10 @@ use mk_jobs::{Stage, Trigger};
 use mk_kernel::ContentHash;
 use mk_workspace::ProjectSettings;
 
+pub use ai::{
+    AiCancelled, AiCommitOutcome, AiHealth, AiItemResult, AiProgress, AiRunRow, RunBinding,
+    ScheduleOutcome, StartedAiItem, UnitScope,
+};
 pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow, ModelDownloadRow};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use egress::{EgressRecordRow, PermissionRow};
@@ -290,6 +295,119 @@ impl Store {
     pub fn create_stage_job(&self, stage: Stage, contents: Vec<i64>) -> Result<i64, StoreError> {
         self.writer
             .call(move |tx| manage::create_stage_job(tx, stage, &contents))
+    }
+
+    // ---- Stage B (M6a, ADR-0005, ADR-0006) ----
+
+    /// The run jobs without one work for: the current one, or a new first run.
+    pub fn bind_ai_run(&self, binding: RunBinding) -> Result<i64, StoreError> {
+        self.writer.call(move |tx| ai::bind_run(tx, &binding))
+    }
+
+    /// One new job over the units of `scope` not covered yet.
+    pub fn schedule_ai_units(
+        &self,
+        scope: UnitScope,
+        trigger: Trigger,
+    ) -> Result<ScheduleOutcome, StoreError> {
+        self.writer
+            .call(move |tx| ai::schedule_units(tx, &scope, trigger))
+    }
+
+    /// How many units a schedule of `scope` would make, on a read connection.
+    pub fn count_ai_units(&self, scope: &UnitScope) -> Result<u64, StoreError> {
+        self.readers.with(|c| ai::count_units(c, scope))
+    }
+
+    /// Remembers how many units wait for the user's pick (gap A3).
+    pub fn set_ai_waiting_units(&self, units: u64) -> Result<(), StoreError> {
+        self.writer.call(move |tx| ai::set_waiting_units(tx, units))
+    }
+
+    /// Starts the next item that may run, highest priority first.
+    pub fn start_next_ai_item(&self) -> Result<Option<StartedAiItem>, StoreError> {
+        self.writer.call(|tx| ai::start_next_ai_item(tx))
+    }
+
+    /// Commits a checked reply in one transaction, if its token still holds (INV-PR-04).
+    pub fn commit_ai_item(
+        &self,
+        item: i64,
+        attempt: i64,
+        result: AiItemResult,
+    ) -> Result<AiCommitOutcome, StoreError> {
+        self.writer
+            .call(move |tx| ai::commit_ai_item(tx, item, attempt, &result))
+    }
+
+    /// Puts one item back to Pending, if its token still holds.
+    pub fn release_ai_item(&self, item: i64, attempt: i64) -> Result<bool, StoreError> {
+        self.writer
+            .call(move |tx| ai::release_ai_item(tx, item, attempt))
+    }
+
+    /// Fails one item, if its token still holds.
+    pub fn fail_ai_item(
+        &self,
+        item: i64,
+        attempt: i64,
+        code: &str,
+        reason: &str,
+    ) -> Result<bool, StoreError> {
+        let (code, reason) = (code.to_string(), reason.to_string());
+        self.writer
+            .call(move |tx| ai::fail_ai_item(tx, item, attempt, &code, &reason))
+    }
+
+    /// Every item in progress back to Pending: their replies are dropped when they come.
+    pub fn release_all_ai_items(&self) -> Result<usize, StoreError> {
+        self.writer.call(|tx| ai::release_all_ai_items(tx))
+    }
+
+    /// A pending run over what the active run covered (US-10.4).
+    pub fn start_ai_rerun(&self, binding: RunBinding) -> Result<ScheduleOutcome, StoreError> {
+        self.writer.call(move |tx| ai::start_rerun(tx, &binding))
+    }
+
+    /// Cancels the re-run under way, or else the current run's remaining work.
+    pub fn cancel_ai_run(&self) -> Result<AiCancelled, StoreError> {
+        self.writer.call(|tx| ai::cancel_ai_run(tx))
+    }
+
+    /// Blocks one AI job with a reason, or runs it again with `None`. Whether it changed.
+    pub fn set_ai_job_block(&self, job: i64, reason: Option<&str>) -> Result<bool, StoreError> {
+        let reason = reason.map(str::to_string);
+        self.writer
+            .call(move |tx| ai::set_ai_job_block(tx, job, reason.as_deref()))
+    }
+
+    /// Open Stage B jobs with their run's identity and state.
+    pub fn open_ai_jobs(
+        &self,
+    ) -> Result<Vec<(i64, Option<mk_ai::RunIdentity>, String)>, StoreError> {
+        self.readers.with(ai::open_ai_jobs)
+    }
+
+    pub fn active_ai_run(&self) -> Result<Option<AiRunRow>, StoreError> {
+        self.readers.with(ai::active_run)
+    }
+
+    pub fn pending_ai_run(&self) -> Result<Option<AiRunRow>, StoreError> {
+        self.readers.with(ai::pending_run)
+    }
+
+    pub fn ai_progress(&self) -> Result<AiProgress, StoreError> {
+        self.readers.with(ai::ai_progress)
+    }
+
+    /// Whether the lane would start an item now.
+    pub fn has_runnable_ai_work(&self) -> Result<bool, StoreError> {
+        self.readers.with(ai::has_runnable_ai_work)
+    }
+
+    /// What the kill tests look for (NFR-QA-11, ADR-0005).
+    pub fn ai_health(&self) -> Result<AiHealth, StoreError> {
+        self.readers.with(ai::ai_health)
     }
 
     /// Cancels every open job; their unfinished contents become Not processed (US-03.3, D10).
@@ -684,15 +802,27 @@ impl Store {
     }
 
     /// The counted mentions of an identifier key or an entity name key, at most `limit`
-    /// (US-07.3 AC2). Entity mentions have negative ids.
-    pub fn mentions_of(&self, key: &str, limit: usize) -> Result<Vec<OccurrenceRow>, StoreError> {
-        self.readers.with(|c| read::mentions_of(c, key, limit))
+    /// (US-07.3 AC2). Entity mentions have negative ids. An entity's mentions under 0.5 come
+    /// only with `include_low` (US-10.1 AC3).
+    pub fn mentions_of(
+        &self,
+        key: &str,
+        limit: usize,
+        include_low: bool,
+    ) -> Result<Vec<OccurrenceRow>, StoreError> {
+        self.readers
+            .with(|c| read::mentions_of(c, key, limit, include_low))
     }
 
     /// The counted mentions of `key` in one document, in reading order (US-08.2 AC1).
-    pub fn mentions_in_document(&self, key: &str, document: i64) -> Result<Vec<i64>, StoreError> {
+    pub fn mentions_in_document(
+        &self,
+        key: &str,
+        document: i64,
+        include_low: bool,
+    ) -> Result<Vec<i64>, StoreError> {
         self.readers
-            .with(|c| read::mentions_in_document(c, key, document))
+            .with(|c| read::mentions_in_document(c, key, document, include_low))
     }
 
     /// Failed contents with their reasons, at most `limit` (NFR-USE-05).

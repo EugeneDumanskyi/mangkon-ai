@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 
 use mk_corpus::IngestionState;
 use mk_graph::{
-    ConnectionRow, DecisionFact, DecisionKind, EntityStats, IdentifierStats, LOW_CONFIDENCE,
-    StopList, SubjectKind, connection_for, entity_connection_for, resolve,
+    ConnectionRow, DecisionFact, DecisionKind, EntityCounts, EntityStats, IdentifierStats,
+    LOW_CONFIDENCE, StopList, SubjectKind, connection_for, entity_connection_for, resolve,
 };
 use mk_kernel::{IdentifierKey, NameKey};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -18,8 +18,8 @@ use crate::StoreError;
 pub(crate) const DERIVED_SQL: &str = include_str!("../migrations/derived.sql");
 /// Bump when `derived.sql` or the derived rules change: the derived tables are rebuilt on open.
 /// 2 (M4b): stop-list domains are not connections (INV-LK-03). 3 (M4c): entities. 4 (M4d):
-/// `connection.kind`, `value` and `file_types`.
-pub(crate) const DERIVED_VERSION: u32 = 4;
+/// `connection.kind`, `value` and `file_types`. 5 (M6a): `connection.low_only`.
+pub(crate) const DERIVED_VERSION: u32 = 5;
 
 /// The project's domain stop list (US-04.3 AC3): the stored setting, or the default list.
 pub(crate) fn stop_list(conn: &Connection) -> Result<StopList, StoreError> {
@@ -91,9 +91,9 @@ fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, St
         Some((row, shown)) => {
             conn.prepare_cached(
                 "INSERT OR REPLACE INTO connection (subject_key, subject_kind, source_count,
-                    file_type_count, mention_count, low_confidence, ignored, kind, value,
-                    file_types)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    file_type_count, mention_count, low_confidence, ignored, low_only, kind,
+                    value, file_types)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )?
             .execute(params![
                 row.subject_key,
@@ -103,6 +103,7 @@ fn rebuild_key(conn: &Connection, key: &str, stop: &StopList) -> Result<bool, St
                 row.mention_count as i64,
                 row.low_confidence,
                 row.ignored,
+                row.low_only,
                 shown.kind,
                 shown.value,
                 shown.file_types
@@ -266,19 +267,22 @@ fn rebuild_identifier(
 }
 
 /// An entity's row and connection (domain §9.3 steps 1, 2, 4; INV-ER-07): counted mentions are
-/// those of a content not Missing with confidence ≥ 0.5.
+/// those of a content not Missing with confidence ≥ 0.5; the same counts with the lower ones
+/// decide a `low_only` row (INV-AI-05).
 fn rebuild_entity(
     conn: &Connection,
     key: &str,
     decisions: &[DecisionFact],
 ) -> Result<Option<(ConnectionRow, Shown)>, StoreError> {
     let missing = IngestionState::Missing.as_str();
-    let (total, from_table, documents, file_types, mentions, types): (
+    let (total, from_table, documents, file_types, mentions, types, low, low_types): (
         i64,
         bool,
         i64,
         i64,
         i64,
+        Option<String>,
+        EntityCounts,
         Option<String>,
     ) = conn
         .prepare_cached(
@@ -289,7 +293,11 @@ fn rebuild_entity(
                                         THEN c.file_type END),
                     COALESCE(SUM(c.state != ?2 AND m.confidence >= ?3), 0),
                     GROUP_CONCAT(DISTINCT CASE WHEN c.state != ?2 AND m.confidence >= ?3
-                                               THEN c.file_type END)
+                                               THEN c.file_type END),
+                    COUNT(DISTINCT CASE WHEN c.state != ?2 THEN m.document_id END),
+                    COUNT(DISTINCT CASE WHEN c.state != ?2 THEN c.file_type END),
+                    COALESCE(SUM(c.state != ?2), 0),
+                    GROUP_CONCAT(DISTINCT CASE WHEN c.state != ?2 THEN c.file_type END)
              FROM entity_mention m JOIN content c ON c.id = m.content_id
              WHERE m.name_key = ?1",
         )?
@@ -301,6 +309,12 @@ fn rebuild_entity(
                 r.get(3)?,
                 r.get(4)?,
                 r.get(5)?,
+                EntityCounts {
+                    documents: r.get::<_, i64>(6)? as u64,
+                    file_types: r.get::<_, i64>(7)? as u64,
+                    mentions: r.get::<_, i64>(8)? as u64,
+                },
+                r.get(9)?,
             ))
         })?;
     let anchor_present = total > 0;
@@ -338,8 +352,10 @@ fn rebuild_entity(
         documents: documents as u64,
         file_types: file_types as u64,
         mentions: mentions as u64,
+        low,
     };
     Ok(entity_connection_for(&parsed, &stats, ignored).map(|row| {
+        let types = if row.low_only { low_types } else { types };
         (
             row,
             Shown {
@@ -359,16 +375,16 @@ fn connection_shown(
     Ok(conn
         .prepare_cached(
             "SELECT subject_key, source_count, file_type_count, mention_count, low_confidence,
-                    ignored, subject_kind, kind, value, file_types
+                    ignored, subject_kind, low_only, kind, value, file_types
              FROM connection WHERE subject_key = ?1",
         )?
         .query_row([key], |r| {
             Ok((
                 row_to_connection(r)?,
                 Shown {
-                    kind: r.get(7)?,
-                    value: r.get(8)?,
-                    file_types: r.get(9)?,
+                    kind: r.get(8)?,
+                    value: r.get(9)?,
+                    file_types: r.get(10)?,
                 },
             ))
         })
@@ -376,7 +392,7 @@ fn connection_shown(
 }
 
 /// A connection row from `subject_key, source_count, file_type_count, mention_count,
-/// low_confidence, ignored, subject_kind`.
+/// low_confidence, ignored, subject_kind, low_only`.
 pub(crate) fn row_to_connection(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnectionRow> {
     Ok(ConnectionRow {
         subject_key: r.get(0)?,
@@ -387,5 +403,6 @@ pub(crate) fn row_to_connection(r: &rusqlite::Row<'_>) -> rusqlite::Result<Conne
         mention_count: r.get::<_, i64>(3)? as u64,
         low_confidence: r.get(4)?,
         ignored: r.get(5)?,
+        low_only: r.get(7)?,
     })
 }

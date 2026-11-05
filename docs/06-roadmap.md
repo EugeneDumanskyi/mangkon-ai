@@ -489,6 +489,8 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | **M6b** | Meaning search | S6 first (TD-2 scale, needs an idle RM-1). Embeddings lane, float vectors in `project.db`, binary index file, rescoring, idle release (ADR-0010); query embedding through the gate (INV-SR-03); meaning mode in the Search tab. US-06.2. ADR-0010 accepted or superseded. | S6 | 1 (US-06.2), 5 | M5 exit (can run before or alongside M6a) |
 | **M6c** | Entities + acceptance | US-11.1 exact-name groups; US-07.7 first part (entities in 2+ sources on the connections screen); LLM benchmark runnable by hand (NFR-MNT-06), replacing `spikes/model-check`; NFR-QA-08/09 re-measured with the minimum-tier model on Stage A output and the "Experimental" label decided; network-off TD-1 run; idle-machine timings. | — | 1 (US-11.1, US-07.7 part), 2, 4, 6; exit | M6a, M6b |
 
+**Outcome (M6a, 2026-11-05).** New crate `mk-ai` (BC-06, pure): prompt and schema from M1, work units of up to 2,000 characters, the evidence rules, run identity. `mk-store`: schema v9 (`ai_run`, `pending_entity_mention`), `DERIVED_VERSION` 5, the attempt token, the switch in one transaction. `mk-core`: the Stage B lane on 4 slots locally and 1 on an endpoint, the start rule, Blocked on no model or another model. `mk-models`: `-np 4` for extraction, and a watcher that stops `llama-server` when the app is killed. CLI `ai status|run|rerun|cancel`; desktop commands, AI row, Settings section, Find in Documents, low-confidence toggle, Experimental label. Criteria 1 (E10), 3 and 7 met on Linux with RM-1: 0 of 3,050 stored mentions fail an independent evidence check on TD-1, and a re-run never showed two models. The real runs and the kill tests found seven bugs in earlier or new code, all fixed. Open for the maintainer: 0.66 units/s on TD-1 against the 1.39 behind the start rule and the estimates, NFR-PERF-13 and NFR-PERF-24 at risk, 25% discarded on rough text. Results and open points in `14-ai-extraction.md`.
+
 ---
 
 ### M7 — Entity resolution, review queue, entity detail
@@ -632,7 +634,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | 9 | **Decided (2026-10-29).** A8 — emails and HTML are shown as text only in v0.1. | 05-architecture §10 | Start of M3 |
 | 10 | **Decided (2026-10-29).** Q1–Q9 (requirements) and D1–D15 (domain) that affect Layer 1: their current assumptions hold. | 02 §7, 04 §10 | Start of M3 |
 | 11 | **Decided (2026-10-30).** D2: a value in an email and in its own attachment counts as 2 sources (follows Q1); it could rank lower later. | 04 §10 | Start of M4 |
-| 12 | A4 — re-run shows old results until done. | 05-architecture §10 | Start of M6 |
+| 12 | A4 — re-run shows old results until done. **Decided (2026-11-05):** yes, then one switch; Cancel changes nothing visible. | 05-architecture §10 | Start of M6 |
 | 13 | D6, D7 — "Unreviewed merge" meaning; how entities get linked identifiers. | 04 §10 | Start of M7a |
 | 14 | M8 go/no-go. | This file M7 | End of M7b |
 | 15 | **Decided (2026-10-27).** Windows hard memory cap: the watchdog only, like macOS; no ADR-0002 exception. | ADR-0007 follow-up, M2c | Start of M3 |

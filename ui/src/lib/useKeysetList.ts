@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { needsNextPage } from "./keyset";
+import { heldLength, needsNextPage } from "./keyset";
 
 export interface KeysetPage<Row, Cursor> {
   rows: Row[];
@@ -42,11 +42,13 @@ export function useKeysetList<Row, Cursor>(options: {
   // The length the rows were loaded for, taken when the hold starts or the list changes.
   const live = total.data ?? 0;
   const listKey = JSON.stringify(queryKey);
-  const [held, setHeld] = useState<number | null>(paused ? live : null);
+  const [held, setHeld] = useState(heldLength(null, paused, total.data));
   const [seen, setSeen] = useState({ listKey, paused });
   if (seen.listKey !== listKey || seen.paused !== paused) {
     setSeen({ listKey, paused });
-    setHeld(paused ? live : null);
+    setHeld(heldLength(null, paused, total.data));
+  } else if (heldLength(held, paused, total.data) !== held) {
+    setHeld(heldLength(held, paused, total.data));
   }
 
   useEffect(() => {

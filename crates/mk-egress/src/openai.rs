@@ -25,6 +25,13 @@ impl ChatMessage {
             content: content.into(),
         }
     }
+
+    pub fn assistant(content: impl Into<String>) -> ChatMessage {
+        ChatMessage {
+            role: "assistant".into(),
+            content: content.into(),
+        }
+    }
 }
 
 /// A JSON schema the reply must follow (`response_format: json_schema`).
@@ -40,6 +47,7 @@ pub struct ChatRequest {
     pub schema: Option<ReplySchema>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
+    pub seed: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -77,6 +85,9 @@ pub(crate) fn chat_body(model: &str, req: &ChatRequest) -> Value {
     }
     if let Some(t) = req.temperature {
         body["temperature"] = json!(t);
+    }
+    if let Some(s) = req.seed {
+        body["seed"] = json!(s);
     }
     body
 }

@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+mk-ai.workspace = true
 mk-corpus.workspace = true
 mk-graph.workspace = true
 mk-identifiers.workspace = true

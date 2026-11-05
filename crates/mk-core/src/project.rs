@@ -24,6 +24,7 @@ use crate::control::{RunControl, Stop};
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
 use crate::identifiers::RerunSummary;
 use crate::stage_a::{Failure, SPILL_AT, Staging};
+use crate::stage_b::AiLane;
 use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
 
 #[derive(Debug)]
@@ -153,6 +154,10 @@ pub struct HealthReport {
     pub weak_connections: Vec<String>,
     /// The FTS5 'integrity-check' error, if the keyword index and the segment text differ.
     pub search_index_error: Option<String>,
+    /// AI mentions whose span does not hold their name in the source (NFR-QA-11).
+    pub invented_evidence: u64,
+    /// AI mentions outside the one run they may belong to (ADR-0005).
+    pub mixed_ai_runs: u64,
     pub progress: Progress,
 }
 
@@ -163,6 +168,8 @@ impl HealthReport {
             && self.derived_consistent
             && self.search_index_error.is_none()
             && self.weak_connections.is_empty()
+            && self.invented_evidence == 0
+            && self.mixed_ai_runs == 0
     }
 }
 
@@ -195,6 +202,8 @@ pub struct Project {
     in_flight: Mutex<BTreeMap<i64, String>>,
     /// Contents done and total of an identifier re-run going on (M4b).
     rerun: Mutex<Option<(RerunStep, u64, u64)>>,
+    /// The Stage B lane (M6a). It holds no [`Project::run`]: nothing waits on a model.
+    ai_lane: AiLane,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -264,7 +273,9 @@ impl Project {
             run_started: Mutex::new(None),
             in_flight: Mutex::new(BTreeMap::new()),
             rerun: Mutex::new(None),
+            ai_lane: AiLane::default(),
         };
+        project.note_ai_switch();
         project.stamp_identifier_rules_if_empty()?;
         Ok((project, OpenSummary { schema, recovered }))
     }
@@ -303,6 +314,23 @@ impl Project {
 
     pub(crate) fn control(&self) -> &RunControl {
         &self.control
+    }
+
+    pub(crate) fn ai_lane(&self) -> &AiLane {
+        &self.ai_lane
+    }
+
+    /// Raises `ConnectionsChanged` when a re-run has switched since the last look: the switch
+    /// happens on whichever path ends its job (ADR-0005).
+    pub(crate) fn note_ai_switch(&self) {
+        let now = match self.store.active_ai_run() {
+            Ok(run) => run.map_or(0, |r| r.id),
+            Err(_) => return,
+        };
+        let before = self.ai_lane.active_run.swap(now, Ordering::SeqCst);
+        if before != now && before != crate::stage_b::UNKNOWN_RUN {
+            self.events.changed();
+        }
     }
 
     /// The step, contents done and total of an identifier re-run going on.
@@ -486,6 +514,7 @@ impl Project {
         if summary.outcome.connections_changed {
             self.events.changed();
         }
+        self.note_ai_switch();
         Ok(summary)
     }
 
@@ -514,6 +543,7 @@ impl Project {
             }
         }
         summary.interrupted = self.control.requested();
+        self.note_ai_switch();
         Ok(summary)
     }
 
@@ -560,6 +590,7 @@ impl Project {
     /// continues where it stopped and redoes no finished file (INV-PR-05).
     pub fn resume(&self) -> Result<(), ProjectError> {
         self.store.set_queue_paused(false)?;
+        self.note_ai_switch();
         Ok(())
     }
 
@@ -573,7 +604,9 @@ impl Project {
     /// Pending and job states are kept, so running jobs run again on the next open
     /// (US-03.4 AC1).
     pub fn stop_for_close(&self) {
+        self.ai_lane.stop();
         let _ = self.stop_run(Stop::Close, || Ok(()));
+        let _ = self.store.release_all_ai_items();
     }
 
     /// Whether the queue is paused (persisted, US-03.4 AC1).
@@ -952,12 +985,15 @@ impl Project {
         })?;
         let derived = self.store.derived_state()?;
         let reference = mk_graph::model::reference(&self.store.facts()?);
+        let ai = self.store.ai_health()?;
         Ok(HealthReport {
             integrity_errors,
             foreign_key_errors,
             derived_consistent: derived == reference,
             weak_connections: self.store.weak_connections(20)?,
             search_index_error: self.store.check_search_index().err().map(|e| e.to_string()),
+            invented_evidence: ai.invented_evidence,
+            mixed_ai_runs: ai.mixed_runs,
             progress: self.store.progress()?,
         })
     }

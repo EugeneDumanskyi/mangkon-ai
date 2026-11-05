@@ -114,7 +114,7 @@ fn nfr_rel_11_migration_v3_to_v4() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (3, 8));
+    assert_eq!((report.from_version, report.to_version), (3, 9));
     assert!(report.backup.unwrap().exists());
     let (pending, detail, excluded) = store
         .read_raw(|c| {

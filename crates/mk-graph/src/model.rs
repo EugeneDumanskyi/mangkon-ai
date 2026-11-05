@@ -7,9 +7,9 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use mk_kernel::{IdentifierKey, NameKey};
 
 use crate::{
-    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, EntityStats, IdentifierStats,
-    LOW_CONFIDENCE, StopList, SubjectKind, connection_for, display_name, entity_connection_for,
-    resolve,
+    ConnectionRow, DecisionFact, DecisionKind, DecisionStatus, EntityCounts, EntityStats,
+    IdentifierStats, LOW_CONFIDENCE, StopList, SubjectKind, connection_for, display_name,
+    entity_connection_for, resolve,
 };
 
 /// A stored content as the derived rules see it.
@@ -146,23 +146,30 @@ pub fn reference(facts: &Facts) -> DerivedState {
                     from_table: mentions.iter().all(|m| m.from_table),
                 },
             );
-            let counted: Vec<&&EntityMentionFact> = mentions
+            let all: Vec<&&EntityMentionFact> = mentions
                 .iter()
-                .filter(|m| m.confidence >= LOW_CONFIDENCE)
                 .filter(|m| contents.get(&m.content).is_some_and(|c| c.counted))
                 .collect();
-            let stats = EntityStats {
-                documents: counted
-                    .iter()
-                    .map(|m| m.document)
-                    .collect::<BTreeSet<_>>()
-                    .len() as u64,
-                file_types: counted
+            let counts = |ms: &[&&EntityMentionFact]| EntityCounts {
+                documents: ms.iter().map(|m| m.document).collect::<BTreeSet<_>>().len() as u64,
+                file_types: ms
                     .iter()
                     .map(|m| contents[&m.content].file_type.as_str())
                     .collect::<BTreeSet<_>>()
                     .len() as u64,
-                mentions: counted.len() as u64,
+                mentions: ms.len() as u64,
+            };
+            let high: Vec<&&EntityMentionFact> = all
+                .iter()
+                .copied()
+                .filter(|m| m.confidence >= LOW_CONFIDENCE)
+                .collect();
+            let shown = counts(&high);
+            let stats = EntityStats {
+                documents: shown.documents,
+                file_types: shown.file_types,
+                mentions: shown.mentions,
+                low: counts(&all),
             };
             if let Some(row) = entity_connection_for(key, &stats, resolution.ignored) {
                 out.connections.insert(anchor.to_string(), row);
@@ -331,6 +338,7 @@ mod tests {
             (row.source_count, row.file_type_count, row.ignored),
             (2, 2, true)
         );
+        assert!(!row.low_only);
         // Northgate's second document is Missing: no connection, but the entity stays.
         assert!(d.entities.contains_key("org:northgate marine"));
         assert!(!d.connections.contains_key("org:northgate marine"));

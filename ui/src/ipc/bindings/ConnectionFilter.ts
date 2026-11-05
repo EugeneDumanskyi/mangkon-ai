@@ -16,4 +16,9 @@ minSources: number,
 /**
  * Found in any of these file types; none = all.
  */
-fileTypes: Array<string>, find: string, sort: ConnectionSort, descending: boolean, includeIgnored: boolean, };
+fileTypes: Array<string>, find: string, sort: ConnectionSort, descending: boolean, includeIgnored: boolean, 
+/**
+ * "Show low confidence": also the people and organizations only low-confidence mentions
+ * connect (US-10.1 AC3).
+ */
+includeLow: boolean, };

@@ -23,6 +23,7 @@ path = "src/bin/mk-core-fake-llama-server.rs"
 required-features = ["testkit"]
 
 [dependencies]
+mk-ai.workspace = true
 mk-kernel.workspace = true
 mk-workspace.workspace = true
 mk-corpus.workspace = true

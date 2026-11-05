@@ -10,7 +10,7 @@ CREATE TABLE identifier (
 ) STRICT;
 
 -- Entities (domain §9.3 steps 1, 2, 4): grouped by name key; the display name is the most
--- frequent name as written, a tie broken A→Z (INV-ER-07). M4c: table names only.
+-- frequent name as written, a tie broken A→Z (INV-ER-07). Table names (M4c) and AI names (M6a).
 CREATE TABLE entity (
     name_key      TEXT PRIMARY KEY,
     entity_type   TEXT NOT NULL,
@@ -27,6 +27,8 @@ CREATE TABLE connection (
     mention_count   INTEGER NOT NULL,
     low_confidence  INTEGER NOT NULL,
     ignored         INTEGER NOT NULL,
+    -- M6a: exists only because of mentions under 0.5, hidden by default (INV-AI-05).
+    low_only        INTEGER NOT NULL,
     -- M4d, for the Connections screen without a join (US-07.1, US-07.2): the type name, the
     -- value as shown (an entity's display name; a custom pattern's value without its label)
     -- and the counted file types, sorted, as ',csv,eml,pdf,'.

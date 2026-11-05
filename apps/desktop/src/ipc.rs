@@ -972,6 +972,9 @@ pub struct ConnectionFilter {
     pub sort: ConnectionSort,
     pub descending: bool,
     pub include_ignored: bool,
+    /// "Show low confidence": also the people and organizations only low-confidence mentions
+    /// connect (US-10.1 AC3).
+    pub include_low: bool,
 }
 
 impl From<ConnectionFilter> for mk_core::ConnectionQuery {
@@ -991,6 +994,7 @@ impl From<ConnectionFilter> for mk_core::ConnectionQuery {
             },
             descending: f.descending,
             include_ignored: f.include_ignored,
+            include_low: f.include_low,
         }
     }
 }
@@ -1041,6 +1045,9 @@ pub struct ConnectionItem {
     pub file_types: Vec<String>,
     /// Every mention is below 0.5 confidence (US-07.1 AC4).
     pub low_confidence: bool,
+    /// It connects two documents only because of mentions below 0.5 (US-10.1 AC3); listed only
+    /// with "Show low confidence".
+    pub low_only: bool,
     /// Ignored by the user (US-07.4); only listed with "Show ignored".
     pub ignored: bool,
 }
@@ -1062,6 +1069,7 @@ impl ConnectionItem {
             mention_count: count(r.mention_count),
             file_types: c.file_types,
             low_confidence: r.low_confidence,
+            low_only: r.low_only,
             ignored: r.ignored,
         }
     }
@@ -1180,6 +1188,10 @@ pub struct Occurrence {
     /// The text as found.
     pub raw: String,
     pub low_confidence: bool,
+    /// 0–1: the model's own value on a person or organization (US-10.1 AC1).
+    pub confidence: f32,
+    /// The model a person or organization came from (US-10.4 AC1); `null` otherwise.
+    pub ai_model: Option<String>,
     /// The document the mention is in: occurrences are grouped by it (US-07.3 AC1).
     #[ts(type = "number")]
     pub document_id: i64,
@@ -1206,6 +1218,8 @@ impl From<mk_core::OccurrenceRow> for Occurrence {
             location: (&o.locator).into(),
             raw: o.raw,
             low_confidence: o.confidence < mk_core::LOW_CONFIDENCE,
+            confidence: o.confidence,
+            ai_model: o.ai_model,
         }
     }
 }
@@ -2759,6 +2773,135 @@ impl From<mk_core::FirstRun> for FirstRunInfo {
         Self {
             show: f.show,
             demo: f.demo.map(|p| p.display().to_string()),
+        }
+    }
+}
+
+// ---- M6a: AI extraction (US-10.1, US-10.2, US-10.3, US-10.4, gap A3) ----
+
+/// What Stage B is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum AiLaneState {
+    /// Nothing has run.
+    Idle,
+    /// More units wait than start by themselves: the user picks.
+    WaitingForPick,
+    Running,
+    Paused,
+    Blocked,
+    /// "Applying new results…": the last unit of a re-run is on its way (ADR-0005).
+    Applying,
+    Done,
+}
+
+impl From<mk_core::AiLaneState> for AiLaneState {
+    fn from(s: mk_core::AiLaneState) -> Self {
+        match s {
+            mk_core::AiLaneState::Idle => AiLaneState::Idle,
+            mk_core::AiLaneState::WaitingForPick => AiLaneState::WaitingForPick,
+            mk_core::AiLaneState::Running => AiLaneState::Running,
+            mk_core::AiLaneState::Paused => AiLaneState::Paused,
+            mk_core::AiLaneState::Blocked => AiLaneState::Blocked,
+            mk_core::AiLaneState::Applying => AiLaneState::Applying,
+            mk_core::AiLaneState::Done => AiLaneState::Done,
+        }
+    }
+}
+
+/// A number of units and about how long they take (gap A3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiEstimate {
+    pub units: u32,
+    pub seconds: u32,
+}
+
+impl From<mk_core::UnitEstimate> for AiEstimate {
+    fn from(e: mk_core::UnitEstimate) -> Self {
+        Self {
+            units: count(e.units),
+            seconds: count(e.estimate.as_secs()),
+        }
+    }
+}
+
+/// The progress panel's AI row and the Settings section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AiExtractionInfo {
+    /// The "Experimental" label (US-10.3).
+    pub experimental: bool,
+    pub state: AiLaneState,
+    /// Why it is Blocked (INV-PR-09).
+    pub reason: Option<String>,
+    pub units_done: u32,
+    pub units_total: u32,
+    pub units_failed: u32,
+    pub eta: Eta,
+    /// "Data sent to …" (US-09.8 AC1).
+    pub destination: Option<String>,
+    /// The model behind the results on screen (US-10.4 AC1).
+    pub results_model: Option<String>,
+    /// The model of a re-run under way; nothing of it shows until it is done.
+    pub rerun_model: Option<String>,
+    /// "Re-run with Y": the model now chosen, when it is not the one behind the results.
+    pub rerun_with: Option<String>,
+    pub mentions: u32,
+    /// "N mentions discarded (no matching text)" (US-10.2 AC2).
+    pub discarded: u32,
+    /// "N responses could not be read" (US-10.1 AC2).
+    pub invalid_responses: u32,
+    /// Names found only inside an identifier.
+    pub identifier_dropped: u32,
+    /// Units waiting for the user's pick.
+    pub waiting: Option<AiEstimate>,
+}
+
+impl From<mk_core::AiExtractionView> for AiExtractionInfo {
+    fn from(v: mk_core::AiExtractionView) -> Self {
+        Self {
+            experimental: v.experimental,
+            state: v.state.into(),
+            reason: v.reason,
+            units_done: count(v.units_done),
+            units_total: count(v.units_total),
+            units_failed: count(v.units_failed),
+            eta: v.eta.into(),
+            destination: v.destination,
+            results_model: v.results_model,
+            rerun_model: v.rerun_model,
+            rerun_with: v.rerun_with,
+            mentions: count(v.mentions),
+            discarded: count(v.discarded),
+            invalid_responses: count(v.invalid_responses),
+            identifier_dropped: count(v.identifier_dropped),
+            waiting: v.waiting.map(Into::into),
+        }
+    }
+}
+
+/// The documents "Find people and organizations" is about.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum AiScope {
+    All,
+    #[serde(rename_all = "camelCase")]
+    Contents {
+        #[ts(type = "Array<number>")]
+        content_ids: Vec<i64>,
+    },
+}
+
+impl From<AiScope> for mk_core::UnitScope {
+    fn from(s: AiScope) -> Self {
+        match s {
+            AiScope::All => mk_core::UnitScope::All,
+            AiScope::Contents { content_ids } => mk_core::UnitScope::Contents(content_ids),
         }
     }
 }

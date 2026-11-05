@@ -6,7 +6,7 @@
 //! - [`Workspace::ai_readiness`]: Ready with where data would go, or Blocked with a reason
 //!   (US-09.7 AC3, US-09.5 AC3); [`Workspace::refresh_ai_blocks`] keeps the project's AI jobs
 //!   Blocked or running to match (INV-PR-09).
-//! - [`Workspace::ai_client`]: the entry point of the M6 stages: the local runtime started on
+//! - [`Workspace::ai_client`]: the entry point of the AI stages: the local runtime started on
 //!   demand (US-09.5 AC1), or an endpoint, always through the egress gate (ADR-0009).
 //! - [`Workspace::try_local_model`]: "Try": fixed test texts to an installed model
 //!   (INV-EG-08).
@@ -400,9 +400,15 @@ impl Workspace {
                 AiReadiness::Blocked { reason, .. } => {
                     project.store().block_ai_jobs(stages_of(role), &reason)?
                 }
+                // Stage B also waits while the choice is not the model of its run.
+                AiReadiness::Ready { .. } if role == Role::Extraction => {
+                    project.store().unblock_ai_jobs(&[Stage::C])?
+                        + self.refresh_identity_blocks(project)?
+                }
                 AiReadiness::Ready { .. } => project.store().unblock_ai_jobs(stages_of(role))?,
             };
         }
+        project.note_ai_switch();
         Ok(changed > 0)
     }
 

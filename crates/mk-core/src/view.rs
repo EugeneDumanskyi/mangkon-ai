@@ -443,7 +443,19 @@ impl Project {
     /// The counted mentions of a connection's key, each with its locator and file (US-07.3
     /// AC2), at most [`MAX_OCCURRENCES`].
     pub fn occurrences(&self, key: &str) -> Result<Vec<OccurrenceRow>, ProjectError> {
-        Ok(self.store().mentions_of(key, MAX_OCCURRENCES)?)
+        self.occurrences_with(key, false)
+    }
+
+    /// [`occurrences`](Self::occurrences), with a person's or organization's mentions under 0.5
+    /// when "Show low confidence" is on (US-10.1 AC3).
+    pub fn occurrences_with(
+        &self,
+        key: &str,
+        include_low: bool,
+    ) -> Result<Vec<OccurrenceRow>, ProjectError> {
+        Ok(self
+            .store()
+            .mentions_of(key, MAX_OCCURRENCES, include_low)?)
     }
 
     /// The source around one mention, the hit split out (US-07.3 AC2, US-08.1 AC3–AC6).
@@ -474,11 +486,14 @@ impl Project {
     }
 
     /// Where `occurrence` is among the counted mentions of its value in its document (US-08.2
-    /// AC1). A mention that no longer counts is shown as the only one.
+    /// AC1). A mention that no longer counts is shown as the only one. A low-confidence one was
+    /// opened with those on, so it moves among them too.
     fn position(&self, occurrence: &OccurrenceRow) -> Result<Position, ProjectError> {
-        let ids = self
-            .store()
-            .mentions_in_document(&occurrence.key, occurrence.document_id)?;
+        let ids = self.store().mentions_in_document(
+            &occurrence.key,
+            occurrence.document_id,
+            occurrence.confidence < mk_graph::LOW_CONFIDENCE,
+        )?;
         let Some(i) = ids.iter().position(|id| *id == occurrence.mention_id) else {
             return Ok(Position {
                 index: 1,

@@ -4,6 +4,7 @@ import { commands, errorMessage } from "../ipc/commands";
 import type { Settings } from "../ipc/bindings/Settings";
 import type { SettingsSaved } from "../ipc/bindings/SettingsSaved";
 import type { SourceRoot } from "../ipc/bindings/SourceRoot";
+import { AiExtractionSettings } from "./AiExtraction";
 import { CustomPatterns } from "./CustomPatterns";
 import { EgressSettings } from "./EgressSettings";
 import { ocrChoices, parseDomains, reprocessQuestion } from "../lib/forms";
@@ -285,6 +286,7 @@ export function SettingsPanel() {
         </p>
       )}
       <CustomPatterns />
+      <AiExtractionSettings />
       <EgressSettings />
       <h3 className="mt-6 font-semibold">Sources</h3>
       {rootError && (

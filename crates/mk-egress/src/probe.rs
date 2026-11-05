@@ -190,6 +190,7 @@ pub fn endpoint_test(
         // (Qwen3.5-4B on llama-server used 222).
         max_tokens: Some(STRUCTURED_PROBE_MAX_TOKENS),
         temperature: Some(0.0),
+        seed: None,
     };
     report.structured_output = Some(
         post("chat/completions", &chat_body(target.model, &structured))

@@ -58,7 +58,7 @@ fn jobs_in(conn: &Connection, states: &[JobState]) -> Result<Vec<(i64, JobState)
     Ok(out)
 }
 
-fn set_job_state(
+pub(crate) fn set_job_state(
     conn: &Connection,
     job: i64,
     from: JobState,
@@ -81,6 +81,9 @@ pub(crate) fn set_queue_paused(conn: &Connection, paused: bool) -> Result<usize,
     set_meta(conn, "queue_paused", paused.then_some("1"))?;
     let mut moved = 0;
     if paused {
+        // A model call cannot be interrupted, so its item leaves In progress now and the reply
+        // is dropped when it comes (NFR-REL-05).
+        crate::ai::release_all_ai_items(conn)?;
         for (job, s) in jobs_in(conn, &[JobState::Queued, JobState::Running])? {
             set_job_state(conn, job, s, JobState::Paused)?;
             moved += 1;
@@ -248,6 +251,8 @@ pub(crate) fn cancel_queue(conn: &Connection) -> Result<CancelOutcome, StoreErro
         set_job_state(conn, job, s, JobState::Cancelled)?;
         out.jobs += 1;
     }
+    // A re-run under way goes with its output; nothing visible changes (ADR-0005).
+    crate::ai::drop_pending_runs(conn)?;
     set_meta(conn, "queue_paused", None)?;
     Ok(out)
 }

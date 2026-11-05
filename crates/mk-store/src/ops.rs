@@ -290,7 +290,8 @@ pub(crate) fn complete_job_if_done(conn: &Connection, job: i64) -> Result<(), St
     };
     conn.prepare_cached("UPDATE job SET state = ?2 WHERE id = ?1")?
         .execute(params![job, to.as_str()])?;
-    Ok(())
+    // A re-run whose last job ended switches here, on whichever path ended it (ADR-0005).
+    crate::ai::after_job_ended(conn, job)
 }
 
 /// A new job of `stage`: Queued, or Paused while the project's queue is paused (INV-PR-06).
@@ -335,8 +336,10 @@ pub(crate) fn add_item(
 }
 
 /// Pending items of a content become Skipped: its target went missing or away before it
-/// started (domain §7.2).
+/// started (domain §7.2). So do AI items in progress: their reply has no place to go, and the
+/// token drops it when it comes.
 pub(crate) fn skip_pending(conn: &Connection, content: i64) -> Result<(), StoreError> {
+    crate::ai::release_ai_items_of(conn, content)?;
     let jobs: Vec<i64> = {
         let mut stmt = conn.prepare_cached(
             "SELECT DISTINCT job_id FROM work_item WHERE content_id = ?1 AND state = ?2",
@@ -817,6 +820,9 @@ pub(crate) fn commit_stage_a(
     let (job, content) = set_item_state(conn, item, ItemState::Done)?;
     let content = content.ok_or_else(|| invalid(format!("item {item} has no content")))?;
     set_content_state(conn, content, IngestionState::Done)?;
+    // The old segments go below: AI work on them has no target any more. New units are planned
+    // for the new ones.
+    crate::ai::skip_ai_items_of(conn, content)?;
 
     let mut touched = BTreeSet::new();
     content_keys(conn, content, &mut touched)?;

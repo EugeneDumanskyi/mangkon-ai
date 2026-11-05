@@ -4,10 +4,10 @@
 
 use std::collections::VecDeque;
 use std::ffi::OsString;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,9 @@ pub struct ModelSpec {
     pub context: u32,
 }
 
+/// Server slots of an extraction model (NFR-PERF-25).
+pub const EXTRACTION_SLOTS: u32 = 4;
+
 /// The arguments after `--host 127.0.0.1 --port P --api-key K` (`docs/install-llama-cpp.md`
 /// §4, M1 settings in `09-model-check.md`).
 pub fn model_args(spec: &ModelSpec) -> Vec<String> {
@@ -46,7 +49,7 @@ pub fn model_args(spec: &ModelSpec) -> Vec<String> {
         .unwrap_or_default();
     let mut a: Vec<String> = vec!["-m".into(), model];
     let rest: &[&str] = match spec.role {
-        Role::Extraction => &["-np", "1", "--cache-ram", "0", "--reasoning", "off"],
+        Role::Extraction => &["-np", "4", "--cache-ram", "0", "--reasoning", "off"],
         Role::Embeddings => &[
             "--embedding",
             "-c",
@@ -62,7 +65,9 @@ pub fn model_args(spec: &ModelSpec) -> Vec<String> {
         ],
     };
     if spec.role == Role::Extraction {
-        a.extend(["-c".into(), spec.context.to_string()]);
+        // llama-server divides `-c` among its slots: each of the 4 (NFR-PERF-25) gets the model's
+        // context, as in M1's 4-slot run.
+        a.extend(["-c".into(), (spec.context * EXTRACTION_SLOTS).to_string()]);
     }
     a.extend(rest.iter().map(|s| s.to_string()));
     a
@@ -168,6 +173,8 @@ pub fn exit_text(status: Option<ExitStatus>) -> String {
 /// A running `llama-server`.
 pub struct Process {
     child: Child,
+    /// The way to the watcher; `None` once told to stop, and where there is none.
+    watcher: Option<ChildStdin>,
     pub port: u16,
     pub key: String,
     tail: Arc<Mutex<Tail>>,
@@ -178,6 +185,41 @@ pub struct Process {
 #[derive(Clone, Debug, Default)]
 pub struct SpawnOptions {
     pub env: Vec<(OsString, OsString)>,
+}
+
+/// Starts the watcher, then becomes `llama-server` under the same process id, so no moment of its
+/// life is unwatched. The watcher ends it if the app dies without stopping it (a crash, a forced
+/// kill), so a model does not keep the GPU's memory and the next start does not run out of it. The
+/// app holds the other end of the pipe on stdin: `stop` from the app ends the watcher, and the pipe
+/// closing without it means the app is gone. Parser workers leave the same way (ADR-0007).
+#[cfg(unix)]
+const WATCHED_START: &str = r#"exec 3<&0 </dev/null
+(
+    read -r word <&3
+    [ "$word" = stop ] && exit
+    kill -TERM $$
+    for _ in 1 2 3 4 5; do
+        sleep 1
+        kill -0 $$ || exit
+    done
+    kill -KILL $$
+) >/dev/null 2>&1 &
+exec 3<&-
+exec "$0" "$@"
+"#;
+
+#[cfg(unix)]
+fn command(bin: &Path) -> Command {
+    let mut c = Command::new("/bin/sh");
+    c.args(["-c", WATCHED_START]).arg(bin).stdin(Stdio::piped());
+    c
+}
+
+#[cfg(not(unix))]
+fn command(bin: &Path) -> Command {
+    let mut c = Command::new(bin);
+    c.stdin(Stdio::null());
+    c
 }
 
 fn reader(mut r: impl Read + Send + 'static, tail: Arc<Mutex<Tail>>) {
@@ -200,7 +242,7 @@ impl Process {
         opts: &SpawnOptions,
     ) -> std::io::Result<Process> {
         let key = random_key();
-        let mut cmd = Command::new(bin);
+        let mut cmd = command(bin);
         cmd.args([
             "--host",
             "127.0.0.1",
@@ -210,7 +252,6 @@ impl Process {
             &key,
         ])
         .args(model_args(spec))
-        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
         // The app ran itself again with its own malloc tunables (NFR-RES-01); llama-server
@@ -235,6 +276,7 @@ impl Process {
             reader(e, tail.clone());
         }
         Ok(Process {
+            watcher: child.stdin.take(),
             child,
             port,
             key,
@@ -253,7 +295,11 @@ impl Process {
 
     /// `Some(status)` once the process has ended.
     pub fn exited(&mut self) -> Option<ExitStatus> {
-        self.child.try_wait().ok().flatten()
+        let status = self.child.try_wait().ok().flatten();
+        if status.is_some() {
+            self.end_watcher();
+        }
+        status
     }
 
     /// Asks `/health` every [`HEALTH_EVERY`] until 200, the process ends, `timeout` passes or
@@ -300,9 +346,18 @@ impl Process {
         }
     }
 
-    /// A kill (SIGKILL on Unix), then reap.
+    /// The process has ended, so the watcher must not act on a process id that may be used again.
+    /// Only now: a kill of the app before this point still needs it.
+    fn end_watcher(&mut self) {
+        if let Some(mut w) = self.watcher.take() {
+            let _ = w.write_all(b"stop\n");
+        }
+    }
+
+    /// A kill (SIGKILL on Unix), then reap. The unreaped process keeps its id for the watcher.
     pub fn kill(&mut self) {
         let _ = self.child.kill();
+        self.end_watcher();
         let _ = self.child.wait();
     }
 
@@ -391,7 +446,7 @@ mod tests {
         };
         assert_eq!(
             model_args(&x).join(" "),
-            "-m /m/x.gguf -c 8192 -np 1 --cache-ram 0 --reasoning off"
+            "-m /m/x.gguf -c 32768 -np 4 --cache-ram 0 --reasoning off"
         );
         let e = ModelSpec {
             role: Role::Embeddings,
@@ -429,5 +484,131 @@ mod tests {
         let s = t.text();
         assert_eq!(s.len(), TAIL_BYTES);
         assert!(s.ends_with("aend"));
+    }
+
+    /// A kill of the app can land at any moment, so no moment may leave `llama-server` unwatched.
+    /// Too short to hit by chance: these servers look for the watcher themselves.
+    #[cfg(target_os = "linux")]
+    mod watcher {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        const SERVER: &str = r#"#!/bin/sh
+read -r watcher < /proc/$$/task/$$/children
+trap 'if kill -0 "$watcher" 2>/dev/null; then echo alive > "$OUT.term"; fi; exit 0' TERM
+echo "$watcher" > "$OUT.tmp" && mv "$OUT.tmp" "$OUT"
+while :; do sleep 0.02; done
+"#;
+
+        struct Started {
+            process: Process,
+            out: PathBuf,
+            watcher: String,
+            _dir: tempfile::TempDir,
+        }
+
+        fn eventually(what: &str, done: &mut dyn FnMut() -> bool) {
+            let t = Instant::now();
+            while !done() {
+                assert!(t.elapsed() < Duration::from_secs(10), "{what}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        fn start() -> Started {
+            let dir = tempfile::tempdir().unwrap();
+            let bin = dir.path().join("server");
+            std::fs::write(&bin, SERVER).unwrap();
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let out = dir.path().join("watcher");
+            let spec = ModelSpec {
+                id: "x".into(),
+                role: Role::Extraction,
+                files: vec!["/m/x.gguf".into()],
+                context: 8192,
+            };
+            let opts = SpawnOptions {
+                env: vec![("OUT".into(), out.clone().into())],
+            };
+            // Another test thread may fork while the script is open for writing; running it
+            // fails with "Text file busy" until that copy of the descriptor closes.
+            for _ in 0..200 {
+                let mut process = Process::spawn(&bin, &spec, 1, &opts).unwrap();
+                eventually("the server wrote nothing and did not end", &mut || {
+                    out.exists() || process.exited().is_some()
+                });
+                if out.exists() {
+                    let watcher = std::fs::read_to_string(&out).unwrap().trim().to_string();
+                    return Started {
+                        process,
+                        out,
+                        watcher,
+                        _dir: dir,
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("the server never started");
+        }
+
+        fn alive(pid: &str) -> bool {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|s| {
+                !s.rsplit(')')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start()
+                    .starts_with('Z')
+            })
+        }
+
+        #[test]
+        fn nfr_rel_02_the_watcher_is_there_before_the_server_starts_and_until_it_ends() {
+            let mut s = start();
+            assert!(
+                !s.watcher.is_empty(),
+                "no watcher at the server's first instruction"
+            );
+            assert!(s.process.stop(Duration::from_secs(5)));
+            let term = s.out.with_extension("term");
+            assert_eq!(
+                std::fs::read_to_string(&term).ok().as_deref(),
+                Some("alive\n"),
+                "the watcher was gone before the server"
+            );
+            eventually("the watcher stayed after a stop", &mut || {
+                !alive(&s.watcher)
+            });
+        }
+
+        #[test]
+        fn nfr_rel_02_the_app_gone_ends_the_server() {
+            let mut s = start();
+            // What the app's death does to the pipe.
+            drop(s.process.watcher.take());
+            eventually("the server outlived the app", &mut || {
+                s.process.exited().is_some()
+            });
+            eventually("the watcher stayed", &mut || !alive(&s.watcher));
+        }
+
+        #[test]
+        fn the_server_sees_nothing_of_the_watcher() {
+            let mut s = start();
+            // Output readers aside, a pipe open here would be the watcher's.
+            let pipes = std::fs::read_dir(format!("/proc/{}/fd", s.process.pid()))
+                .unwrap()
+                .map(|e| e.unwrap())
+                .filter(|e| e.file_name().to_string_lossy().parse::<u32>().unwrap() > 2)
+                .map(|e| std::fs::read_link(e.path()).unwrap())
+                .filter(|target| target.to_string_lossy().starts_with("pipe:"))
+                .collect::<Vec<_>>();
+            assert_eq!(pipes, Vec::<PathBuf>::new());
+            let stdin = std::fs::read_link(format!("/proc/{}/fd/0", s.process.pid())).unwrap();
+            assert_eq!(stdin, Path::new("/dev/null"));
+            s.process.kill();
+            eventually("the watcher stayed after a kill", &mut || {
+                !alive(&s.watcher)
+            });
+        }
     }
 }
