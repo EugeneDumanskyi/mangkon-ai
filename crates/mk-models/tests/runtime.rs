@@ -446,6 +446,44 @@ fn model_switch_stops_the_old_one() {
     assert_eq!(rig.slot(Role::Extraction).model_id, "y");
 }
 
+/// Two callers wanting different models of one role each get theirs in turn: a caller that started
+/// its model takes it before the other can stop it (M6b: a re-run's lane and a query, either side
+/// of a model change, stopped each other's server for good).
+#[test]
+fn model_switch_two_callers_do_not_stop_each_other_for_good() {
+    let rig = Rig::new(
+        Control {
+            start_delay_ms: 100,
+            ..Control::default()
+        },
+        |_| {},
+    );
+    let (x, y) = (
+        rig.spec("x.gguf", Role::Embeddings),
+        rig.spec("y.gguf", Role::Embeddings),
+    );
+    // As in the app, where a change refreshes the project's blocks: the starter is not the first
+    // back at the lock.
+    rig.sup
+        .on_change(|| std::thread::sleep(Duration::from_millis(30)));
+    let (sent, got) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        for spec in [&x, &y] {
+            let (sup, sent) = (&rig.sup, sent.clone());
+            scope.spawn(move || {
+                drop(sup.ensure_ready(spec).unwrap());
+                let _ = sent.send(());
+            });
+        }
+        let both = (0..2).all(|_| got.recv_timeout(WAIT).is_ok());
+        // Whatever happened, the scope can end: quitting makes a caller still waiting return.
+        if !both {
+            rig.sup.shut_down();
+        }
+        assert!(both, "two callers never both got a model");
+    });
+}
+
 /// Killed from outside (NFR-REL-12 by hand: `pkill -9 llama-server`).
 #[cfg(unix)]
 #[test]

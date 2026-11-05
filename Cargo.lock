@@ -3033,6 +3033,7 @@ dependencies = [
  "mk-worker",
  "mk-workspace",
  "proptest",
+ "rusqlite",
  "serde",
  "serde_json",
  "sysinfo",
@@ -3159,7 +3160,9 @@ dependencies = [
 name = "mk-search"
 version = "0.0.0"
 dependencies = [
+ "half",
  "mk-identifiers",
+ "mk-kernel",
  "proptest",
 ]
 

@@ -33,7 +33,7 @@ use crate::project::{Project, ProjectError};
 use crate::workspace::Workspace;
 
 /// Network errors in a row before the job is Blocked (ADR-0006).
-const MAX_NETWORK_FAILURES: u32 = 3;
+pub(crate) const MAX_NETWORK_FAILURES: u32 = 3;
 /// The first wait after a network error; it doubles.
 const BACKOFF: Duration = Duration::from_millis(500);
 /// How often a backoff looks at the stop request.
@@ -171,7 +171,7 @@ pub struct AiExtractionView {
 }
 
 /// How a call failed, for what happens next.
-enum CallFailure {
+pub(crate) enum CallFailure {
     /// The destination refuses this project now: the job is Blocked at once.
     Refused(String),
     /// Only this item: it fails, the rest goes on.
@@ -180,7 +180,7 @@ enum CallFailure {
     Network(String),
 }
 
-fn classify(e: GateError) -> CallFailure {
+pub(crate) fn classify(e: GateError) -> CallFailure {
     match &e {
         GateError::NotAllowed { .. } | GateError::NeedsReconfirmation { .. } => {
             CallFailure::Refused(refusal_text(&e))
@@ -268,22 +268,31 @@ impl LaneRun {
     }
 }
 
+/// Waits out the backoff after `failures` network errors; false when `stop` says to stop instead.
+pub(crate) fn backoff_wait(failures: u32, stop: impl Fn() -> bool) -> bool {
+    let until = Instant::now() + BACKOFF * (1 << failures.saturating_sub(1).min(4));
+    while Instant::now() < until {
+        if stop() {
+            return false;
+        }
+        std::thread::sleep(STOP_POLL);
+    }
+    true
+}
+
 fn block_text(reason: &str, model: &str) -> String {
     format!("These results came from {model}. {reason}")
 }
 
 impl Workspace {
-    /// The run a new item would belong to now: the chosen model and where its data would go.
-    /// `Err` is why it cannot run.
-    fn extraction_target(&self, project: &Project) -> Result<RunBinding, String> {
-        let (class, name) = match self.ai_readiness(project, Role::Extraction) {
+    /// The run a new item of `role` would belong to now: the chosen model and where its data would
+    /// go. `Err` is why it cannot run.
+    pub(crate) fn ai_target(&self, project: &Project, role: Role) -> Result<RunBinding, String> {
+        let (class, name) = match self.ai_readiness(project, role) {
             AiReadiness::Ready { class, name, .. } => (class, name),
             AiReadiness::Blocked { reason, .. } => return Err(reason),
         };
-        let choice = self
-            .ai_choice(Role::Extraction)
-            .map_err(|e| e.message)?
-            .choice;
+        let choice = self.ai_choice(role).map_err(|e| e.message)?.choice;
         let (identity, host) = match choice {
             Some(AiChoice::Local(id)) => (RunIdentity::local(&id), "127.0.0.1".to_string()),
             Some(AiChoice::Endpoint(id)) => {
@@ -306,22 +315,43 @@ impl Workspace {
             model_name: name,
             destination_host: host,
             destination_class: class.as_str().to_string(),
-            prompt_version: PROMPT_VERSION,
+            prompt_version: match role {
+                Role::Extraction => PROMPT_VERSION,
+                Role::Embeddings => 0,
+            },
         })
     }
 
-    /// Stage B jobs wait while the chosen model is not the one of their run, so two models'
+    fn extraction_target(&self, project: &Project) -> Result<RunBinding, String> {
+        self.ai_target(project, Role::Extraction)
+    }
+
+    /// A role's jobs wait while the chosen model is not the one of their run, so two models'
     /// output is never mixed: choosing it again runs them, a re-run replaces it (decided
     /// 2026-11-05). Returns the jobs changed.
-    pub(crate) fn refresh_identity_blocks(&self, project: &Project) -> Result<usize, StoreError> {
-        let Ok(target) = self.extraction_target(project) else {
+    pub(crate) fn refresh_identity_blocks(
+        &self,
+        project: &Project,
+        role: Role,
+    ) -> Result<usize, StoreError> {
+        let Ok(target) = self.ai_target(project, role) else {
             return Ok(0);
         };
         let store = project.store();
-        let pending = store.pending_ai_run()?;
-        let active = store.active_ai_run()?;
+        let (pending, active, jobs) = match role {
+            Role::Extraction => (
+                store.pending_ai_run()?,
+                store.active_ai_run()?,
+                store.open_ai_jobs()?,
+            ),
+            Role::Embeddings => (
+                store.pending_embedding_run()?,
+                store.active_embedding_run()?,
+                store.open_embedding_jobs()?,
+            ),
+        };
         let mut changed = 0;
-        for (job, identity, _) in store.open_ai_jobs()? {
+        for (job, identity, _) in jobs {
             let reason =
                 identity
                     .filter(|i| *i != target.identity)
@@ -330,6 +360,9 @@ impl Workspace {
                             "This re-run uses {0}. Choose {0} again, or cancel the re-run.",
                             p.model_name
                         ),
+                        (_, Some(a)) if role == Role::Embeddings => {
+                            crate::embeddings::model_changed(&a.model_name, &target.model_name)
+                        }
                         (_, Some(a)) => block_text(
                             &format!(
                                 "New work waits so two models are never mixed: re-run with {}, or \
@@ -356,7 +389,13 @@ impl Workspace {
             store.set_ai_waiting_units(units)?;
             return Ok(ScheduleOutcome::default());
         }
-        let out = store.schedule_ai_units(UnitScope::Auto, Trigger::Add)?;
+        // Nothing to plan: no second scan on the writer (see `schedule_embeddings`, NFR-RES-01).
+        let out = if units == 0 {
+            store.set_ai_waiting_units(0)?;
+            ScheduleOutcome::default()
+        } else {
+            store.schedule_ai_units(UnitScope::Auto, Trigger::Add)?
+        };
         self.refresh_ai_blocks(project)?;
         Ok(out)
     }
@@ -514,14 +553,9 @@ impl Workspace {
 
     /// Waits out a backoff; false when the lane should stop instead.
     fn back_off(&self, project: &Project, run: &LaneRun, failures: u32) -> bool {
-        let until = Instant::now() + BACKOFF * (1 << failures.saturating_sub(1).min(4));
-        while Instant::now() < until {
-            if project.ai_lane().is_stopped() || run.blocked.load(Ordering::SeqCst) {
-                return false;
-            }
-            std::thread::sleep(STOP_POLL);
-        }
-        true
+        backoff_wait(failures, || {
+            project.ai_lane().is_stopped() || run.blocked.load(Ordering::SeqCst)
+        })
     }
 
     /// One slot of the lane, with its own client (and lease on the local model).

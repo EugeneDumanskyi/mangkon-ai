@@ -15,6 +15,7 @@ mod codec;
 mod derive;
 mod documents;
 mod egress;
+mod embeddings;
 mod manage;
 mod mapping;
 mod ops;
@@ -43,6 +44,7 @@ pub use ai::{
 pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow, ModelDownloadRow};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use egress::{EgressRecordRow, PermissionRow};
+pub use embeddings::{EmbeddingRow, EmbeddingSearchRow, StartedEmbeddingItem, WindowText};
 pub use manage::{CancelOutcome, RemoveOutcome};
 pub use mapping::{ColumnRow, MappingView, ReuseCandidate};
 pub use ops::{
@@ -301,7 +303,8 @@ impl Store {
 
     /// The run jobs without one work for: the current one, or a new first run.
     pub fn bind_ai_run(&self, binding: RunBinding) -> Result<i64, StoreError> {
-        self.writer.call(move |tx| ai::bind_run(tx, &binding))
+        self.writer
+            .call(move |tx| ai::bind_run(tx, ai::STAGE, &binding))
     }
 
     /// One new job over the units of `scope` not covered yet.
@@ -385,15 +388,15 @@ impl Store {
     pub fn open_ai_jobs(
         &self,
     ) -> Result<Vec<(i64, Option<mk_ai::RunIdentity>, String)>, StoreError> {
-        self.readers.with(ai::open_ai_jobs)
+        self.readers.with(|c| ai::open_ai_jobs(c, ai::STAGE))
     }
 
     pub fn active_ai_run(&self) -> Result<Option<AiRunRow>, StoreError> {
-        self.readers.with(ai::active_run)
+        self.readers.with(|c| ai::active_run(c, ai::STAGE))
     }
 
     pub fn pending_ai_run(&self) -> Result<Option<AiRunRow>, StoreError> {
-        self.readers.with(ai::pending_run)
+        self.readers.with(|c| ai::pending_run(c, ai::STAGE))
     }
 
     pub fn ai_progress(&self) -> Result<AiProgress, StoreError> {
@@ -402,12 +405,148 @@ impl Store {
 
     /// Whether the lane would start an item now.
     pub fn has_runnable_ai_work(&self) -> Result<bool, StoreError> {
-        self.readers.with(ai::has_runnable_ai_work)
+        self.readers
+            .with(|c| ai::has_runnable_ai_work(c, ai::STAGE))
     }
 
     /// What the kill tests look for (NFR-QA-11, ADR-0005).
     pub fn ai_health(&self) -> Result<AiHealth, StoreError> {
         self.readers.with(ai::ai_health)
+    }
+
+    // ---- embeddings (M6b, ADR-0010) ----
+
+    /// The run embeddings jobs without one work for: the current one, or a new first run.
+    pub fn bind_embedding_run(&self, binding: RunBinding) -> Result<i64, StoreError> {
+        self.writer
+            .call(move |tx| ai::bind_run(tx, embeddings::STAGE, &binding))
+    }
+
+    /// One new job over the items of `scope` not covered yet.
+    pub fn schedule_embeddings(
+        &self,
+        scope: UnitScope,
+        trigger: Trigger,
+    ) -> Result<ScheduleOutcome, StoreError> {
+        self.writer
+            .call(move |tx| embeddings::schedule(tx, &scope, trigger))
+    }
+
+    /// How many windows a schedule of `scope` would embed, on a read connection.
+    pub fn count_embedding_windows(&self, scope: &UnitScope) -> Result<u64, StoreError> {
+        self.readers.with(|c| embeddings::count_windows(c, scope))
+    }
+
+    /// Remembers how many windows wait for the user's start.
+    pub fn set_embedding_waiting(&self, windows: u64) -> Result<(), StoreError> {
+        self.writer
+            .call(move |tx| embeddings::set_waiting(tx, windows))
+    }
+
+    /// Starts the next embeddings item that may run.
+    pub fn start_next_embedding_item(&self) -> Result<Option<StartedEmbeddingItem>, StoreError> {
+        self.writer.call(|tx| embeddings::start_next_item(tx))
+    }
+
+    /// Commits one item's vectors in one transaction, if its token still holds (INV-PR-04).
+    pub fn commit_embedding_item(
+        &self,
+        item: i64,
+        attempt: i64,
+        rows: Vec<EmbeddingRow>,
+    ) -> Result<bool, StoreError> {
+        self.writer
+            .call(move |tx| embeddings::commit_item(tx, item, attempt, &rows))
+    }
+
+    /// Whether an AI item is still In progress with this attempt: its token (NFR-REL-05).
+    pub fn ai_item_token_holds(&self, item: i64, attempt: i64) -> Result<bool, StoreError> {
+        self.readers.with(|c| ai::token_holds(c, item, attempt))
+    }
+
+    /// Starts an embeddings re-run with this model. The old vectors stay until its switch. Also
+    /// returns how many windows it will embed.
+    pub fn start_embedding_rerun(
+        &self,
+        binding: RunBinding,
+    ) -> Result<(ScheduleOutcome, u64), StoreError> {
+        self.writer
+            .call(move |tx| embeddings::start_rerun(tx, &binding))
+    }
+
+    /// Cancels the embeddings re-run under way, or else the current run's remaining work.
+    pub fn cancel_embedding_run(&self) -> Result<AiCancelled, StoreError> {
+        self.writer.call(|tx| embeddings::cancel(tx))
+    }
+
+    pub fn open_embedding_jobs(
+        &self,
+    ) -> Result<Vec<(i64, Option<mk_ai::RunIdentity>, String)>, StoreError> {
+        self.readers
+            .with(|c| ai::open_ai_jobs(c, embeddings::STAGE))
+    }
+
+    pub fn active_embedding_run(&self) -> Result<Option<AiRunRow>, StoreError> {
+        self.readers.with(|c| ai::active_run(c, embeddings::STAGE))
+    }
+
+    pub fn pending_embedding_run(&self) -> Result<Option<AiRunRow>, StoreError> {
+        self.readers.with(|c| ai::pending_run(c, embeddings::STAGE))
+    }
+
+    pub fn embedding_progress(&self) -> Result<AiProgress, StoreError> {
+        self.readers
+            .with(|c| ai::progress_of(c, embeddings::STAGE, embeddings::WAITING))
+    }
+
+    /// Whether the embeddings lane would start an item now.
+    pub fn has_runnable_embedding_work(&self) -> Result<bool, StoreError> {
+        self.readers
+            .with(|c| ai::has_runnable_ai_work(c, embeddings::STAGE))
+    }
+
+    /// Changes when the active run's vectors change: what the index file is compared with.
+    pub fn embedding_generation(&self) -> Result<u64, StoreError> {
+        self.readers.with(embeddings::generation)
+    }
+
+    /// A page of a run's vectors after id `after`, in id order.
+    pub fn embedding_rows_page(
+        &self,
+        run: i64,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, Vec<u8>)>, StoreError> {
+        self.readers
+            .with(|c| embeddings::rows_page(c, run, after, limit))
+    }
+
+    /// The stored vectors of `ids`, only those of `run` (INV-SR-02).
+    pub fn load_embedding_vectors(
+        &self,
+        run: i64,
+        ids: &[i64],
+    ) -> Result<Vec<(i64, Vec<u8>)>, StoreError> {
+        self.readers.with(|c| embeddings::load_vectors(c, run, ids))
+    }
+
+    /// What a meaning result shows, per vector id: its window and segment. A vector gone since
+    /// the scan is left out.
+    pub fn embedding_search_rows(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<EmbeddingSearchRow>, StoreError> {
+        self.readers.with(|c| {
+            let mut out = Vec::with_capacity(ids.len());
+            for &id in ids {
+                if let Some((segment, start, end)) = embeddings::window_of(c, id)?
+                    && let Some(row) = search::segment_row(c, segment, 0.0)?
+                {
+                    out.push((id, (start, end), row));
+                }
+            }
+            Ok(out)
+        })
     }
 
     /// Cancels every open job; their unfinished contents become Not processed (US-03.3, D10).

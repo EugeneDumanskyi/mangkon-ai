@@ -400,12 +400,12 @@ impl Workspace {
                 AiReadiness::Blocked { reason, .. } => {
                     project.store().block_ai_jobs(stages_of(role), &reason)?
                 }
-                // Stage B also waits while the choice is not the model of its run.
+                // Stage B and embeddings also wait while the choice is not the model of their run.
                 AiReadiness::Ready { .. } if role == Role::Extraction => {
                     project.store().unblock_ai_jobs(&[Stage::C])?
-                        + self.refresh_identity_blocks(project)?
+                        + self.refresh_identity_blocks(project, role)?
                 }
-                AiReadiness::Ready { .. } => project.store().unblock_ai_jobs(stages_of(role))?,
+                AiReadiness::Ready { .. } => self.refresh_identity_blocks(project, role)?,
             };
         }
         project.note_ai_switch();
@@ -420,6 +420,17 @@ impl Workspace {
         &'a self,
         project: &'a Project,
         role: Role,
+    ) -> Result<AiClient<'a>, AiError> {
+        self.ai_client_for(project, role, purpose_of(role))
+    }
+
+    /// [`ai_client`](Self::ai_client) with the purpose its calls are recorded under: a meaning
+    /// search's query goes as [`Purpose::SearchQuery`] (INV-SR-03).
+    pub fn ai_client_for<'a>(
+        &'a self,
+        project: &'a Project,
+        role: Role,
+        purpose: Purpose,
     ) -> Result<AiClient<'a>, AiError> {
         let block = |code: &str, reason: String| {
             let _ = project.store().block_ai_jobs(stages_of(role), &reason);
@@ -461,11 +472,7 @@ impl Workspace {
         let client = self
             .egress
             .gate
-            .client(
-                ProjectEgress(project.store()),
-                destination,
-                purpose_of(role),
-            )
+            .client(ProjectEgress(project.store()), destination, purpose)
             .map_err(|e| {
                 if e.is_blocked() {
                     block(e.code(), crate::egress::refusal_text(&e))

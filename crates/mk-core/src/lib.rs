@@ -38,11 +38,13 @@
 mod ai;
 mod control;
 mod egress;
+mod embeddings;
 mod events;
 mod first_run;
 mod identifiers;
 mod links;
 mod manage;
+mod meaning;
 mod models;
 mod page;
 mod patterns;
@@ -71,6 +73,7 @@ pub use egress::{
     EndpointInfo, EndpointInput, EndpointTestInfo, KeyChange, KeyState, ProjectEndpoint,
     SecretStoreStatus, refusal_text, test_endpoint_at,
 };
+pub use embeddings::{EmbeddingSummary, MeaningState, MeaningView, WindowEstimate};
 pub use events::{ConnectionsChanged, DEBOUNCE, Debouncer};
 pub use first_run::{
     DEMO_FOLDER, DEMO_NAME, FirstRun, demo_corpus_in, find_demo_corpus, is_demo_corpus,
@@ -78,6 +81,7 @@ pub use first_run::{
 pub use identifiers::RerunSummary;
 pub use links::{MAX_URL_CHARS, find_urls, openable_url};
 pub use manage::{DocumentsPage, Eta, ProgressView, SourceRootInfo};
+pub use meaning::{MEANING_IDLE, MeaningHit, MeaningOutcome, MeaningTimings};
 pub use mk_egress::{
     ChatMessage, ChatReply, ChatRequest, Destination, DestinationClass, EgressError, Embeddings,
     GateError, ModelClient, NO_STRUCTURED_OUTPUT, Purpose, SecretStoreKind, SecretString,

@@ -59,8 +59,12 @@ pub fn run(opts: &Options) -> ExitCode {
     }
 }
 
-fn open_workspace(opts: &Options) -> Result<Workspace> {
-    let dir = match &opts.app_data {
+pub(crate) fn open_workspace(
+    app_data: &Option<PathBuf>,
+    models_dir: &Option<PathBuf>,
+    llama_server: &Option<PathBuf>,
+) -> Result<Workspace> {
+    let dir = match app_data {
         Some(d) => d.clone(),
         None => mk_core::app_data_dir().ok_or("The system gives no folder for app data")?,
     };
@@ -68,11 +72,11 @@ fn open_workspace(opts: &Options) -> Result<Workspace> {
         &dir,
         EgressConfig::default(),
         ModelsConfig {
-            models_dir: opts.dir.clone(),
+            models_dir: models_dir.clone(),
             ..ModelsConfig::default()
         },
     )?;
-    if let Some(p) = &opts.llama_server {
+    if let Some(p) = llama_server {
         ws.supervisor().set_settings_path(Some(p.clone()));
     }
     Ok(ws)
@@ -82,7 +86,7 @@ fn run_inner(opts: &Options) -> Result<ExitCode> {
     if !mk_core::project_exists(&opts.project) {
         return Err(format!("no project in {}", opts.project.display()).into());
     }
-    let ws = open_workspace(opts)?;
+    let ws = open_workspace(&opts.app_data, &opts.dir, &opts.llama_server)?;
     if let Some(id) = &opts.model {
         ws.set_ai_choice(ModelRole::Extraction, Some(AiChoice::Local(id.clone())))
             .map_err(|e| e.message)?;

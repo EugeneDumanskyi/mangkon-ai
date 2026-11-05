@@ -1,6 +1,6 @@
 [package]
 name = "mk-search"
-description = "BC-10: keyword query syntax, snippets and masking, pure functions (M4a)."
+description = "BC-10: keyword query syntax, snippets, masking, and the meaning-search index as pure functions."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+half = "2.7.1"
 mk-identifiers.workspace = true
+mk-kernel.workspace = true
 
 [dev-dependencies]
 proptest = "1.12.0"

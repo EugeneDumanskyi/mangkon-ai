@@ -2884,6 +2884,139 @@ impl From<mk_core::AiExtractionView> for AiExtractionInfo {
     }
 }
 
+/// What meaning search can do now (US-06.2 AC2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum MeaningState {
+    /// Nothing has run.
+    Idle,
+    /// More windows wait than start by themselves: the user starts it.
+    WaitingForStart,
+    Running,
+    Paused,
+    Blocked,
+    /// The vectors come from another model than the one chosen.
+    ModelChanged,
+    /// "Preparing meaning search…": the vectors are done and the index is being made.
+    Preparing,
+    Ready,
+}
+
+impl From<mk_core::MeaningState> for MeaningState {
+    fn from(s: mk_core::MeaningState) -> Self {
+        match s {
+            mk_core::MeaningState::Idle => MeaningState::Idle,
+            mk_core::MeaningState::WaitingForStart => MeaningState::WaitingForStart,
+            mk_core::MeaningState::Running => MeaningState::Running,
+            mk_core::MeaningState::Paused => MeaningState::Paused,
+            mk_core::MeaningState::Blocked => MeaningState::Blocked,
+            mk_core::MeaningState::ModelChanged => MeaningState::ModelChanged,
+            mk_core::MeaningState::Preparing => MeaningState::Preparing,
+            mk_core::MeaningState::Ready => MeaningState::Ready,
+        }
+    }
+}
+
+/// A number of windows and about how long they take.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MeaningEstimate {
+    pub windows: u32,
+    pub seconds: u32,
+}
+
+impl From<mk_core::WindowEstimate> for MeaningEstimate {
+    fn from(e: mk_core::WindowEstimate) -> Self {
+        Self {
+            windows: count(e.windows),
+            seconds: count(e.estimate.as_secs()),
+        }
+    }
+}
+
+/// The Meaning tab's status and the progress panel's row.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MeaningStatus {
+    pub state: MeaningState,
+    /// Why a query cannot run now, as the tab says it (US-06.2 AC2); `null` when it can.
+    pub reason: Option<String>,
+    pub items_done: u32,
+    pub items_total: u32,
+    pub items_failed: u32,
+    pub eta: Eta,
+    /// "Data sent to …" (US-06.2 AC3, US-09.8 AC1).
+    pub destination: Option<String>,
+    /// The model of the vectors a query would search.
+    pub vectors_model: Option<String>,
+    /// The model of a re-run under way.
+    pub rerun_model: Option<String>,
+    /// "Re-run with Y": the model now chosen, when it is not the one behind the vectors.
+    pub rerun_with: Option<String>,
+    /// Windows waiting for the user's start.
+    pub waiting: Option<MeaningEstimate>,
+}
+
+impl From<mk_core::MeaningView> for MeaningStatus {
+    fn from(v: mk_core::MeaningView) -> Self {
+        Self {
+            state: v.state.into(),
+            reason: v.reason,
+            items_done: count(v.items_done),
+            items_total: count(v.items_total),
+            items_failed: count(v.items_failed),
+            eta: v.eta.into(),
+            destination: v.destination,
+            vectors_model: v.vectors_model,
+            rerun_model: v.rerun_model,
+            rerun_with: v.rerun_with,
+            waiting: v.waiting.map(Into::into),
+        }
+    }
+}
+
+/// One meaning result (US-06.2 AC1): where it is, and how similar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MeaningHit {
+    /// Its `hit` is the window, where the source view opens.
+    pub hit: SearchHit,
+    /// Cosine similarity to the query.
+    pub score: f32,
+}
+
+/// What a meaning query found, or why it could not run (US-06.2 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum MeaningResult {
+    Results { hits: Vec<MeaningHit> },
+    NotReady { reason: String },
+    Preparing,
+}
+
+impl From<mk_core::MeaningOutcome> for MeaningResult {
+    fn from(o: mk_core::MeaningOutcome) -> Self {
+        match o {
+            mk_core::MeaningOutcome::Results { hits, .. } => MeaningResult::Results {
+                hits: hits
+                    .into_iter()
+                    .map(|h| MeaningHit {
+                        hit: h.hit.into(),
+                        score: h.score,
+                    })
+                    .collect(),
+            },
+            mk_core::MeaningOutcome::NotReady(reason) => MeaningResult::NotReady { reason },
+            mk_core::MeaningOutcome::Preparing => MeaningResult::Preparing,
+        }
+    }
+}
+
 /// The documents "Find people and organizations" is about.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "camelCase")]

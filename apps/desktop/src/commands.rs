@@ -1119,6 +1119,68 @@ pub async fn ai_extraction_cancel(state: State<'_, AppState>) -> Result<bool, Ip
     Ok(out != mk_core::AiCancelled::Nothing)
 }
 
+/// What meaning search can do now, for the Meaning tab and the progress panel (US-06.2 AC2). An
+/// index that is missing or behind starts being made here, off the writer.
+#[tauri::command]
+pub async fn meaning_status(state: State<'_, AppState>) -> Result<ipc::MeaningStatus, IpcError> {
+    let open = state.current()?;
+    let view = state.workspace()?.meaning_view(&open.project)?;
+    if view.state == mk_core::MeaningState::Preparing {
+        state.prepare_meaning(&open);
+    }
+    Ok(view.into())
+}
+
+/// One meaning query (US-06.2 AC1). It goes to the model through the gate (INV-SR-03); not ready
+/// is an answer, not an error (AC2).
+#[tauri::command]
+pub async fn meaning_search(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<ipc::MeaningResult, IpcError> {
+    let open = state.current()?;
+    let out = state
+        .workspace()?
+        .meaning_search(&open.project, &query)
+        .map_err(|e| IpcError::new(&e.code, e.message))?;
+    if out == mk_core::MeaningOutcome::Preparing {
+        state.prepare_meaning(&open);
+    }
+    Ok(out.into())
+}
+
+/// The user's start: everything not covered yet, cancelled and failed parts too.
+#[tauri::command]
+pub async fn meaning_run(state: State<'_, AppState>) -> Result<(), IpcError> {
+    let open = state.current()?;
+    state.workspace()?.start_embeddings(&open.project)?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    state.start_embedding_lane(&open);
+    Ok(())
+}
+
+/// "Re-run with Y": the vectors stay as they are until it is done (ADR-0005).
+#[tauri::command]
+pub async fn meaning_rerun(state: State<'_, AppState>) -> Result<ipc::MeaningEstimate, IpcError> {
+    let open = state.current()?;
+    let out = state.workspace()?.start_embedding_rerun(&open.project)?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    state.start_embedding_lane(&open);
+    Ok(out.into())
+}
+
+/// Cancels the re-run under way, which changes nothing (ADR-0005), or else the run's remaining
+/// work. False when nothing was running.
+#[tauri::command]
+pub async fn meaning_cancel(state: State<'_, AppState>) -> Result<bool, IpcError> {
+    let open = state.current()?;
+    let out = state.workspace()?.cancel_embeddings(&open.project)?;
+    state.emit(ipc::UiEvent::ProgressChanged);
+    // The job a model change Blocked may be gone: what is left can run again.
+    state.start_embedding_lane(&open);
+    Ok(out != mk_core::AiCancelled::Nothing)
+}
+
 /// Whether to show the first-run screen, and where the demo files are (US-14.4).
 #[tauri::command]
 pub async fn first_run(state: State<'_, AppState>) -> Result<ipc::FirstRunInfo, IpcError> {

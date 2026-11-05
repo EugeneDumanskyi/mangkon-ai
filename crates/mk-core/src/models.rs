@@ -290,6 +290,11 @@ impl ModelParts {
         })
     }
 
+    /// An embedding model's prefixes and size.
+    pub(crate) fn embedding_of(&self, id: &str) -> Option<mk_models::Embedding> {
+        self.catalog.model(id)?.embedding.clone()
+    }
+
     pub(crate) fn name_of(&self, id: &str) -> String {
         self.catalog
             .model(id)

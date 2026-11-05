@@ -4,6 +4,8 @@ import { commands, errorMessage } from "../ipc/commands";
 import type { Progress } from "../ipc/bindings/Progress";
 import { fileName, plural } from "../lib/labels";
 import { etaLabel } from "../lib/progress";
+import { useMeaning } from "../lib/useMeaning";
+import { MeaningProgressRow } from "./Meaning";
 import { useAiExtraction } from "../lib/useAiExtraction";
 import { AiProgressRow } from "./AiExtraction";
 
@@ -77,6 +79,9 @@ export function ProgressPanel({ progress }: { progress: Progress }) {
   const error = pause.error ?? resume.error ?? cancel.error;
   const ai = useAiExtraction();
   const aiShown = ai.data !== undefined && ai.data.state !== "idle";
+  // The queue has one Pause: the AI row's, when it shows one, stands for both.
+  const aiPausable = ai.data?.state === "running" || ai.data?.state === "paused";
+  const meaning = useMeaning();
 
   return (
     <div className="flex min-w-0 flex-1 basis-80 flex-wrap items-center gap-2">
@@ -147,6 +152,7 @@ export function ProgressPanel({ progress }: { progress: Progress }) {
         </span>
       )}
       {ai.data && <AiProgressRow info={ai.data} showPause={!open} />}
+      {meaning.data && <MeaningProgressRow info={meaning.data} showPause={!open && !aiPausable} />}
     </div>
   );
 }

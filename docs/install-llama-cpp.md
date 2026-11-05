@@ -98,7 +98,7 @@ You do not start `llama-server` yourself; the app starts its own process for eac
 # extraction model
 llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> -c <context × 4> -np 4 --cache-ram 0 --reasoning off
 # embedding model
-llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> --embedding -c 2048 -np 1 -b 2048 -ub 2048 --cache-ram 0
+llama-server --host 127.0.0.1 --port <free port> --api-key <random per start> -m <model> --embedding -c 8192 -np 4 -b 2048 -ub 2048 --cache-ram 0
 ```
 
 - It starts when AI work (or "Try" on the AI models screen) needs the model, and stops after 10 minutes without a call, when you choose another model, and when the app quits.

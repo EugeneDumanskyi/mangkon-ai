@@ -47,6 +47,51 @@ pub struct Control {
     pub requests_log: Option<PathBuf>,
     /// The most chat requests in flight at once is written here (NFR-PERF-25).
     pub in_flight_log: Option<PathBuf>,
+    /// Rules for embedding replies, by model file name; `*` for any other.
+    pub embeddings: HashMap<String, FakeEmbeddings>,
+}
+
+/// How a fake model answers `/v1/embeddings`.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct FakeEmbeddings {
+    /// Every reply takes this long.
+    pub delay_ms: u64,
+    /// A request with a text holding `hang_text` takes `hang_ms`.
+    pub hang_text: Option<String>,
+    pub hang_ms: u64,
+    /// A request with a text holding this answers HTTP 500.
+    pub error_text: Option<String>,
+    /// One vector too few in every reply.
+    pub short_reply: bool,
+}
+
+/// A fake model's vector for `text`: its words hashed into the dimensions, with a sign, so texts
+/// that share words are similar and two models disagree.
+pub fn fake_embedding(model: &str, text: &str, dims: usize) -> Vec<f32> {
+    let dims = dims.max(1);
+    let mut out = vec![0.0f32; dims];
+    let mut hash_of = |word: &str, weight: f32| {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in model.bytes().chain(word.bytes()) {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        for i in 0..4 {
+            let bits = h.rotate_left(i * 16);
+            let sign = if bits & (1 << 40) == 0 { 1.0 } else { -1.0 };
+            out[(bits % dims as u64) as usize] += sign * weight;
+        }
+    };
+    hash_of("", 0.01);
+    for word in text.split_whitespace() {
+        let word: String = word
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        hash_of(&word, 1.0);
+    }
+    out
 }
 
 /// One name a fake model finds.
@@ -126,6 +171,15 @@ impl Shared {
             .extraction
             .get(&self.model)
             .or_else(|| self.control.extraction.get("*"))
+    }
+
+    fn embedding_rules(&self) -> FakeEmbeddings {
+        self.control
+            .embeddings
+            .get(&self.model)
+            .or_else(|| self.control.embeddings.get("*"))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn log_request(&self, body: &serde_json::Value) {
@@ -272,9 +326,38 @@ fn handle(stream: TcpStream, shared: &Arc<Shared>) {
             reply(&mut w, 200, &out.to_string());
         }
         "/v1/embeddings" => {
-            let n = body["input"].as_array().map_or(1, Vec::len);
-            let data: Vec<_> = (0..n)
-                .map(|i| serde_json::json!({"index": i, "embedding": vec![0.5f32; dims]}))
+            let _running = shared.enter();
+            shared.log_request(&body);
+            let rules = shared.embedding_rules();
+            let inputs: Vec<&str> = match &body["input"] {
+                serde_json::Value::Array(a) => a.iter().filter_map(|v| v.as_str()).collect(),
+                v => v.as_str().into_iter().collect(),
+            };
+            let holds = |t: &Option<String>| {
+                t.as_deref()
+                    .is_some_and(|t| inputs.iter().any(|i| i.contains(t)))
+            };
+            if rules.delay_ms > 0 {
+                std::thread::sleep(Duration::from_millis(rules.delay_ms));
+            }
+            if holds(&rules.hang_text) {
+                std::thread::sleep(Duration::from_millis(rules.hang_ms));
+            }
+            if holds(&rules.error_text) {
+                reply(
+                    &mut w,
+                    500,
+                    r#"{"error":{"code":500,"message":"input is too large"}}"#,
+                );
+                return;
+            }
+            let sent = inputs.len() - usize::from(rules.short_reply && !inputs.is_empty());
+            let data: Vec<_> = inputs[..sent]
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    serde_json::json!({"index": i, "embedding": fake_embedding(model, t, dims)})
+                })
                 .collect();
             let out = serde_json::json!({"model": model, "data": data});
             reply(&mut w, 200, &out.to_string());

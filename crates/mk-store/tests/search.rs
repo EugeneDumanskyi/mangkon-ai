@@ -302,7 +302,7 @@ fn migration_v4_to_v5_fills_the_index() {
             .unwrap();
     }
     let (store, report) = Store::open(&db, &backups).unwrap();
-    assert_eq!((report.from_version, report.to_version), (4, 9));
+    assert_eq!((report.from_version, report.to_version), (4, 10));
     assert!(report.backup.unwrap().exists());
     assert_eq!(store.search_index_rows().unwrap(), 2);
     assert_eq!(

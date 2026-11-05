@@ -47,6 +47,10 @@ pub struct Open {
     ai_running: AtomicBool,
     /// A start came while the lane ran: it runs once more.
     ai_again: AtomicBool,
+    /// The embeddings lane's thread is going on (M6b).
+    embedding_running: AtomicBool,
+    /// A start came while that lane ran: it runs once more.
+    embedding_again: AtomicBool,
     /// The project is closing: no run starts again.
     closed: AtomicBool,
 }
@@ -121,6 +125,9 @@ impl AppState {
         if let Some(weak) = ws {
             refresh_blocks(&weak, &self.open, &self.events);
         }
+        // What the AI row and the Meaning tab say can change with no job to block, and the project
+        // screen stays mounted behind the AI models screen.
+        self.emit(UiEvent::ProgressChanged);
     }
 
     /// App quit: the open project's run is stopped (US-03.4 AC1), a download is left
@@ -247,6 +254,8 @@ impl AppState {
             again: AtomicBool::new(false),
             ai_running: AtomicBool::new(false),
             ai_again: AtomicBool::new(false),
+            embedding_running: AtomicBool::new(false),
+            embedding_again: AtomicBool::new(false),
             closed: AtomicBool::new(false),
         });
         *slot = Some(o.clone());
@@ -393,6 +402,42 @@ impl AppState {
             start_lane(&ws, open, &self.events);
         }
     }
+
+    /// Starts the embeddings lane on its own thread, unless it runs; then it looks once more.
+    pub fn start_embedding_lane(&self, open: &Arc<Open>) {
+        if let Ok(ws) = self.workspace() {
+            start_embeddings(&ws, open, &self.events);
+        }
+    }
+
+    /// Makes the meaning index on its own thread, off the writer, unless that is going on already
+    /// or the lane will do it when it ends. `ProgressChanged` tells the tab it is ready.
+    pub fn prepare_meaning(&self, open: &Arc<Open>) {
+        if open.closed.load(Ordering::SeqCst)
+            || open.project.meaning_index_building()
+            || open.embedding_running.load(Ordering::SeqCst)
+        {
+            return;
+        }
+        let (open, events) = (open.clone(), self.events.clone());
+        let spawned = std::thread::Builder::new()
+            .name("mk-desktop-meaning-index".into())
+            .spawn(move || match open.project.prepare_meaning_index() {
+                Ok(true) => emit(&events, UiEvent::ProgressChanged),
+                Ok(false) => {}
+                Err(e) => emit(
+                    &events,
+                    UiEvent::Error {
+                        message: format!("Could not prepare meaning search: {e}"),
+                    },
+                ),
+            });
+        if let Err(e) = spawned {
+            self.emit(UiEvent::Error {
+                message: format!("Could not prepare meaning search: {e}"),
+            });
+        }
+    }
 }
 
 /// The units not covered yet go through the start rule (gap A3), then the lane runs what may run.
@@ -413,8 +458,97 @@ fn schedule_and_start_lane(
         );
         return;
     }
+    // The embeddings lane has its own start rule and its own model (ADR-0006).
+    if let Err(e) = ws.schedule_embeddings(&open.project) {
+        emit(
+            events,
+            UiEvent::Error {
+                message: format!("Could not plan embeddings: {e}"),
+            },
+        );
+    }
     emit(events, UiEvent::ProgressChanged);
     start_lane(ws, open, events);
+    start_embeddings(ws, open, events);
+}
+
+fn start_embeddings(
+    ws: &Arc<Workspace>,
+    open: &Arc<Open>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
+) {
+    if open.closed.load(Ordering::SeqCst) {
+        return;
+    }
+    open.embedding_again.store(true, Ordering::SeqCst);
+    if open.embedding_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let (lane_ws, run, lane_events) = (ws.clone(), open.clone(), events.clone());
+    let spawned = std::thread::Builder::new()
+        .name("mk-desktop-embeddings".into())
+        .spawn(move || {
+            let (ws, open, events) = (lane_ws, run, lane_events);
+            let ticker = spawn_embedding_ticker(&ws, &open, &events);
+            loop {
+                open.embedding_again.store(false, Ordering::SeqCst);
+                let result = ws.run_embeddings(&open.project);
+                open.embedding_running.store(false, Ordering::SeqCst);
+                if let Err(e) = result {
+                    emit(
+                        &events,
+                        UiEvent::Error {
+                            message: format!("Embeddings stopped: {e}"),
+                        },
+                    );
+                }
+                emit(&events, UiEvent::ProgressChanged);
+                if open.closed.load(Ordering::SeqCst)
+                    || !open.embedding_again.load(Ordering::SeqCst)
+                    || open.embedding_running.swap(true, Ordering::SeqCst)
+                {
+                    break;
+                }
+            }
+            if let Some(t) = ticker {
+                let _ = t.join();
+            }
+        });
+    if let Err(e) = spawned {
+        open.embedding_running.store(false, Ordering::SeqCst);
+        emit(
+            events,
+            UiEvent::Error {
+                message: format!("Could not start embeddings: {e}"),
+            },
+        );
+    }
+}
+
+/// `ProgressChanged` while the embeddings lane runs, when its row would change.
+fn spawn_embedding_ticker(
+    ws: &Arc<Workspace>,
+    open: &Arc<Open>,
+    events: &Arc<Mutex<Option<Channel<UiEvent>>>>,
+) -> Option<std::thread::JoinHandle<()>> {
+    let (ws, open, events) = (ws.clone(), open.clone(), events.clone());
+    std::thread::Builder::new()
+        .name("mk-desktop-embeddings-progress".into())
+        .spawn(move || {
+            let mut last = None;
+            while open.embedding_running.load(Ordering::SeqCst) {
+                std::thread::sleep(PROGRESS_EVERY);
+                let Ok(v) = ws.meaning_view(&open.project) else {
+                    continue;
+                };
+                let now = Some((v.items_done, v.items_total, v.state));
+                if now != last {
+                    last = now;
+                    emit(&events, UiEvent::ProgressChanged);
+                }
+            }
+        })
+        .ok()
 }
 
 fn start_lane(
@@ -510,7 +644,9 @@ fn close_open(open: Option<Arc<Open>>) {
     }
     // A call in flight may take minutes: its reply fails its token and is dropped (NFR-REL-05).
     let start = Instant::now();
-    while open.ai_running.load(Ordering::SeqCst) && start.elapsed() < CLOSE_WAIT_AI {
+    while (open.ai_running.load(Ordering::SeqCst) || open.embedding_running.load(Ordering::SeqCst))
+        && start.elapsed() < CLOSE_WAIT_AI
+    {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -588,6 +724,7 @@ fn refresh_blocks(
         emit(events, UiEvent::ProgressChanged);
         // A job was unblocked, or the lane finds out that it was blocked.
         start_lane(&ws, &o, events);
+        start_embeddings(&ws, &o, events);
     }
 }
 
@@ -686,6 +823,30 @@ mod tests {
             Ok(result) => result.unwrap(),
             Err(_) => panic!("{what} never returned"),
         }
+    }
+
+    /// US-06.2 AC2: another AI chosen changes what the Meaning tab and the AI row say even with no
+    /// job to block, and the project screen stays mounted behind the AI models screen, so it has
+    /// to be told.
+    #[test]
+    fn us_06_2_ac2_a_new_choice_tells_the_open_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (state, _ws, _hf) = just_launched(tmp.path());
+        state.create("Case", tmp.path()).unwrap();
+        let (sent, seen) = mpsc::channel();
+        state.subscribe(Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                let _ = sent.send(json);
+            }
+            Ok(())
+        }));
+        // Making the project and a first look send their own; the second look changes no job.
+        state.refresh_ai_blocks();
+        while seen.recv_timeout(Duration::from_millis(500)).is_ok() {}
+        state.refresh_ai_blocks();
+        let event = seen.recv_timeout(Duration::from_secs(2));
+        state.close();
+        assert!(event.expect("no event came").contains("progressChanged"));
     }
 
     /// Checking `llama-server` for the first time tells the runtime's listeners, and they take

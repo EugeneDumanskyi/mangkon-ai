@@ -144,7 +144,7 @@ All project contexts use these. Change them only with care, because every contex
 | **Source content** | The bytes of a file, known by content hash. Processed once, no matter how many paths point to it. |
 | **Extraction result** | All output of one step (e.g. identifiers, Stage B) for one content or one segment. Written and replaced as one unit. |
 | **AI run** | One pass of one AI stage (Stage B, Stage C, or embeddings) with one model and one destination. |
-| **Work item** | One unit of background work. Stage A: one source content. Stage B: adjacent segments of one document up to 2,000 characters, or one window of a longer segment (decided 2026-11-05); mentions are still stored against an exact segment and span. Stage C and embeddings: one segment. |
+| **Work item** | One unit of background work. Stage A: one source content. Stage B: adjacent segments of one document up to 2,000 characters, or one window of a longer segment (decided 2026-11-05); mentions are still stored against an exact segment and span. Embeddings: whole adjacent segments of one document, up to 32 windows of up to 500 characters (decided 2026-11-05); each vector still belongs to one segment and one model. Stage C: one segment. |
 | **Anchor** | The stable key a user decision points to (section 9.5). |
 | **Orphaned decision** | A decision whose anchor is not found after a re-run. It is kept, not deleted. |
 | **Egress gate** | The one check every AI call passes before data leaves the app. |
@@ -339,8 +339,11 @@ erDiagram
         number confidence
     }
     SEGMENT_EMBEDDING {
+        key id PK
+        key aiRunId FK
         key segmentId FK
-        text modelIdentity
+        int charStart
+        int charEnd
         vector vector
     }
     CONNECTION {

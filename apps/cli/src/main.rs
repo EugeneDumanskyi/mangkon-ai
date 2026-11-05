@@ -5,6 +5,7 @@
 
 mod ai;
 mod bench;
+mod embed;
 mod endpoint;
 mod ingest;
 mod kill_test;
@@ -37,6 +38,10 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli model try ID [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
        mangkon-cli ai (status | run [--all | --documents PATH...] | rerun | cancel) --project DIR
                       [--model ID] [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli embed (status | run [--all] | rerun | cancel) --project DIR
+                      [--model ID] [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli meaning QUERY --project DIR
+                      [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -123,6 +128,21 @@ Commands:
               cancel: cancel the re-run (the results do not change), or else the rest of the run
               (what it found stays).
               --model  the local model ID to use from now on (changes the app's AI choice)
+  embed       Vectors for meaning search, from the AI chosen for embeddings. Text of the
+              project goes to it. `ingest` does not start this.
+              status: what it is doing, the model behind the vectors, and why a query cannot
+              run yet.
+              run: embed what has none yet, and go on with a run that was stopped. Up to about
+              20 minutes of work starts by itself; with more, nothing starts and the estimate is
+              printed: start it with --all, which also tries cancelled and failed parts again.
+              rerun: embed everything again with the chosen model. The old vectors stay until
+              it is done, then all change at once; meaning search waits until then.
+              cancel: cancel the re-run (the vectors do not change), or else the rest of the
+              run (what it made stays).
+              --model  the local model ID to use from now on (changes the app's AI choice)
+  meaning     The 20 stored passages closest in meaning to QUERY, best first, each with its
+              score and where it is. QUERY goes to the AI chosen for embeddings. Exits 1 and
+              says why when meaning search is not ready.
               Exits 1 if it is Blocked; the reason is printed.";
 
 fn main() -> ExitCode {
@@ -185,6 +205,14 @@ fn main() -> ExitCode {
         }
         Some("ai") => match ai_options(&args[1..]) {
             Ok(opts) => ai::run(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("embed") => match embed_options(&args[1..]) {
+            Ok(opts) => embed::run(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("meaning") => match embed_options(&args[0..]) {
+            Ok(opts) => embed::run(&opts),
             Err(e) => usage_error(&e),
         },
         Some("bench") => match bench_options(&args[1..]) {
@@ -460,6 +488,55 @@ fn ai_options(args: &[String]) -> Result<ai::Options, String> {
     Ok(ai::Options {
         command,
         project: project.ok_or("ai needs --project DIR")?,
+        app_data,
+        dir,
+        llama_server,
+        model,
+        json,
+    })
+}
+
+/// `embed WORDS...` from its words, or `meaning QUERY` with `meaning` itself first.
+fn embed_options(args: &[String]) -> Result<embed::Options, String> {
+    let (mut project, mut app_data, mut dir, mut llama_server, mut model) =
+        (None, None, None, None, None);
+    let (mut all, mut json) = (false, false);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--app-data" => app_data = Some(PathBuf::from(value()?)),
+            "--dir" => dir = Some(PathBuf::from(value()?)),
+            "--llama-server" => llama_server = Some(PathBuf::from(value()?)),
+            "--model" => model = Some(value()?.clone()),
+            "--all" => all = true,
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown embed argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let command = match words.as_slice() {
+        ["status"] => embed::Command::Status,
+        ["cancel"] => embed::Command::Cancel,
+        ["rerun"] => embed::Command::Rerun,
+        ["run"] => embed::Command::Run(all),
+        ["meaning", query] => embed::Command::Query((*query).to_string()),
+        ["meaning", ..] => return Err("meaning takes one QUERY, in quotes".into()),
+        _ => return Err("embed takes status, run, rerun or cancel".into()),
+    };
+    if all && !matches!(command, embed::Command::Run(_)) {
+        return Err("--all is for embed run".into());
+    }
+    if model.is_some() && matches!(command, embed::Command::Query(_)) {
+        return Err("--model is for embed: a query uses the model of the vectors".into());
+    }
+    Ok(embed::Options {
+        command,
+        project: project.ok_or("this needs --project DIR")?,
         app_data,
         dir,
         llama_server,

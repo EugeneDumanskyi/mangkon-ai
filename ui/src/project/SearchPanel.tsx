@@ -9,6 +9,8 @@ import type { SegmentHit } from "../ipc/bindings/SegmentHit";
 import type { TextPiece } from "../ipc/bindings/TextPiece";
 import { needsNextPage } from "../lib/keyset";
 import { fileName, locationLabel, resultCount } from "../lib/labels";
+import { scoreLabel } from "../lib/meaning";
+import { MeaningSearch } from "./Meaning";
 
 /** Results per page: the first 50 (NFR-PERF-30). */
 export const SEARCH_PAGE = 50;
@@ -45,6 +47,7 @@ export function SearchResultRow({
   opened,
   onOpen,
   onOnlyThisDocument,
+  score,
 }: {
   hit: SearchHit;
   /** The row the keyboard is on. */
@@ -52,7 +55,10 @@ export function SearchResultRow({
   /** The row shown in the source pane. */
   opened: boolean;
   onOpen: () => void;
-  onOnlyThisDocument: () => void;
+  /** Keyword results narrow to their document; meaning results do not (US-06.2). */
+  onOnlyThisDocument?: () => void;
+  /** Similarity to the query, on a meaning result (US-06.2 AC1). */
+  score?: number;
 }) {
   return (
     <div
@@ -76,18 +82,25 @@ export function SearchResultRow({
               Missing
             </span>
           )}
+          {score !== undefined && (
+            <span className="ml-auto shrink-0 text-xs text-muted" data-score>
+              {scoreLabel(score)}
+            </span>
+          )}
         </span>
         <span className="block text-xs text-muted">{locationLabel(hit.location)}</span>
         <Snippet pieces={hit.snippet} />
       </button>
-      <button
-        type="button"
-        tabIndex={-1}
-        className="shrink-0 text-xs text-muted underline"
-        onClick={onOnlyThisDocument}
-      >
-        Only this document
-      </button>
+      {onOnlyThisDocument !== undefined && (
+        <button
+          type="button"
+          tabIndex={-1}
+          className="shrink-0 text-xs text-muted underline"
+          onClick={onOnlyThisDocument}
+        >
+          Only this document
+        </button>
+      )}
     </div>
   );
 }
@@ -127,11 +140,51 @@ export function TypeChips({
 }
 
 /**
+ * The Search tab: Keyword or Meaning (US-06.2). Both stay mounted, so each keeps its query and
+ * results, and keyword search never depends on the other (INV-SR-04).
+ */
+export function SearchPanel({
+  opened,
+  onOpen,
+}: {
+  /** The result shown in the source pane. */
+  opened: SegmentHit | null;
+  onOpen: (hit: SearchHit) => void;
+}) {
+  const [mode, setMode] = useState<"keyword" | "meaning">("keyword");
+  return (
+    <div className="flex min-h-0 flex-col border-r border-border">
+      <div className="flex gap-1 border-b border-border px-3 pt-2 text-sm" aria-label="Search by">
+        {(["keyword", "meaning"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            aria-pressed={mode === m}
+            className={`rounded-t border border-b-0 px-2 py-0.5 ${
+              mode === m ? "border-accent font-semibold" : "border-border text-muted"
+            }`}
+            onClick={() => {
+              setMode(m);
+            }}
+          >
+            {m === "keyword" ? "Keyword" : "Meaning"}
+          </button>
+        ))}
+      </div>
+      <div className={mode === "keyword" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
+        <KeywordSearch opened={opened} onOpen={onOpen} />
+      </div>
+      {mode === "meaning" && <MeaningSearch opened={opened} onOpen={onOpen} />}
+    </div>
+  );
+}
+
+/**
  * Keyword search over every document's stored text (US-06.1): Enter runs the query, file-type
  * chips and "Only this document" narrow it, ↑/↓ move through the results and Enter opens one
  * (NFR-USE-06). A result opens in the source pane in one click (AC4, NFR-USE-04).
  */
-export function SearchPanel({
+function KeywordSearch({
   opened,
   onOpen,
 }: {
@@ -210,7 +263,7 @@ export function SearchPanel({
 
   const loaded = pages.data !== undefined;
   return (
-    <section className="flex min-h-0 flex-col border-r border-border" aria-label="Search">
+    <section className="flex min-h-0 flex-1 flex-col" aria-label="Search">
       <div className="flex flex-col gap-2 border-b border-border px-3 py-2 text-sm">
         <input
           type="search"

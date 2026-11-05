@@ -223,6 +223,18 @@ pub fn stage_b_estimate(units: u64) -> Duration {
     Duration::from_secs_f64(units as f64 / STAGE_B_UNITS_PER_SECOND)
 }
 
+/// The start rule for embeddings (decided in M6b planning): the lane starts by itself when at most
+/// this many windows wait, about 20 min at [`EMBEDDING_WINDOWS_PER_SECOND`]. Above it, on a click.
+pub const EMBEDDING_AUTO_WINDOWS: u64 = 480_000;
+/// S6's rate on TD-2 with bge-m3 on RM-1's GPU, rounded down: 421 windows/s over the whole run, and
+/// falling as the database grew (`15-meaning-search.md`). ASSUMPTION: other machines differ.
+pub const EMBEDDING_WINDOWS_PER_SECOND: f64 = 400.0;
+
+/// How long `windows` would take at [`EMBEDDING_WINDOWS_PER_SECOND`].
+pub fn embedding_estimate(windows: u64) -> Duration {
+    Duration::from_secs_f64(windows as f64 / EMBEDDING_WINDOWS_PER_SECOND)
+}
+
 /// A pending Stage A item as the scheduler sees it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PendingItem {
@@ -378,6 +390,15 @@ mod tests {
         assert!(stage_b_priority(true) < stage_b_priority(false));
         let minutes = stage_b_estimate(STAGE_B_AUTO_UNITS).as_secs() / 60;
         assert_eq!(minutes, 19);
+    }
+
+    /// The embeddings start rule's limit is about 20 min of work.
+    #[test]
+    fn m6b_embedding_limit_is_20_minutes() {
+        assert_eq!(
+            embedding_estimate(EMBEDDING_AUTO_WINDOWS).as_secs(),
+            20 * 60
+        );
     }
 
     /// INV-PR-03: text-native first, then by priority and age; never more than the lane limit.

@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::sync::{Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mk_corpus::fs::{FileTypes, Skipped};
@@ -21,8 +21,10 @@ use mk_worker::Settings;
 use mk_workspace::{ProjectLayout, RootKind};
 
 use crate::control::{RunControl, Stop};
+use crate::embeddings::EmbeddingLane;
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
 use crate::identifiers::RerunSummary;
+use crate::meaning::MeaningCell;
 use crate::stage_a::{Failure, SPILL_AT, Staging};
 use crate::stage_b::AiLane;
 use crate::workers::{ItemResult, WorkerConfig, WorkerError, WorkerProcess, WorkerStop, own_rss};
@@ -204,6 +206,10 @@ pub struct Project {
     rerun: Mutex<Option<(RerunStep, u64, u64)>>,
     /// The Stage B lane (M6a). It holds no [`Project::run`]: nothing waits on a model.
     ai_lane: AiLane,
+    /// The embeddings lane (M6b). It holds no [`Project::run`] either.
+    embedding_lane: EmbeddingLane,
+    /// The meaning index while in use (M6b).
+    meaning: Arc<MeaningCell>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -274,6 +280,8 @@ impl Project {
             in_flight: Mutex::new(BTreeMap::new()),
             rerun: Mutex::new(None),
             ai_lane: AiLane::default(),
+            embedding_lane: EmbeddingLane::default(),
+            meaning: Arc::default(),
         };
         project.note_ai_switch();
         project.stamp_identifier_rules_if_empty()?;
@@ -318,6 +326,14 @@ impl Project {
 
     pub(crate) fn ai_lane(&self) -> &AiLane {
         &self.ai_lane
+    }
+
+    pub(crate) fn embedding_lane(&self) -> &EmbeddingLane {
+        &self.embedding_lane
+    }
+
+    pub(crate) fn meaning(&self) -> &Arc<MeaningCell> {
+        &self.meaning
     }
 
     /// Raises `ConnectionsChanged` when a re-run has switched since the last look: the switch
@@ -605,8 +621,10 @@ impl Project {
     /// (US-03.4 AC1).
     pub fn stop_for_close(&self) {
         self.ai_lane.stop();
+        self.embedding_lane.stop();
         let _ = self.stop_run(Stop::Close, || Ok(()));
         let _ = self.store.release_all_ai_items();
+        self.release_meaning_index();
     }
 
     /// Whether the queue is paused (persisted, US-03.4 AC1).

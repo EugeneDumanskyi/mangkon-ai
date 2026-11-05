@@ -137,16 +137,12 @@ fn hit_spans(marked: &str, text: &str) -> Option<Vec<(usize, usize)>> {
     (open.is_none() && plain == text).then_some(spans)
 }
 
-/// One page of results, best first (US-06.1 AC1), after `after` (keyset paging).
-pub(crate) fn search_page(
+/// What a result shows of one segment, no hits yet. `None` if the segment is gone.
+pub(crate) fn segment_row(
     conn: &Connection,
-    fts: &str,
-    highlight_query: impl FnOnce(&[&str]) -> String,
-    filter: &SearchFilter,
-    after: Option<&SearchCursor>,
-    limit: usize,
-) -> Result<Vec<SearchRow>, StoreError> {
-    let ids = page_ids(conn, fts, filter, after, limit)?;
+    id: i64,
+    score: f64,
+) -> Result<Option<SearchRow>, StoreError> {
     let mut row = conn.prepare_cached(
         "SELECT s.document_id, d.content_id, c.file_type, s.loc_kind, s.loc_pos, s.loc_ref,
                 s.text, s.ocr, r.path, f.rel_path, COALESCE(f.present, 0)
@@ -160,62 +156,72 @@ pub(crate) fn search_page(
          LEFT JOIN source_root r ON r.id = f.root_id
          WHERE s.id = ?1",
     )?;
+    row.query_row([id], |r| {
+        let text: String = r.get(6)?;
+        let ocr: Option<Vec<u8>> = r.get(7)?;
+        let path = match (
+            r.get::<_, Option<String>>(8)?,
+            r.get::<_, Option<String>>(9)?,
+        ) {
+            (Some(root), Some(rel)) => Some(
+                mk_corpus::fs::resolve(root.as_ref(), &rel)
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            _ => None,
+        };
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get(5)?),
+            text,
+            ocr,
+            path,
+            !r.get::<_, bool>(10)?,
+        ))
+    })
+    .optional()?
+    .map(
+        |(document_id, content_id, file_type, loc, text, ocr, path, missing)| {
+            let (kind, pos, loc_ref) = loc;
+            let locator = codec::segment_from(&kind, pos, loc_ref, &text, ocr.as_deref())?;
+            Ok::<_, StoreError>(SearchRow {
+                segment_id: id,
+                document_id,
+                content_id,
+                file_type,
+                path,
+                missing,
+                locator,
+                text,
+                hits: Vec::new(),
+                score,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// One page of results, best first (US-06.1 AC1), after `after` (keyset paging).
+pub(crate) fn search_page(
+    conn: &Connection,
+    fts: &str,
+    highlight_query: impl FnOnce(&[&str]) -> String,
+    filter: &SearchFilter,
+    after: Option<&SearchCursor>,
+    limit: usize,
+) -> Result<Vec<SearchRow>, StoreError> {
+    let ids = page_ids(conn, fts, filter, after, limit)?;
     let mut highlight = conn.prepare_cached(
         "SELECT highlight(segment_fts, 0, char(57344), char(57345)) FROM segment_fts
          WHERE segment_fts MATCH ?1 AND rowid = ?2",
     )?;
     let mut out = Vec::with_capacity(ids.len());
     for (id, score) in ids {
-        let Some(found) = row
-            .query_row([id], |r| {
-                let text: String = r.get(6)?;
-                let ocr: Option<Vec<u8>> = r.get(7)?;
-                let path = match (
-                    r.get::<_, Option<String>>(8)?,
-                    r.get::<_, Option<String>>(9)?,
-                ) {
-                    (Some(root), Some(rel)) => Some(
-                        mk_corpus::fs::resolve(root.as_ref(), &rel)
-                            .to_string_lossy()
-                            .into_owned(),
-                    ),
-                    _ => None,
-                };
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, String>(2)?,
-                    (r.get::<_, String>(3)?, r.get::<_, i64>(4)?, r.get(5)?),
-                    text,
-                    ocr,
-                    path,
-                    !r.get::<_, bool>(10)?,
-                ))
-            })
-            .optional()?
-            .map(
-                |(document_id, content_id, file_type, loc, text, ocr, path, missing)| {
-                    let (kind, pos, loc_ref) = loc;
-                    let locator = codec::segment_from(&kind, pos, loc_ref, &text, ocr.as_deref())?;
-                    Ok::<_, StoreError>(SearchRow {
-                        segment_id: id,
-                        document_id,
-                        content_id,
-                        file_type,
-                        path,
-                        missing,
-                        locator,
-                        text,
-                        hits: Vec::new(),
-                        score,
-                    })
-                },
-            )
-            .transpose()?
-        else {
-            continue;
-        };
-        out.push(found);
+        if let Some(found) = segment_row(conn, id, score)? {
+            out.push(found);
+        }
     }
     let texts: Vec<&str> = out.iter().map(|r| r.text.as_str()).collect();
     let marks = highlight_query(&texts);

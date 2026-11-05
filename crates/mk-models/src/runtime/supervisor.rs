@@ -253,11 +253,35 @@ impl Inner {
         }
     }
 
+    /// A lease on a slot that is Ready or Busy.
+    fn lease(self: &Arc<Self>, role: Role, s: &mut Slot) -> Lease {
+        s.apply(Event::Send);
+        s.leases += 1;
+        s.last_used = Instant::now();
+        Lease {
+            inner: self.clone(),
+            role,
+            generation: s.generation,
+            port: s.proc.as_ref().map_or(0, |p| p.port),
+            key: s.proc.as_ref().map(|p| p.key.clone()).unwrap_or_default(),
+            model_id: s.spec.id.clone(),
+        }
+    }
+
     /// The end of a start: Ready with the process, or Failed with the reason. A start that was
-    /// overtaken (quit, model switched) kills what it started.
-    fn finish_start(&self, role: Role, generation: u64, result: Result<Process, Failure>) {
+    /// overtaken (quit, model switched) kills what it started. With `take`, a Ready model is leased
+    /// under the same lock: a caller waiting for another model of the role cannot stop it first,
+    /// or two such callers would stop each other's for good.
+    fn finish_start(
+        self: &Arc<Self>,
+        role: Role,
+        generation: u64,
+        result: Result<Process, Failure>,
+        take: bool,
+    ) -> Option<Lease> {
         let started = result.is_ok();
         let mut leftover = None;
+        let mut lease = None;
         {
             let mut slots = lock(&self.slots);
             match slots.get_mut(&role) {
@@ -268,6 +292,9 @@ impl Inner {
                             s.proc = Some(p);
                             s.failure = None;
                             s.last_used = Instant::now();
+                            if take {
+                                lease = Some(self.lease(role, s));
+                            }
                         }
                         Err(f) => {
                             s.apply(Event::StartFailed);
@@ -287,6 +314,7 @@ impl Inner {
         }
         self.changed.notify_all();
         self.notify();
+        lease
     }
 
     fn start_in_background(self: &Arc<Self>, role: Role, generation: u64, spec: ModelSpec) {
@@ -295,13 +323,14 @@ impl Inner {
             .name("llama-server-start".into())
             .spawn(move || {
                 let r = inner.launch(role, &spec, generation);
-                inner.finish_start(role, generation, r);
+                inner.finish_start(role, generation, r, false);
             });
         if spawned.is_err() {
             self.finish_start(
                 role,
                 generation,
                 Err(Failure::new("spawn", "No thread to start llama-server")),
+                false,
             );
         }
     }
@@ -511,17 +540,7 @@ impl Supervisor {
             let s = slots.entry(role).or_insert_with(|| Slot::new(spec.clone()));
             match s.state {
                 RuntimeState::Ready | RuntimeState::Busy => {
-                    s.apply(Event::Send);
-                    s.leases += 1;
-                    s.last_used = Instant::now();
-                    let lease = Lease {
-                        inner: inner.clone(),
-                        role,
-                        generation: s.generation,
-                        port: s.proc.as_ref().map_or(0, |p| p.port),
-                        key: s.proc.as_ref().map(|p| p.key.clone()).unwrap_or_default(),
-                        model_id: s.spec.id.clone(),
-                    };
+                    let lease = inner.lease(role, s);
                     drop(slots);
                     inner.notify();
                     return Ok(lease);
@@ -539,7 +558,9 @@ impl Supervisor {
                     drop(slots);
                     inner.notify();
                     let r = inner.launch(role, spec, generation);
-                    inner.finish_start(role, generation, r);
+                    if let Some(lease) = inner.finish_start(role, generation, r, true) {
+                        return Ok(lease);
+                    }
                     slots = lock(&inner.slots);
                 }
                 RuntimeState::Starting | RuntimeState::Stopping | RuntimeState::Crashed => {

@@ -51,11 +51,14 @@ pub fn model_args(spec: &ModelSpec) -> Vec<String> {
     let rest: &[&str] = match spec.role {
         Role::Extraction => &["-np", "4", "--cache-ram", "0", "--reasoning", "off"],
         Role::Embeddings => &[
+            // 4 slots of 2048 each. The lane still sends one request at a time (ADR-0006); its
+            // windows share the slots: 466 against 253 windows/s on bge-m3 with no cost to a
+            // query's time (S6, `15-meaning-search.md`).
             "--embedding",
             "-c",
-            "2048",
+            "8192",
             "-np",
-            "1",
+            "4",
             "-b",
             "2048",
             "-ub",
@@ -454,7 +457,7 @@ mod tests {
         };
         assert_eq!(
             model_args(&e).join(" "),
-            "-m /m/x.gguf --embedding -c 2048 -np 1 -b 2048 -ub 2048 --cache-ram 0"
+            "-m /m/x.gguf --embedding -c 8192 -np 4 -b 2048 -ub 2048 --cache-ram 0"
         );
     }
 

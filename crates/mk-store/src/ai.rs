@@ -25,7 +25,7 @@ use crate::ops::{complete_job_if_done, create_job, invalid, item_state, set_item
 use crate::table::TABLE_KINDS;
 use crate::time::{now_iso, now_ms};
 
-const STAGE: &str = "b";
+pub(crate) const STAGE: &str = "b";
 const WAITING_UNITS: &str = "ai_waiting_units";
 
 /// What a new run records (INV-AI-02): the model and where its data goes.
@@ -52,12 +52,15 @@ pub struct AiRunRow {
     pub discarded: u64,
     pub invalid_responses: u64,
     pub identifier_dropped: u64,
+    /// The size of its vectors, for an embeddings run with at least one.
+    pub dims: Option<u32>,
 }
 
-const RUN_COLUMNS: &str = "id, model_identity, model_name, destination_host, destination_class,
-    prompt_version, state, mention_count, discarded, invalid_responses, identifier_dropped";
+pub(crate) const RUN_COLUMNS: &str = "id, model_identity, model_name, destination_host,
+    destination_class, prompt_version, state, mention_count, discarded, invalid_responses,
+    identifier_dropped, dims";
 
-fn run_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<AiRunRow> {
+pub(crate) fn run_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<AiRunRow> {
     let state: String = r.get(6)?;
     Ok(AiRunRow {
         id: r.get(0)?,
@@ -71,44 +74,50 @@ fn run_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<AiRunRow> {
         discarded: r.get::<_, i64>(8)? as u64,
         invalid_responses: r.get::<_, i64>(9)? as u64,
         identifier_dropped: r.get::<_, i64>(10)? as u64,
+        dims: r.get::<_, Option<i64>>(11)?.map(|d| d as u32),
     })
 }
 
-fn run_in(conn: &Connection, state: RunState) -> Result<Option<AiRunRow>, StoreError> {
+fn run_in(conn: &Connection, stage: &str, state: RunState) -> Result<Option<AiRunRow>, StoreError> {
     Ok(conn
         .prepare_cached(&format!(
             "SELECT {RUN_COLUMNS} FROM ai_run WHERE stage = ?1 AND state = ?2"
         ))?
-        .query_row(params![STAGE, state.as_str()], run_from)
+        .query_row(params![stage, state.as_str()], run_from)
         .optional()?)
 }
 
-/// The active run: what the screens show.
-pub(crate) fn active_run(conn: &Connection) -> Result<Option<AiRunRow>, StoreError> {
-    run_in(conn, RunState::Active)
+/// A stage's active run: what the screens show.
+pub(crate) fn active_run(conn: &Connection, stage: &str) -> Result<Option<AiRunRow>, StoreError> {
+    run_in(conn, stage, RunState::Active)
 }
 
-/// The pending run: a re-run nobody sees yet.
-pub(crate) fn pending_run(conn: &Connection) -> Result<Option<AiRunRow>, StoreError> {
-    run_in(conn, RunState::Pending)
+/// A stage's pending run: a re-run nobody sees yet.
+pub(crate) fn pending_run(conn: &Connection, stage: &str) -> Result<Option<AiRunRow>, StoreError> {
+    run_in(conn, stage, RunState::Pending)
 }
 
 /// The run new work belongs to: a re-run under way takes it, so the switch leaves nothing behind.
-fn current_run(conn: &Connection) -> Result<Option<AiRunRow>, StoreError> {
-    Ok(match pending_run(conn)? {
+pub(crate) fn current_run(conn: &Connection, stage: &str) -> Result<Option<AiRunRow>, StoreError> {
+    Ok(match pending_run(conn, stage)? {
         Some(r) => Some(r),
-        None => active_run(conn)?,
+        None => active_run(conn, stage)?,
     })
 }
 
-fn insert_run(conn: &Connection, b: &RunBinding, state: RunState) -> Result<i64, StoreError> {
+pub(crate) fn insert_run(
+    conn: &Connection,
+    stage: &str,
+    b: &RunBinding,
+    state: RunState,
+) -> Result<i64, StoreError> {
     conn.prepare_cached(
         "INSERT INTO ai_run (stage, model_identity, model_name, destination_host,
                              destination_class, prompt_version, state, started_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )?
     .execute(params![
-        STAGE,
+        stage,
         b.identity.as_str(),
         b.model_name,
         b.destination_host,
@@ -123,10 +132,10 @@ fn insert_run(conn: &Connection, b: &RunBinding, state: RunState) -> Result<i64,
 /// The run jobs without one work for: the current one, or a first run made now, `active` from the
 /// start. Open jobs made before a model was bound join it; ended ones, such as a cancelled
 /// re-run's, stay in the history without a run.
-pub(crate) fn bind_run(conn: &Connection, b: &RunBinding) -> Result<i64, StoreError> {
-    let id = match current_run(conn)? {
+pub(crate) fn bind_run(conn: &Connection, stage: &str, b: &RunBinding) -> Result<i64, StoreError> {
+    let id = match current_run(conn, stage)? {
         Some(r) => r.id,
-        None => insert_run(conn, b, RunState::Active)?,
+        None => insert_run(conn, stage, b, RunState::Active)?,
     };
     conn.prepare_cached(
         "UPDATE job SET ai_run_id = ?1
@@ -134,7 +143,7 @@ pub(crate) fn bind_run(conn: &Connection, b: &RunBinding) -> Result<i64, StoreEr
     )?
     .execute(params![
         id,
-        STAGE,
+        stage,
         JobState::Queued.as_str(),
         JobState::Running.as_str(),
         JobState::Paused.as_str(),
@@ -156,7 +165,7 @@ pub enum UnitScope {
 
 impl UnitScope {
     /// The item states that mean "this unit is taken care of".
-    fn covered_states(&self) -> &'static str {
+    pub(crate) fn covered_states(&self) -> &'static str {
         match self {
             UnitScope::Auto => "'pending', 'in_progress', 'done', 'failed', 'cancelled'",
             _ => "'pending', 'in_progress', 'done'",
@@ -247,7 +256,7 @@ fn uncovered_units(
 /// How many units a schedule of `scope` would make. Reads every segment in scope: the caller runs
 /// it on a read connection, away from the writer.
 pub(crate) fn count_units(conn: &Connection, scope: &UnitScope) -> Result<u64, StoreError> {
-    let run = current_run(conn)?.map(|r| r.id);
+    let run = current_run(conn, STAGE)?.map(|r| r.id);
     let mut n = 0;
     for (document, _) in unit_documents(conn, scope)? {
         n += uncovered_units(conn, document, run, scope)?.len() as u64;
@@ -299,7 +308,7 @@ pub(crate) fn schedule_units(
     scope: &UnitScope,
     trigger: Trigger,
 ) -> Result<ScheduleOutcome, StoreError> {
-    let run = current_run(conn)?.map(|r| r.id);
+    let run = current_run(conn, STAGE)?.map(|r| r.id);
     let mut out = ScheduleOutcome::default();
     for (document, content) in unit_documents(conn, scope)? {
         let units = uncovered_units(conn, document, run, scope)?;
@@ -451,7 +460,7 @@ pub(crate) fn start_next_ai_item(conn: &Connection) -> Result<Option<StartedAiIt
 }
 
 /// The token: the item is still In progress with this attempt.
-fn token_holds(conn: &Connection, item: i64, attempt: i64) -> Result<bool, StoreError> {
+pub(crate) fn token_holds(conn: &Connection, item: i64, attempt: i64) -> Result<bool, StoreError> {
     let row: Option<(String, i64)> = conn
         .prepare_cached("SELECT state, attempts FROM work_item WHERE id = ?1")?
         .query_row([item], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -606,18 +615,19 @@ pub(crate) fn fail_ai_item(
     Ok(true)
 }
 
-/// Every Stage B item In progress goes back to Pending: what pause and close do at once, in the
+/// Every Stage B and embeddings item In progress goes back to Pending: what pause and close do at once, in the
 /// transaction that changes the job (NFR-REL-05). Replies still on their way fail their token.
 pub(crate) fn release_all_ai_items(conn: &Connection) -> Result<usize, StoreError> {
     Ok(conn
         .prepare_cached(
             "UPDATE work_item SET state = ?1, started_at = NULL
-             WHERE state = ?2 AND job_id IN (SELECT id FROM job WHERE stage = ?3)",
+             WHERE state = ?2 AND job_id IN (SELECT id FROM job WHERE stage IN (?3, ?4))",
         )?
         .execute(params![
             ItemState::Pending.as_str(),
             ItemState::InProgress.as_str(),
-            STAGE
+            STAGE,
+            crate::embeddings::STAGE
         ])?)
 }
 
@@ -671,40 +681,21 @@ pub(crate) fn start_rerun(
     conn: &Connection,
     b: &RunBinding,
 ) -> Result<ScheduleOutcome, StoreError> {
-    if let Some(old) = pending_run(conn)? {
+    if let Some(old) = pending_run(conn, STAGE)? {
         cancel_jobs_of(conn, old.id)?;
         drop_run(conn, old.id)?;
     }
-    let active = active_run(conn)?.ok_or_else(|| invalid("There is nothing to re-run yet"))?;
+    let active =
+        active_run(conn, STAGE)?.ok_or_else(|| invalid("There is nothing to re-run yet"))?;
     if active.identity == b.identity {
         return Err(invalid(format!(
             "The current results already come from {}",
             active.model_name
         )));
     }
-    let documents: Vec<(i64, i64)> = {
-        let mut stmt = conn.prepare_cached(
-            "SELECT DISTINCT s.document_id, w.content_id
-             FROM work_item w
-             JOIN job j ON j.id = w.job_id
-             JOIN segment s ON s.id = w.segment_first
-             WHERE j.ai_run_id = ?1 AND w.state IN (?2, ?3, ?4, ?5) AND w.content_id IS NOT NULL
-             ORDER BY s.document_id",
-        )?;
-        stmt.query_map(
-            params![
-                active.id,
-                ItemState::Pending.as_str(),
-                ItemState::InProgress.as_str(),
-                ItemState::Done.as_str(),
-                ItemState::Failed.as_str()
-            ],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?
-        .collect::<Result<_, _>>()?
-    };
+    let documents = run_documents(conn, active.id)?;
     cancel_jobs_of(conn, active.id)?;
-    let run = insert_run(conn, b, RunState::Pending)?;
+    let run = insert_run(conn, STAGE, b, RunState::Pending)?;
     let job = create_job(conn, Trigger::ModelRerun, Stage::B)?;
     conn.prepare_cached("UPDATE job SET ai_run_id = ?2 WHERE id = ?1")?
         .execute(params![job, run])?;
@@ -726,8 +717,32 @@ pub(crate) fn start_rerun(
     })
 }
 
-/// Open Stage B jobs of `run`: Pending and In-progress items Cancelled, the job Cancelled.
-fn cancel_jobs_of(conn: &Connection, run: i64) -> Result<(), StoreError> {
+/// The documents, with their contents, of a run's items that are not ended by a cancel: what a
+/// re-run covers.
+pub(crate) fn run_documents(conn: &Connection, run: i64) -> Result<Vec<(i64, i64)>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT s.document_id, w.content_id
+         FROM work_item w
+         JOIN job j ON j.id = w.job_id
+         JOIN segment s ON s.id = w.segment_first
+         WHERE j.ai_run_id = ?1 AND w.state IN (?2, ?3, ?4, ?5) AND w.content_id IS NOT NULL
+         ORDER BY s.document_id",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            run,
+            ItemState::Pending.as_str(),
+            ItemState::InProgress.as_str(),
+            ItemState::Done.as_str(),
+            ItemState::Failed.as_str()
+        ],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// Open jobs of `run`: Pending and In-progress items Cancelled, the job Cancelled.
+pub(crate) fn cancel_jobs_of(conn: &Connection, run: i64) -> Result<(), StoreError> {
     let jobs: Vec<(i64, String)> = {
         let mut stmt = conn.prepare_cached(
             "SELECT id, state FROM job WHERE ai_run_id = ?1 AND state IN (?2, ?3, ?4, ?5)",
@@ -766,7 +781,7 @@ fn cancel_jobs_of(conn: &Connection, run: i64) -> Result<(), StoreError> {
 /// A pending run and its output go; nothing visible changes (ADR-0005). Its jobs stay in the
 /// history, without a run.
 /// Its pending mentions go with it (`ON DELETE CASCADE`).
-fn drop_run(conn: &Connection, run: i64) -> Result<(), StoreError> {
+pub(crate) fn drop_run(conn: &Connection, run: i64) -> Result<(), StoreError> {
     conn.prepare_cached("DELETE FROM ai_run WHERE id = ?1")?
         .execute([run])?;
     Ok(())
@@ -774,8 +789,10 @@ fn drop_run(conn: &Connection, run: i64) -> Result<(), StoreError> {
 
 /// Drops a pending run whose jobs were cancelled with the whole queue (US-03.3).
 pub(crate) fn drop_pending_runs(conn: &Connection) -> Result<(), StoreError> {
-    if let Some(run) = pending_run(conn)? {
-        drop_run(conn, run.id)?;
+    for stage in [STAGE, crate::embeddings::STAGE] {
+        if let Some(run) = pending_run(conn, stage)? {
+            drop_run(conn, run.id)?;
+        }
     }
     Ok(())
 }
@@ -792,7 +809,16 @@ pub enum AiCancelled {
 
 /// Cancels the re-run under way, or else the current run's remaining work.
 pub(crate) fn cancel_ai_run(conn: &Connection) -> Result<AiCancelled, StoreError> {
-    if let Some(run) = pending_run(conn)? {
+    cancel_run(conn, STAGE, WAITING_UNITS)
+}
+
+/// [`cancel_ai_run`] for `stage`.
+pub(crate) fn cancel_run(
+    conn: &Connection,
+    stage: &str,
+    waiting: &str,
+) -> Result<AiCancelled, StoreError> {
+    if let Some(run) = pending_run(conn, stage)? {
         cancel_jobs_of(conn, run.id)?;
         drop_run(conn, run.id)?;
         return Ok(AiCancelled::Rerun);
@@ -804,7 +830,7 @@ pub(crate) fn cancel_ai_run(conn: &Connection) -> Result<AiCancelled, StoreError
         )?;
         stmt.query_map(
             params![
-                STAGE,
+                stage,
                 JobState::Queued.as_str(),
                 JobState::Running.as_str(),
                 JobState::Paused.as_str(),
@@ -829,7 +855,7 @@ pub(crate) fn cancel_ai_run(conn: &Connection) -> Result<AiCancelled, StoreError
         ])?;
         set_job_state(conn, job, from, JobState::Cancelled)?;
     }
-    if let Some(run) = active_run(conn)? {
+    if let Some(run) = active_run(conn, stage)? {
         let open: i64 = conn
             .prepare_cached(
                 "SELECT COUNT(*) FROM job WHERE ai_run_id = ?1 AND state IN (?2, ?3, ?4, ?5)",
@@ -847,7 +873,7 @@ pub(crate) fn cancel_ai_run(conn: &Connection) -> Result<AiCancelled, StoreError
         any |= open > 0;
         cancel_jobs_of(conn, run.id)?;
     }
-    set_meta(conn, WAITING_UNITS, None)?;
+    set_meta(conn, waiting, None)?;
     Ok(if any {
         AiCancelled::Run
     } else {
@@ -864,9 +890,9 @@ pub(crate) fn after_job_ended(conn: &Connection, job: i64) -> Result<(), StoreEr
     let Some(run) = run else {
         return Ok(());
     };
-    let state: String = conn
-        .prepare_cached("SELECT state FROM ai_run WHERE id = ?1")?
-        .query_row([run], |r| r.get(0))?;
+    let (stage, state): (String, String) = conn
+        .prepare_cached("SELECT stage, state FROM ai_run WHERE id = ?1")?
+        .query_row([run], |r| Ok((r.get(0)?, r.get(1)?)))?;
     if state != RunState::Pending.as_str() {
         return Ok(());
     }
@@ -894,7 +920,11 @@ pub(crate) fn after_job_ended(conn: &Connection, job: i64) -> Result<(), StoreEr
     if done == 0 {
         return drop_run(conn, run);
     }
-    switch_run(conn, run)
+    if stage == crate::embeddings::STAGE {
+        crate::embeddings::switch_run(conn, run)
+    } else {
+        switch_run(conn, run)
+    }
 }
 
 /// The switch (ADR-0005): in one transaction, the visible AI mentions are replaced by the run's,
@@ -949,11 +979,20 @@ pub struct AiProgress {
 }
 
 pub(crate) fn ai_progress(conn: &Connection) -> Result<AiProgress, StoreError> {
-    let active = active_run(conn)?;
-    let pending = pending_run(conn)?;
+    progress_of(conn, STAGE, WAITING_UNITS)
+}
+
+/// [`ai_progress`] for `stage`. For embeddings the waiting number counts windows.
+pub(crate) fn progress_of(
+    conn: &Connection,
+    stage: &str,
+    waiting: &str,
+) -> Result<AiProgress, StoreError> {
+    let active = active_run(conn, stage)?;
+    let pending = pending_run(conn, stage)?;
     let run = pending.as_ref().or(active.as_ref()).map(|r| r.id);
     let mut out = AiProgress {
-        waiting_units: meta(conn, WAITING_UNITS)?
+        waiting_units: meta(conn, waiting)?
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
         ..AiProgress::default()
@@ -963,7 +1002,7 @@ pub(crate) fn ai_progress(conn: &Connection) -> Result<AiProgress, StoreError> {
             "SELECT w.state, COUNT(*) FROM job j JOIN work_item w ON w.job_id = j.id
              WHERE j.stage = ?1 AND j.ai_run_id IS ?2 GROUP BY w.state",
         )?;
-        let rows = stmt.query_map(params![STAGE, run], |r| {
+        let rows = stmt.query_map(params![stage, run], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
         })?;
         for row in rows {
@@ -987,7 +1026,7 @@ pub(crate) fn ai_progress(conn: &Connection) -> Result<AiProgress, StoreError> {
         )?;
         stmt.query_map(
             params![
-                STAGE,
+                stage,
                 run,
                 JobState::Queued.as_str(),
                 JobState::Running.as_str(),
@@ -1015,9 +1054,10 @@ pub(crate) fn ai_progress(conn: &Connection) -> Result<AiProgress, StoreError> {
     Ok(out)
 }
 
-/// Open Stage B jobs with the identity of their run (`None`: no run bound yet) and state.
+/// Open jobs of `stage` with the identity of their run (`None`: no run bound yet) and state.
 pub(crate) fn open_ai_jobs(
     conn: &Connection,
+    stage: &str,
 ) -> Result<Vec<(i64, Option<RunIdentity>, String)>, StoreError> {
     let mut stmt = conn.prepare_cached(
         "SELECT j.id, a.model_identity, j.state FROM job j
@@ -1026,7 +1066,7 @@ pub(crate) fn open_ai_jobs(
     )?;
     let rows = stmt.query_map(
         params![
-            STAGE,
+            stage,
             JobState::Queued.as_str(),
             JobState::Running.as_str(),
             JobState::Paused.as_str(),
@@ -1079,8 +1119,8 @@ pub(crate) fn set_ai_job_block(
     }
 }
 
-/// Whether the lane would start an item now.
-pub(crate) fn has_runnable_ai_work(conn: &Connection) -> Result<bool, StoreError> {
+/// Whether `stage`'s lane would start an item now.
+pub(crate) fn has_runnable_ai_work(conn: &Connection, stage: &str) -> Result<bool, StoreError> {
     Ok(conn
         .prepare_cached(
             "SELECT EXISTS (SELECT 1 FROM work_item w JOIN job j ON j.id = w.job_id
@@ -1089,7 +1129,7 @@ pub(crate) fn has_runnable_ai_work(conn: &Connection) -> Result<bool, StoreError
         .query_row(
             params![
                 ItemState::Pending.as_str(),
-                STAGE,
+                stage,
                 JobState::Queued.as_str(),
                 JobState::Running.as_str()
             ],
@@ -1102,7 +1142,8 @@ pub(crate) fn has_runnable_ai_work(conn: &Connection) -> Result<bool, StoreError
 pub struct AiHealth {
     /// AI mentions whose span does not hold their name in the segment's text.
     pub invented_evidence: u64,
-    /// AI mentions outside the one active run, pending mentions outside the one pending run.
+    /// AI mentions outside the one active run, pending mentions outside the one pending run,
+    /// vectors outside the embeddings stage's active and pending runs (INV-SR-02).
     pub mixed_runs: u64,
 }
 
@@ -1129,9 +1170,11 @@ pub(crate) fn ai_health(conn: &Connection) -> Result<AiHealth, StoreError> {
         "SELECT
            (SELECT COUNT(*) FROM entity_mention m
             WHERE m.producer = 'model' AND m.ai_run_id IS NOT
-                  (SELECT id FROM ai_run WHERE state = 'active'))
+                  (SELECT id FROM ai_run WHERE stage = 'b' AND state = 'active'))
          + (SELECT COUNT(*) FROM pending_entity_mention m
-            WHERE m.ai_run_id IS NOT (SELECT id FROM ai_run WHERE state = 'pending'))",
+            WHERE m.ai_run_id IS NOT (SELECT id FROM ai_run WHERE stage = 'b' AND state = 'pending'))
+         + (SELECT COUNT(*) FROM ai_run a JOIN segment_embedding e ON e.ai_run_id = a.id
+            WHERE a.stage <> 'embeddings' OR a.state NOT IN ('active', 'pending'))",
         [],
         |r| r.get(0),
     )?;

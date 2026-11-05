@@ -8,6 +8,9 @@ import type { AiEstimate } from "./bindings/AiEstimate";
 import type { AiExtractionInfo } from "./bindings/AiExtractionInfo";
 import type { AiReadinessInfo } from "./bindings/AiReadinessInfo";
 import type { AiScope } from "./bindings/AiScope";
+import type { MeaningEstimate } from "./bindings/MeaningEstimate";
+import type { MeaningResult } from "./bindings/MeaningResult";
+import type { MeaningStatus } from "./bindings/MeaningStatus";
 import type { AllowPrompt } from "./bindings/AllowPrompt";
 import type { AppInfo } from "./bindings/AppInfo";
 import type { CatalogModel } from "./bindings/CatalogModel";
@@ -230,6 +233,16 @@ export const commands = {
   aiExtractionRerun: () => invoke<AiEstimate>("ai_extraction_rerun"),
   /** Cancels the re-run, or else the rest of the run. False when nothing was running. */
   aiExtractionCancel: () => invoke<boolean>("ai_extraction_cancel"),
+  /** What meaning search can do now, and why not (US-06.2 AC2). */
+  meaningStatus: () => invoke<MeaningStatus>("meaning_status"),
+  /** One meaning query: the top 20, or why it cannot run (US-06.2 AC1, AC2). */
+  meaningSearch: (query: string) => invoke<MeaningResult>("meaning_search", { query }),
+  /** Starts everything not embedded yet, cancelled and failed parts too. */
+  meaningRun: () => invoke<null>("meaning_run"),
+  /** "Re-run with Y": the vectors stay until it is done (ADR-0005). */
+  meaningRerun: () => invoke<MeaningEstimate>("meaning_rerun"),
+  /** Cancels the re-run, or else the rest of the run. False when nothing was running. */
+  meaningCancel: () => invoke<boolean>("meaning_cancel"),
   /** Whether to show the first-run screen, and where the demo files are (US-14.4). */
   firstRun: () => invoke<FirstRunInfo>("first_run"),
   firstRunFinish: () => invoke<null>("first_run_finish"),
