@@ -262,7 +262,7 @@ cargo test -p mk-core --release --test s2b_memory_bomb -- --ignored --nocapture
 ### Follow-ups
 
 - **Windows hard cap:** a Job Object with a per-process memory limit needs a Win32 call; no maintained crate offers it without `unsafe` in our code (the `win32job` crate sets only working-set limits), and ADR-0002 allows `unsafe` only in `mk-tesseract-sys`. Windows has the watchdog alone, like macOS. **Decided (2026-10-27):** accepted; no ADR-0002 exception.
-- macOS and Windows: `s2b_memory_bomb_short` runs in CI on all three OSes once the repo is pushed; **not verified here**.
+- macOS: `s2b_memory_bomb_short` runs in the hand-started `macos.yml` workflow; **not verified yet**. Windows has no CI (roadmap §4 #21).
 - NFR-REL-07 wording (gap A5): "stopped within 200 ms after its memory passes 1 GB (sampled every 100 ms); on Linux an address-space cap stops faster growth" (proposal, roadmap M2c outcome).
 
 ---

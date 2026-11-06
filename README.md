@@ -58,7 +58,7 @@ Other distributions (not tested): Fedora `sudo dnf install gcc-c++ cmake curl we
 
 **macOS 13+** (written, not yet tested): `xcode-select --install`, then `brew install cmake node`.
 
-**Windows 10/11** (written, not yet tested): [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++", then `winget install Kitware.CMake OpenJS.NodeJS.LTS Rustlang.Rustup`. `curl` and the WebView2 runtime come with Windows.
+**Windows 10/11** (untested, contributions welcome): [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++", then `winget install Kitware.CMake OpenJS.NodeJS.LTS Rustlang.Rustup`. `curl` and the WebView2 runtime come with Windows.
 
 **Build and run**
 

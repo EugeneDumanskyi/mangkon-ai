@@ -565,6 +565,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - `THIRD_PARTY_NOTICES` per build (NFR-LEG-05), incl. the chosen engines, with the full license texts (M2a generates the list: `cargo xtask notices`). llama.cpp is user-installed and not shipped (ADR-0015).
 - ~~Full NFR sweep on RM-1 and RM-2.~~ Moved to M10 (2026-11-04).
 - Demo video and README GIFs from TD-1 only. Includes the first demo moved from M4 (script in `12-layer1.md` §5).
+- First macOS check: run `macos.yml`, fix what fails, try a built app by hand (roadmap §4 #21).
 - Tag v0.1.
 
 **Out of scope**
@@ -582,6 +583,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 6. Usability checks: 1280 × 800 at 100–200% scaling, light and dark, WCAG AA contrast (NFR-USE-07..09).
 7. Every NFR row has a recorded result or a documented, approved exception. A row whose check moved to M10 counts as an exception and says so.
 8. All ADRs are Accepted or Superseded. No ADR is Proposed or Open.
+9. `macos.yml` passes on arm64. A built app is tried by hand: create a project, add files, open a connection at its source. The README's tested-platform matrix says which macOS builds passed CI and which were tried by hand.
 
 ---
 
@@ -649,3 +651,4 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | 18 | NFR-RES-01 right after a large ingest (M2 criterion 7a, W3d-1): glibc tunables for the app process (re-exec once or a launcher), `malloc_trim` after a run (unsafe outside `mk-tesseract-sys`), another allocator (ADR), or accept the miss. **Decided (2026-10-30):** the app restarts itself once with glibc trim and mmap thresholds (512 MiB after a TD-2 ingest, from 576); the 12 MiB left, mostly WebKit script heap, is accepted for now and looked at again in a later hardening milestone. | `11-ingestion.md` §9 | M3 exit |
 | 19 | NFR-RES-01 with meaning search on TD-2: 510 MiB reopened, 513 after the 10-minute release, 478 on an empty project. **Decided (2026-11-05):** the 10–13 MiB over is accepted for now and looked at again in the same hardening milestone as #18, or sooner if a later milestone adds more than a few MiB. The 10 minutes after a search (about 695 MiB plus 920 of `llama-server`) are outside NFR-RES-01, which covers "model not loaded". No target limits memory in that state. | `15-meaning-search.md` §5 | M6b |
 | 20 | NFR-PERF-24 at 0.82 units/s on TD-1 against ≥ 1 (4B, 4 slots, idle RM-1): accept the miss, or change the target. **Decided (2026-11-06):** the miss is accepted and the target stays. NFR-PERF-13, which is what the user waits for, is met by 16 s. | `16-entities-acceptance.md` §4 | M6 exit |
+| 21 | Which platforms CI covers, given that Windows has no test machine and macOS code has never run. **Decided (2026-11-06):** Windows is "untested, contributions welcome" with no CI. CI on every PR is Ubuntu only (build and test, rules, benchmark gate). macOS has `macos.yml`, started by hand, and is first checked in M9. Earlier "3 OSes" wording in M2 and S2b records the plan of that time. | `.github/workflows/`, NFR-COMP-01/02, NFR-MNT-02 | Before the first push |

@@ -1,0 +1,63 @@
+# macOS build and tests, run by hand from the Actions tab (NFR-COMP-01/02, NFR-MNT-02, M9 criterion 9).
+# Each run leaves a release build to download. It is unsigned, so macOS blocks it until the
+# quarantine flag is cleared: xattr -d com.apple.quarantine mangkon
+name: macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # The oldest supported macOS (NFR-COMP-01), whatever the runner's own version is.
+  MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+jobs:
+  build-test:
+    name: Build and test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          # Best effort (NFR-COMP-02).
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Cache pinned native sources
+        uses: actions/cache@v6
+        with:
+          path: target/mk-native-cache
+          key: native-${{ hashFiles('crates/mk-tesseract-sys/native/sources.toml') }}
+      - name: UI tests and build
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build
+      - run: cargo test --workspace --all-features --locked
+      - name: One-command release build (US-14.1)
+        run: cargo xtask build --release
+      # In a tar file because artifact storage does not keep the executable bit.
+      - name: Pack the app
+        run: tar -czf mangkon-macos-${{ matrix.arch }}.tar.gz -C target/release mangkon
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mangkon-macos-${{ matrix.arch }}
+          path: mangkon-macos-${{ matrix.arch }}.tar.gz
+          retention-days: 14

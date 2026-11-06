@@ -21,18 +21,13 @@ env:
 
 jobs:
   build-test:
-    name: Build and test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # ubuntu-22.04 is the oldest supported Ubuntu (NFR-COMP-01).
-        os: [ubuntu-22.04, macos-14, windows-2022]
-    runs-on: ${{ matrix.os }}
+    name: Build and test
+    # The oldest supported Ubuntu (NFR-COMP-01). macOS has its own workflow, run by hand: macos.yml.
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Linux prerequisites
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \

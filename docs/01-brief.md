@@ -58,7 +58,7 @@ The **connections screen** and the **source viewer** must be excellent. Everythi
 v0.1 is built in **layers**. If we are behind, we cut from the top layer down (3 first).
 
 ### Layer 1 — Must ship (no LLM needed)
-- Desktop app (macOS, Windows, Linux), built from source
+- Desktop app (macOS, Linux; Windows untested, contributions welcome), built from source
 - Projects: create, open, add files/folders, incremental re-scan (content hash)
 - Ingestion: PDF (text + scanned via OCR), DOCX, TXT, Markdown, CSV, JSON, images (OCR), EML/MBOX, HTML
 - Every file → Documents + Segments with exact locators (page, line, row/column, email part, JSON path)
@@ -136,11 +136,12 @@ The minimum applies to **the machine that runs the model**, not the app itself.
 Reason: a slow, bad first run hurts the project's reputation more than a smaller audience.
 
 ### OS support
-- macOS 13+, Windows 10/11, Ubuntu 22.04+. Other Linux: best effort.
+- macOS 13+, Ubuntu 22.04+. Other Linux: best effort.
+- Windows 10/11: untested, contributions welcome.
 
 ### Testing
 - The maintainer tests two paths: a machine at or above the minimum, and a below-minimum machine using an external endpoint on the local network.
-- Other platforms: CI builds + community testing in v0.1. The README says honestly what is tested.
+- CI builds and tests on Ubuntu for every PR. macOS has a CI workflow run by hand, used at least once before v0.1 (M9). Windows has no CI. Other platforms rely on community testing in v0.1. The README says honestly what is tested.
 
 Model tiers, set in M1 (2026-10-24, `09-model-check.md` §9):
 
@@ -246,7 +247,7 @@ Details go in `07-test-corpus.md`, written in M0a.
 | Local models extract poorly | Layer 1 works without LLM; M1 benchmark; AI marked "experimental" if needed |
 | Slow processing | Hardware minimum; Stage A results first; background jobs; only new files re-processed |
 | False links destroy trust | Evidence on everything, confidence, review queue, never invent links |
-| Hard build from source | One command per OS, CI on 3 OSes, clear README, hardware check |
+| Hard build from source | One command per OS, CI on Ubuntu and by hand on macOS, clear README, hardware check |
 | Scope creep | Layered scope with a clear cut order, v0.2+ list |
 | Misuse (stalking/doxxing) | Files-only design, no OSINT connectors, Responsible use section |
 | Limited test hardware | CI + community testing; honest README about what's tested |

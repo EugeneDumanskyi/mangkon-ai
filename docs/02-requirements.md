@@ -1357,7 +1357,8 @@ As a technical user, I want one build command per OS, so that I can run the app 
 - **Then** the build script says which one and links to install steps
 
 **AC3 — CI**
-- **Then** CI builds and runs tests on macOS, Windows, and Ubuntu for every pull request
+- **Then** CI builds and runs tests on Ubuntu for every pull request, and on macOS when the macOS workflow is started by hand
+- Windows has no CI: untested, contributions welcome
 
 ---
 

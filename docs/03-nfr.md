@@ -190,8 +190,8 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
-| NFR-COMP-01 | Operating systems | macOS 13+, Windows 10/11, Ubuntu 22.04+; other Linux best effort | CI + maintainer tests | Brief |
-| NFR-COMP-02 | CPU architectures | macOS arm64; Windows x64; Linux x64. Others best effort | CI matrix | ASSUMPTION |
+| NFR-COMP-01 | Operating systems | macOS 13+, Ubuntu 22.04+; other Linux best effort; Windows 10/11 untested, contributions welcome | CI + maintainer tests | Brief |
+| NFR-COMP-02 | CPU architectures | macOS arm64; Linux x64. Others best effort | CI on Ubuntu; macOS workflow run by hand on arm64 and x64 | ASSUMPTION |
 | NFR-COMP-03 | GPU support | NVIDIA (CUDA) full; Apple (Metal) full; AMD/Intel (Vulkan) best effort | Maintainer + community tests | Brief |
 | NFR-COMP-04 | NVIDIA driver | CUDA 12-capable driver | Hardware check message | ASSUMPTION · M5b: the hardware check notes a driver older than 525.60 (Linux) or 527.41 (Windows) (CUDA 12.0 minimums; a note, never a block; ASSUMPTION until the M5c `llama-server` build choice); `nfr_comp_04_old_driver` |
 | NFR-COMP-05 | External endpoints | OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`; tested with llama-server | Endpoint test suite | Brief · M5a: suite is `mangkon-cli endpoint test`; passes against the fake server and llama-server build 10863 on RM-1 (`13-model-manager.md` §2) · Ollama and LM Studio dropped from the test list (maintainer's call, 2026-11-04); calls from RM-2 in M10 |
@@ -205,7 +205,7 @@ Measured with the benchmark command (US-14.3) on TD-1 and its ground truth.
 | ID | Requirement | Target | Check | Source |
 |---|---|---|---|---|
 | NFR-MNT-01 | Build requirements | One documented command per OS; no Python, no Docker | Fresh VM test | Brief · M2a: `cargo xtask build` checks prerequisites (Rust, Node 20.19+/22.12+, CMake 3.18+, C++ compiler, curl, WebKitGTK on Linux) and builds; README "Build from source". Linux only; fresh VM test not run |
-| NFR-MNT-02 | CI | Build + tests on macOS, Windows, Ubuntu for every PR | CI config | Brief |
+| NFR-MNT-02 | CI | Build + tests on Ubuntu for every PR; on macOS by a workflow run by hand, at least once before v0.1; no Windows CI | CI config | Brief |
 | NFR-MNT-03 | CI duration | ≤ 30 min per PR | CI logs | ASSUMPTION |
 | NFR-MNT-04 | Rust core test coverage | ≥ 70% line coverage | Coverage report in CI | ASSUMPTION |
 | NFR-MNT-05 | Layer 1 quality benchmark | Runs on every PR (no LLM needed); fails CI if recall/precision drop > 2 points | CI | ASSUMPTION · M4b: CI job `bench` builds TD-1 and runs `mangkon-cli bench --baseline crates/mk-bench/baseline/td1.json`; it fails when any metric falls more than 2 points or a negative check fails. Not yet seen running in CI (`12-layer1.md` §3) |
