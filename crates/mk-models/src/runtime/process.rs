@@ -518,6 +518,9 @@ while :; do sleep 0.02; done
             }
         }
 
+        /// Octal, as `/proc/<pid>/fdinfo` shows it.
+        const O_CLOEXEC: u32 = 0o2000000;
+
         fn start() -> Started {
             let dir = tempfile::tempdir().unwrap();
             let bin = dir.path().join("server");
@@ -597,13 +600,30 @@ while :; do sleep 0.02; done
         #[test]
         fn the_server_sees_nothing_of_the_watcher() {
             let mut s = start();
-            // Output readers aside, a pipe open here would be the watcher's.
+            // Whatever started this test may leave pipes open across exec (a CI runner does), and
+            // the server gets those too.
+            let inherited = std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .map(|e| e.unwrap())
+                .filter(|e| {
+                    let info = format!("/proc/self/fdinfo/{}", e.file_name().to_string_lossy());
+                    std::fs::read_to_string(info).is_ok_and(|info| {
+                        info.lines()
+                            .find_map(|l| l.strip_prefix("flags:"))
+                            .and_then(|f| u32::from_str_radix(f.trim(), 8).ok())
+                            .is_some_and(|flags| flags & O_CLOEXEC == 0)
+                    })
+                })
+                .filter_map(|e| std::fs::read_link(e.path()).ok())
+                .collect::<Vec<_>>();
+            // Output readers aside, any other pipe open here would be the watcher's.
             let pipes = std::fs::read_dir(format!("/proc/{}/fd", s.process.pid()))
                 .unwrap()
                 .map(|e| e.unwrap())
                 .filter(|e| e.file_name().to_string_lossy().parse::<u32>().unwrap() > 2)
                 .map(|e| std::fs::read_link(e.path()).unwrap())
                 .filter(|target| target.to_string_lossy().starts_with("pipe:"))
+                .filter(|target| !inherited.contains(target))
                 .collect::<Vec<_>>();
             assert_eq!(pipes, Vec::<PathBuf>::new());
             let stdin = std::fs::read_link(format!("/proc/{}/fd/0", s.process.pid())).unwrap();
