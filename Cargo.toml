@@ -23,8 +23,6 @@ members = [
     "tools/corpus-gen",
     "tools/xtask",
 ]
-# Throwaway spike harnesses (M0b/M0c, M1) are never workspace members.
-exclude = ["spikes"]
 
 [workspace.package]
 version = "0.0.0"

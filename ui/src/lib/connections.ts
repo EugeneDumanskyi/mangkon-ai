@@ -1,6 +1,7 @@
 // Pure parts of the Connections screen (E07): the filter, the sort headers, the empty-state
 // messages and the grouping of evidence by document. No React here, so each is tested alone.
 import type { ConnectionFilter } from "../ipc/bindings/ConnectionFilter";
+import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import type { ConnectionSort } from "../ipc/bindings/ConnectionSort";
 import type { ConnectionsSummary } from "../ipc/bindings/ConnectionsSummary";
 import type { Occurrence } from "../ipc/bindings/Occurrence";
@@ -18,8 +19,8 @@ export const DEFAULT_FILTER: ConnectionFilter = {
   includeLow: false,
 };
 
-/** The type choices of the filter: a label and the connection types it stands for. */
-export const KIND_CHOICES: { id: string; label: string; kinds: string[] }[] = [
+/** The identifier types, each with the filter choice of its own. */
+const IDENTIFIER_CHOICES: { id: string; label: string; kinds: string[] }[] = [
   { id: "email", label: "Email", kinds: ["email"] },
   { id: "phone", label: "Phone", kinds: ["phone", "phone_unnormalized"] },
   { id: "url", label: "URL", kinds: ["url"] },
@@ -30,19 +31,39 @@ export const KIND_CHOICES: { id: string; label: string; kinds: string[] }[] = [
   { id: "sol", label: "Solana address", kinds: ["sol"] },
   { id: "tron", label: "TRON address", kinds: ["tron"] },
   { id: "custom", label: "Custom pattern", kinds: ["custom"] },
-  { id: "person", label: "Name (from table): person", kinds: ["person"] },
-  { id: "org", label: "Name (from table): organization", kinds: ["org"] },
+];
+
+/**
+ * The type choices of the filter (US-07.7 AC1): People, Organizations and Identifiers, then each
+ * identifier type. "All types" is the empty choice.
+ */
+export const KIND_CHOICES: { id: string; label: string; kinds: string[] }[] = [
+  { id: "person", label: "People", kinds: ["person"] },
+  { id: "org", label: "Organizations", kinds: ["org"] },
+  { id: "identifiers", label: "Identifiers", kinds: IDENTIFIER_CHOICES.flatMap((c) => c.kinds) },
+  ...IDENTIFIER_CHOICES,
 ];
 
 /** The choice id a filter's types stand for, `""` for all. */
 export function kindChoice(filter: ConnectionFilter): string {
-  const first = filter.kinds[0];
-  return KIND_CHOICES.find((c) => first !== undefined && c.kinds.includes(first))?.id ?? "";
+  const same = (kinds: string[]) =>
+    kinds.length === filter.kinds.length && kinds.every((k) => filter.kinds.includes(k));
+  return KIND_CHOICES.find((c) => same(c.kinds))?.id ?? "";
 }
 
 /** The types of choice `id`; none for `""` (all). */
 export function kindsOf(id: string): string[] {
   return KIND_CHOICES.find((c) => c.id === id)?.kinds ?? [];
+}
+
+/** An entity's linked identifiers for its row (US-07.7 AC2), `null` when it has none. */
+export function linkedLabel(
+  row: Pick<ConnectionItem, "linkedIdentifiers" | "linkedTotal">,
+): string | null {
+  if (row.linkedIdentifiers.length === 0) return null;
+  const more = row.linkedTotal - row.linkedIdentifiers.length;
+  const values = row.linkedIdentifiers.map((i) => i.value).join(", ");
+  return more > 0 ? `${values} +${String(more)} more` : values;
 }
 
 /** Whether any filter, find text or "show ignored" narrows or widens the list. */

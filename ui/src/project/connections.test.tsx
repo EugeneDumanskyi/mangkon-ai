@@ -38,6 +38,8 @@ const row = (over: Partial<ConnectionItem> = {}): ConnectionItem => ({
   lowConfidence: false,
   lowOnly: false,
   ignored: false,
+  linkedIdentifiers: [],
+  linkedTotal: 0,
   ...over,
 });
 
@@ -115,7 +117,7 @@ describe("filters, find and sort (US-07.1 AC3, US-07.2)", () => {
     for (const label of ["Type", "Sources", "File type", "Find", "Show ignored (4)"]) {
       expect(html).toContain(label);
     }
-    expect(html).toContain("Name (from table): person");
+    expect(html).toContain("People");
     expect(html).toContain(">PDF<");
     expect(html).not.toContain("Clear filters");
   });

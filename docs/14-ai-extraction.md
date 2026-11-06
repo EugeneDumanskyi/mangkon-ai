@@ -12,7 +12,7 @@
 |---|---|
 | A4 | Old results stay until the new run is done, then one switch. Cancel changes nothing visible. |
 | Work unit | Adjacent segments of one document, up to 2,000 characters; a longer segment is split at whitespace. Mentions are stored against an exact segment and span. |
-| Start rule | Automatic after Stage A when at most 1,600 units wait (about 20 min at 1.39/s, ASSUMPTION). Above that, the user picks documents or chooses all, with an estimate. |
+| Start rule | Automatic after Stage A when at most 1,600 units wait (about 20 min at 1.39/s, ASSUMPTION; M6c measured 0.82/s, about 32 min). Above that, the user picks documents or chooses all, with an estimate. |
 | Model changed | New work is Blocked with a reason and "Re-run with Y". Choosing the old model again unblocks it. Never mixed, nothing large starts by itself. |
 
 Evidence rules, in order (`crates/mk-ai/src/check.rs`): strict parse with one retry; evidence found after whitespace normalization; name inside the evidence, ignoring case; name inside one segment; name's span not overlapping a Stage A identifier (counted on its own); duplicates removed.
@@ -71,6 +71,8 @@ The Stage B tests passed the first time they ran, so each rule below was broken 
 | Listening on | 127.0.0.1 only |
 
 **NFR-QA-11.** A separate script read all 3,050 stored mentions back against the stored text: 0 outside their segment, 0 whose name is not in the evidence span. The check holds on real output as it does on the fake.
+
+**M6c measured the targets on an idle machine and changed the rate: `16-entities-acceptance.md` §3–§4.** What follows is M6a's view.
 
 **The rate.** The 1.39 units/s behind the start rule came from M1's data; TD-1 gives 0.66, and it varied from 0.28 to 1.14 across the run. All 4 slots were busy for 97.7% of the run, so that is not the cause, and M1's 0.66 with one slot is a coincidence. Length does not explain it either (correlation of characters and duration 0.31). The median unit takes 2.2 s, p90 10.2 s, p99 75.6 s. 17 units of 70 s or more take 23% of the slots' time and 36 units of 40 s or more take 38%. These are units where the model writes until the limit of 2,048 tokens and is then retried; the one seen in full repeated `Northern` to the limit. The 18 unreadable replies are these units: they end Done with 0 mentions, so their names are lost.
 
@@ -150,14 +152,14 @@ The release app with both real models, on a scratch data folder, in a window of 
 ## 5. Open points
 
 1. **Name inside the evidence goes beyond the letter of US-10.2.** It is stricter. M1's data put its cost at about 1%; on TD-1's real units it discards 4.3% (34 of 792), many of them wrong pairings such as `Northern` with an unrelated quote.
-2. **OCR mention confidence.** Domain §3.3 says OCR mentions take the OCR word confidence; US-10.1 AC1 stores the model's. Requirements win. ASSUMPTION; M6c sees the effect on scans.
-3. **Bare domains stay a false-positive source.** `velmora-port.example` in body text is not an identifier mention, so the overlap rule misses it. The filter from `09-model-check.md` §5.3 is the known fix if M6c's precision falls short.
+2. **OCR mention confidence.** Domain §3.3 says OCR mentions take the OCR word confidence; US-10.1 AC1 stores the model's. Requirements win. ASSUMPTION; M6c sees the effect on scans. M6c: no scan mention is low-confidence, so nothing changes (`16-entities-acceptance.md` §3).
+3. **Bare domains stay a false-positive source.** `velmora-port.example` in body text is not an identifier mention, so the overlap rule misses it. The filter from `09-model-check.md` §5.3 is the known fix if M6c's precision falls short. **Closed in M6c:** precision 93.29%, no bare domain among the false positives, filter not added (`16-entities-acceptance.md` §3).
 4. **Endpoints without structured output.** The schema is still sent and replies are still strictly checked. Failures show as "N responses could not be read" rather than blocking.
 5. **Long-segment windows have no overlap.** A name split at a window edge is lost; cuts prefer line breaks, then whitespace. ASSUMPTION.
-6. **The type filter still says "Name (from table)"** though AI people now match it too. It stays until M6c, with the rest of that screen's work.
-7. **The start rule and the shown estimates rest on 1.39 units/s; TD-1 gives 0.66** (§4). `STAGE_B_AUTO_UNITS` and `STAGE_B_UNITS_PER_SECOND` in `crates/mk-jobs/src/lib.rs` are unchanged.
+6. **The type filter still says "Name (from table)"** though AI people now match it too. It stays until M6c, with the rest of that screen's work. **Closed in M6c** (`16-entities-acceptance.md` §1).
+7. **The start rule and the shown estimates rest on 1.39 units/s; TD-1 gives 0.66** (§4). `STAGE_B_AUTO_UNITS` and `STAGE_B_UNITS_PER_SECOND` in `crates/mk-jobs/src/lib.rs` are unchanged. **Closed in M6c:** the rate is the measured 0.82, the limit stays 1,600, about 32 min (`16-entities-acceptance.md` §1).
 8. **Evidence matching on rough text** (§4). Folding typographic quotes and dashes and joining line-end hyphens would save about 54% of the evidence misses; the span stored would still be exact in the source, so nothing could be invented. Not done: it changes how "never invent" is checked, and its effect should be judged against M6c's scoring. Column order is a parser matter.
-9. **NFR-PERF-13 is at risk** (§4). 24 min for the 4B on TD-1, before embeddings, against ≤ 20 min for both.
-10. **Units stuck at the token limit** cost about a quarter of the slots' time and lose their names (§4). No limit other than the 2,048 tokens M1 used is applied.
-11. **The 4B calls legal citations organizations** (`1 Stat. 234`). A precision matter for M6c.
+9. **NFR-PERF-13 is at risk** (§4). 24 min for the 4B on TD-1, before embeddings, against ≤ 20 min for both. **Closed in M6c:** 1,184 s, met (`16-entities-acceptance.md` §3).
+10. **Units stuck at the token limit** cost about a quarter of the slots' time and lose their names (§4). No limit other than the 2,048 tokens M1 used is applied. **Closed in M6c:** the limit stays, and a reply that reaches it is not retried (`16-entities-acceptance.md` §4).
+11. **The 4B calls legal citations organizations** (`1 Stat. 234`). A precision matter for M6c. **Moved:** still happens, on public files that are not scored (`16-entities-acceptance.md` §9).
 12. **A model change shows in the AI row, not in the status bar.** The bar follows whether the model can run, and it can. The Blocked reason and "Re-run with" are in the row.

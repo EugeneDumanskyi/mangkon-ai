@@ -54,8 +54,9 @@ pub use ops::{
 };
 pub use read::{
     CardFlagRow, ConnectionQuery, ContentRow, DEFAULT_OCR_LANGUAGES, DocumentInfo, FailedFile,
-    KnownFile, ListCursor, ListedConnection, MentionRow, OccurrenceRow, PendingWork, Progress,
-    RecordLinkRow, RootRow, SegmentRow, SegmentWindow, SortColumn, WindowSegment,
+    KnownFile, LinkedIdentifier, LinkedIdentifiers, ListCursor, ListedConnection, MentionRow,
+    OccurrenceRow, PendingWork, Progress, RecordLinkRow, RootRow, SegmentRow, SegmentWindow,
+    SortColumn, WindowSegment,
 };
 pub use schema::{MIGRATIONS, Migration, OpenReport};
 pub use search::{SearchCursor, SearchFilter, SearchRow};
@@ -928,6 +929,18 @@ impl Store {
     /// Number of connection rows that match the query (the list length).
     pub fn connection_count(&self, query: &read::ConnectionQuery) -> Result<u64, StoreError> {
         self.readers.with(|c| read::connection_count(c, query))
+    }
+
+    /// The identifiers linked to each of `keys` (US-07.7 AC2, D7): the first `limit_per_key` and
+    /// how many. Meant for one page of the list.
+    pub fn linked_identifiers(
+        &self,
+        keys: &[String],
+        limit_per_key: usize,
+        include_low: bool,
+    ) -> Result<std::collections::BTreeMap<String, read::LinkedIdentifiers>, StoreError> {
+        self.readers
+            .with(|c| read::linked_identifiers(c, keys, limit_per_key, include_low))
     }
 
     /// Connection keys with fewer than two counted documents (NFR-QA-10), at most `limit`.

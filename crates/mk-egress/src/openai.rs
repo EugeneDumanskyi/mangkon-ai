@@ -1,5 +1,5 @@
 //! OpenAI-compatible `/chat/completions` and `/embeddings` shapes (NFR-COMP-05), as in the M1
-//! harness (`spikes/model-check/src/client.rs`).
+//! harness (`09-model-check.md` §2).
 
 use serde_json::{Value, json};
 

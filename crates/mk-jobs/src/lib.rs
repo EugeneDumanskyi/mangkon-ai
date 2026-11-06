@@ -213,10 +213,11 @@ pub fn stage_b_priority(has_identifiers: bool) -> i64 {
 }
 
 /// The start rule (decided 2026-11-05): Stage B starts by itself when at most this many units
-/// wait. About 20 min at [`STAGE_B_UNITS_PER_SECOND`] (ASSUMPTION). Above it, the user picks.
+/// wait. About 32 min at [`STAGE_B_UNITS_PER_SECOND`]. Above it, the user picks.
 pub const STAGE_B_AUTO_UNITS: u64 = 1600;
-/// M1's rate with 4 slots on the minimum-tier model (`09-model-check.md` §5.1).
-pub const STAGE_B_UNITS_PER_SECOND: f64 = 1.39;
+/// The measured rate with 4 slots on the minimum-tier model, TD-1 on RM-1
+/// (`16-entities-acceptance.md` §3).
+pub const STAGE_B_UNITS_PER_SECOND: f64 = 0.82;
 
 /// How long `units` would take at [`STAGE_B_UNITS_PER_SECOND`].
 pub fn stage_b_estimate(units: u64) -> Duration {
@@ -384,12 +385,12 @@ mod tests {
         assert_eq!(stage_b_limit(false), 1);
     }
 
-    /// Gap A3: identifiers first; 1,600 units is about 20 min.
+    /// Gap A3: identifiers first; 1,600 units is about 32 min.
     #[test]
     fn a3_stage_b_order_and_estimate() {
         assert!(stage_b_priority(true) < stage_b_priority(false));
         let minutes = stage_b_estimate(STAGE_B_AUTO_UNITS).as_secs() / 60;
-        assert_eq!(minutes, 19);
+        assert_eq!(minutes, 32);
     }
 
     /// The embeddings start rule's limit is about 20 min of work.

@@ -348,6 +348,28 @@ fn us_10_1_ac2_schema_and_one_retry() {
     assert_eq!(s.view().state, AiLaneState::Done);
 }
 
+/// A reply cut at the token limit is not retried: Done with no mentions and a count, the batch
+/// goes on (INV-AI-03).
+#[test]
+fn inv_ai_03_cut_reply_is_not_retried() {
+    let log = tempfile::NamedTempFile::new().unwrap();
+    let mut c = two_models(
+        FakeExtraction {
+            cut_text: Some("Nothing shared".into()),
+            ..hale_and_velmora()
+        },
+        FakeExtraction::default(),
+    );
+    c.requests_log = Some(log.path().to_path_buf());
+    let s = setup(c);
+    let out = s.schedule_and_run();
+    assert_eq!(out.invalid_responses, 1);
+    assert_eq!(out.mentions, 4);
+    assert_eq!(s.view().state, AiLaneState::Done);
+    let lines = std::fs::read_to_string(log.path()).unwrap();
+    assert_eq!(lines.lines().count(), out.done as usize);
+}
+
 /// US-10.1 AC3: a mention under 0.5 is stored and hidden by default; "Show low confidence" reveals
 /// it and the connection only such mentions make (`low_only`).
 #[test]
@@ -428,12 +450,11 @@ fn identifier_overlap_is_dropped_and_counted() {
     assert_eq!(s.view().identifier_dropped, 1);
 }
 
-/// US-10.3 AC1: every view says Experimental in this build (the flag's off side is in `mk-ai`).
+/// US-10.3 AC1: every view follows the build's flag (both of its values are checked in `mk-ai`).
 #[test]
 fn us_10_3_view_carries_the_flag() {
     let s = setup(Control::default());
     assert_eq!(s.view().experimental, mk_ai::experimental());
-    assert!(s.view().experimental);
 }
 
 // ---- US-10.4, ADR-0005 ----
@@ -470,11 +491,13 @@ fn adr_0005_rerun_shows_old_results_until_the_switch() {
         let runner = scope.spawn(|| s.run());
         let mut samples = 0;
         while !runner.is_finished() {
+            // Read before the run: if the run is still the old one, so were these.
             let now = s.project.store().derived_state().unwrap();
+            let mentions = s.ai_mentions();
             let run = s.project.store().active_ai_run().unwrap().unwrap();
             if run.id == x_run.id {
                 assert_eq!(now, old, "changed before the switch");
-                assert_eq!(s.ai_mentions(), old_mentions, "mentions changed");
+                assert_eq!(mentions, old_mentions, "mentions changed");
                 samples += 1;
             }
             // The counts shown belong to the model named beside them, not to the re-run's.
@@ -1180,7 +1203,7 @@ fn a3_over_the_limit_the_user_picks() {
     assert_eq!(view.state, AiLaneState::WaitingForPick);
     let waiting = view.waiting.unwrap();
     assert_eq!(waiting.units, 1_700);
-    assert_eq!(waiting.estimate.as_secs(), 1_223);
+    assert_eq!(waiting.estimate.as_secs(), 2_073);
 
     // Pick two documents: the last one, with an identifier, comes first.
     let page = s

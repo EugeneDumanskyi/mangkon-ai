@@ -1,6 +1,6 @@
 //! Finding the user-installed `llama-server` (ADR-0015): the settings path, then `PATH`, no
 //! other search. Its build from `--version`, the minimum check, and its backend from
-//! `--list-devices`. Ported from the M1 harness (`spikes/model-check/src/runtime.rs`).
+//! `--list-devices`. Ported from the M1 harness (`09-model-check.md` §2).
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;

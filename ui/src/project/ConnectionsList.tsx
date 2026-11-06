@@ -14,6 +14,7 @@ import {
   isFiltered,
   kindChoice,
   kindsOf,
+  linkedLabel,
   newConnectionsLabel,
   nextSort,
 } from "../lib/connections";
@@ -43,6 +44,7 @@ export function ConnectionSummary({
   onIgnore?: (row: ConnectionItem) => void;
 }) {
   const warning = kindWarning(row.kind);
+  const linked = linkedLabel(row);
   const muted = selected ? "text-xs" : "text-xs text-muted";
   return (
     <div className={row.ignored ? "opacity-60" : undefined} data-ignored={row.ignored || undefined}>
@@ -90,18 +92,28 @@ export function ConnectionSummary({
           </button>
         )}
       </div>
-      <div className={`flex flex-wrap items-center gap-x-1 ${muted}`}>
-        <span>
+      <div
+        className={`flex items-center gap-x-1 ${linked === null ? "flex-wrap" : "whitespace-nowrap"} ${muted}`}
+      >
+        <span className={linked === null ? undefined : "shrink-0"}>
           {row.label ?? kindLabel(row.kind)} · {plural(row.sourceCount, "source")} ·{" "}
           {plural(row.mentionCount, "mention")}
         </span>
-        <span aria-label={`File types: ${row.fileTypes.join(", ")}`} className="flex gap-1">
+        <span
+          aria-label={`File types: ${row.fileTypes.join(", ")}`}
+          className={linked === null ? "flex gap-1" : "flex shrink-0 gap-1"}
+        >
           {row.fileTypes.map((t) => (
             <span key={t} className="rounded border border-current px-1 uppercase">
               {t}
             </span>
           ))}
         </span>
+        {linked !== null && (
+          <span className="min-w-0 truncate font-mono" title={linked}>
+            · {linked}
+          </span>
+        )}
       </div>
     </div>
   );

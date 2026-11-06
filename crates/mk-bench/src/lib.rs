@@ -1,10 +1,12 @@
 //! BC-13 benchmark context. In M0a: the ground-truth model, loading and validation (US-14.3 AC1).
 //! M3b: the OCR character accuracy metric ([`ocr`], NFR-QA-07). M4b: identifier scoring and the
-//! CI gate ([`score`], US-14.3 AC2, NFR-MNT-05).
+//! CI gate ([`score`], US-14.3 AC2, NFR-MNT-05). M6c: people and organizations ([`names`],
+//! NFR-QA-08/09).
 
 pub mod checks;
 pub mod keys;
 mod model;
+pub mod names;
 pub mod ocr;
 pub mod score;
 pub mod td3;

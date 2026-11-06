@@ -169,7 +169,7 @@ pub(crate) struct Shown {
 
 /// `kind` and `value` of a subject key as the list shows them: the text before the first `:`
 /// and the rest, a custom pattern's label dropped (US-04.7).
-fn kind_and_value(key: &str) -> (String, String) {
+pub(crate) fn kind_and_value(key: &str) -> (String, String) {
     let (kind, rest) = key.split_once(':').unwrap_or(("", key));
     let value = if kind == "custom" {
         rest.split_once(':').map_or(rest, |(_, v)| v)

@@ -167,7 +167,7 @@ The first pass missed four of these and skipped one: real gaps. Tests were added
 4. **Self-hits.** 35 of 50 queries from TD-2's own text found that text in the exact top 20 (§2). Not explained.
 5. **Start embeddings with no files.** The click does nothing visible.
 6. **"No model" state.** It is a text pointer to AI models, not a link. The default fit already picks bge-m3, so the walk did not reach this state in the app; the tests cover it.
-7. **Experimental label.** US-10.3's label on meaning search is not added: M6c.
+7. **Experimental label.** US-10.3's label on meaning search is not added: M6c. **Closed in M6c:** the label is dropped (`16-entities-acceptance.md` §8).
 8. **CLI locators.** `mangkon-cli meaning` prints them in debug form (`PdfText { page: PageNumber(11), ...}`).
 9. **ADR-0010.** Accepted 2026-11-05. Its "top 200" and "memory-mapped" differ from what was built; the ADR's M6b follow-up records both.
 10. **NFR-RES-01.** 510 MiB reopened and 513 after release on TD-2, 10–13 over; about 695 MiB plus the server's 920 in the 10 minutes after a search. Decided 2026-11-05: accepted for now, and looked at again in the same hardening milestone as M3d's 512 after an ingest (roadmap §4 #18, #19).

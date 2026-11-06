@@ -86,6 +86,16 @@ pub struct ConnectionRow {
     pub low_only: bool,
 }
 
+/// Whether an email header pairs a name with the address after it (`Name <address>`, D7), given
+/// the text between the name's span and the address's span: an optional closing quote, spaces and
+/// the `<`. In `A <a@x>, B <b@x>` the text from `A` to `b@x` holds more than that, so each name
+/// pairs only with its own address.
+pub fn is_header_pair(between: &str) -> bool {
+    let rest = between.trim_start();
+    let rest = rest.strip_prefix('"').unwrap_or(rest).trim_start();
+    rest == "<"
+}
+
 /// The project's domain stop list (US-04.3 AC3): registrable domains, lower case.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct StopList(BTreeSet<String>);
@@ -393,6 +403,18 @@ pub fn resolve(decisions: &[DecisionFact], anchor_present: bool) -> Resolution {
 mod tests {
     use super::*;
     use mk_kernel::IdentifierKind;
+
+    #[test]
+    fn d7_a_name_pairs_only_with_its_own_address() {
+        // `A B <a@x>, "C, D" <c@x>`
+        assert!(is_header_pair(" <"));
+        assert!(is_header_pair("<"));
+        assert!(is_header_pair("\" <"));
+        assert!(!is_header_pair(" <a@x>, C <"));
+        assert!(!is_header_pair(" (the port) <"));
+        assert!(!is_header_pair(", "));
+        assert!(!is_header_pair(""));
+    }
 
     fn key() -> IdentifierKey {
         IdentifierKey::new(IdentifierKind::Email, "a@x.example")

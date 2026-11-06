@@ -291,7 +291,7 @@ fn collect(
 
 /// The ground-truth id of stored document `document` of `file`: `Ok(id)`, or `Err(position)`
 /// when the ground truth has no such document.
-fn gt_document(
+pub(crate) fn gt_document(
     project: &Project,
     gt: &GroundTruth,
     file: &str,

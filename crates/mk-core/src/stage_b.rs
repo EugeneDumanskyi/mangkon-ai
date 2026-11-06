@@ -10,9 +10,9 @@
 //!   (NFR-REL-05).
 //! - Failures (ADR-0006): a network error puts the item back and tries again with a backoff, three
 //!   in a row Block the job; a refusal (permission, key, certificate) Blocks at once; an HTTP error
-//!   fails that item alone; an unreadable reply is retried once, then counted (INV-AI-03). The
-//!   local runtime is acquired again after a crash, and its Failed state Blocks through
-//!   [`Workspace::ai_client`] (NFR-REL-12).
+//!   fails that item alone; an unreadable reply is retried once unless it was cut at the token
+//!   limit, then counted (INV-AI-03). The local runtime is acquired again after a crash, and its
+//!   Failed state Blocks through [`Workspace::ai_client`] (NFR-REL-12).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -211,9 +211,12 @@ fn request(messages: Vec<ChatMessage>) -> ChatRequest {
     }
 }
 
+/// The `finish_reason` of a reply that stopped at `max_tokens`.
+const FINISH_TOKEN_LIMIT: &str = "length";
+
 /// One unit through the model: the call, the strict parse with one retry that tells the error
-/// (INV-AI-03), the evidence rules. Still unreadable after the retry: Done with no mentions and a
-/// count.
+/// (INV-AI-03), the evidence rules. Still unreadable after the retry, or cut at the token limit:
+/// Done with no mentions and a count.
 fn extract(
     client: &AiClient<'_>,
     pieces: &[Piece],
@@ -235,6 +238,12 @@ fn extract(
                         identifier_dropped: out.identifier_dropped,
                         invalid_responses: 0,
                     });
+                }
+                // Cut at the token limit: the retry would carry the whole cut reply and is the
+                // dearest call of a run (`16-entities-acceptance.md`).
+                Err(_) if reply.finish_reason.as_deref() == Some(FINISH_TOKEN_LIMIT) => {
+                    client.succeeded();
+                    break;
                 }
                 Err(e) => (reply.content, e),
             },

@@ -24,6 +24,10 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [Walking skeleton](docs/10-walking-skeleton.md) | Build time, app size, and the 100,000-row scroll test (M2 spikes) |
 | [Ingestion](docs/11-ingestion.md) | Streaming, PDF, OCR and page view measurements (M3) |
 | [Layer 1](docs/12-layer1.md) | Keyword search measurements (M4) |
+| [Model manager](docs/13-model-manager.md) | Egress gate, endpoints, downloads and the runtime supervisor (M5) |
+| [AI extraction](docs/14-ai-extraction.md) | Stage B, kill tests and real runs (M6a) |
+| [Meaning search](docs/15-meaning-search.md) | Search latency and recall at scale (M6b) |
+| [Entities and acceptance](docs/16-entities-acceptance.md) | Entities on the connections screen, the LLM benchmark, M6 results (M6c) |
 | [Install llama.cpp](docs/install-llama-cpp.md) | The `llama-server` prerequisite: minimum build, install options per OS |
 | [Add OCR languages](docs/install-ocr-languages.md) | English is built in; where other Tesseract language files go |
 

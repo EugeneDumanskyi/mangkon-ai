@@ -1,5 +1,5 @@
 //! The extraction prompt (version 1, settled in M1, `09-model-check.md` §3.2 and §11; ported from
-//! `spikes/model-check/src/extract.rs`), its JSON schema and the strict parse of a reply.
+//! the M1 harness), its JSON schema and the strict parse of a reply.
 
 use mk_kernel::EntityType;
 use serde::Deserialize;

@@ -16,8 +16,8 @@ use mk_graph::model::EntityRow;
 use mk_kernel::{Column, Locator, Span};
 use mk_parsers::Format;
 use mk_store::{
-    ConnectionQuery, DocumentInfo, FailedFile, ListCursor, ListedConnection, OccurrenceRow,
-    WindowSegment,
+    ConnectionQuery, DocumentInfo, FailedFile, LinkedIdentifiers, ListCursor, ListedConnection,
+    OccurrenceRow, WindowSegment,
 };
 
 use crate::project::{Project, ProjectError};
@@ -48,6 +48,9 @@ pub struct IngestCounts {
     pub processing: u64,
 }
 
+/// How many linked identifiers an entity row carries; the rest are only counted (US-07.7 AC2).
+pub const LINKED_SHOWN: usize = 3;
+
 /// One page of the connections list and the cursor of the page after it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectionsPage {
@@ -55,6 +58,8 @@ pub struct ConnectionsPage {
     /// The entity rows of this page's entity connections, by name key: the display name and
     /// the "Name (from table)" mark (US-05.3 AC2, INV-ER-07).
     pub entities: BTreeMap<String, EntityRow>,
+    /// The identifiers linked to this page's entity connections, by name key (US-07.7 AC2, D7).
+    pub linked: BTreeMap<String, LinkedIdentifiers>,
     /// `None` on the last page.
     pub next: Option<ListCursor>,
 }
@@ -433,9 +438,13 @@ impl Project {
             .map(|r| r.row.subject_key.clone())
             .collect();
         let entities = self.store().entities(&entity_keys)?;
+        let linked =
+            self.store()
+                .linked_identifiers(&entity_keys, LINKED_SHOWN, query.include_low)?;
         Ok(ConnectionsPage {
             rows,
             entities,
+            linked,
             next,
         })
     }

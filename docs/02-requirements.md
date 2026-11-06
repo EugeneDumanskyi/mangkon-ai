@@ -1151,6 +1151,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 **AC2 — Structured output**
 - **Then** the model is called with a JSON schema (grammar-constrained), and any response that does not match the schema is retried once, then logged and skipped
 - ASSUMPTION: one retry.
+- M6c: a response cut at the token limit is not retried; it is logged and skipped at once (decided 2026-11-06). Retrying took 17% of the run on TD-1 and saved few names (`16-entities-acceptance.md` §4).
 
 **AC3 — Display threshold**
 - **Given** a mention has confidence below 0.5
@@ -1176,6 +1177,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 - **Given** M1 shows local models extract poorly (brief §10, `06-roadmap.md` M1)
 - **Then** all LLM features show an "Experimental" label
 - **And** this is a build-time or config flag, not a code change
+- M6c: the label is off by default (decided 2026-11-06): the minimum-tier model passes NFR-QA-08/09 on TD-1 (`16-entities-acceptance.md` §3). `MK_AI_EXPERIMENTAL=1` at build time turns it back on.
 
 ---
 

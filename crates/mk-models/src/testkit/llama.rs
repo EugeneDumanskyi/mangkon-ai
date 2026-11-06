@@ -55,6 +55,8 @@ pub struct Control {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct FakeEmbeddings {
+    /// A text holding this gets bad JSON cut at the token limit.
+    pub cut_text: Option<String>,
     /// Every reply takes this long.
     pub delay_ms: u64,
     /// A request with a text holding `hang_text` takes `hang_ms`.
@@ -119,6 +121,8 @@ pub struct FakeExtraction {
     pub bad_first: bool,
     /// Bad JSON on every try.
     pub bad_always: bool,
+    /// A text holding this gets bad JSON cut at the token limit.
+    pub cut_text: Option<String>,
     /// Every reply takes this long.
     pub delay_ms: u64,
     /// A text holding `hang_text` takes `hang_ms`.
@@ -129,12 +133,16 @@ pub struct FakeExtraction {
 }
 
 impl FakeExtraction {
+    fn is_cut(&self, text: &str) -> bool {
+        self.cut_text.as_deref().is_some_and(|c| text.contains(c))
+    }
+
     /// The fake's reply to `text`; `None` for an HTTP error.
     fn reply(&self, text: &str, retry: bool) -> Option<String> {
         if self.error_text.as_deref().is_some_and(|e| text.contains(e)) {
             return None;
         }
-        if self.bad_always || (self.bad_first && !retry) {
+        if self.bad_always || (self.bad_first && !retry) || self.is_cut(text) {
             return Some("{\"mentions\":[{\"name\":".to_string());
         }
         let mentions: Vec<serde_json::Value> = self
@@ -230,6 +238,15 @@ fn extraction_reply(shared: &Shared, body: &serde_json::Value) -> Option<Result<
     Some(rules.reply(text, messages.len() > 2).ok_or(()))
 }
 
+/// `length` when the request's text is one this fake cuts at the token limit.
+fn finish_reason(shared: &Shared, body: &serde_json::Value) -> &'static str {
+    let text = body["messages"][1]["content"].as_str().unwrap_or_default();
+    match shared.rules() {
+        Some(rules) if rules.is_cut(text) => "length",
+        _ => "stop",
+    }
+}
+
 impl Control {
     /// Writes the control file.
     pub fn write(&self, path: &Path) {
@@ -321,7 +338,8 @@ fn handle(stream: TcpStream, shared: &Arc<Shared>) {
             };
             let out = serde_json::json!({
                 "model": model,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": content}}],
+                "choices": [{"index": 0, "finish_reason": finish_reason(shared, &body),
+                             "message": {"role": "assistant", "content": content}}],
             });
             reply(&mut w, 200, &out.to_string());
         }

@@ -9,6 +9,7 @@ mod embed;
 mod endpoint;
 mod ingest;
 mod kill_test;
+mod llm_bench;
 mod manage;
 mod models;
 
@@ -28,6 +29,9 @@ Usage: mangkon-cli [--help | --version]
        mangkon-cli remove --project DIR [--json] PATH...
        mangkon-cli relocate --project DIR --root OLD --to NEW [--tessdata DIR] [--json]
        mangkon-cli kill-test --source DIR [--runs N] [--seed N] [--work DIR] [--json]
+       mangkon-cli llm-bench --model ID [--embedding-model ID] [--runs N] [--testdata DIR]
+                             [--app-data DIR] [--dir DIR] [--llama-server PATH]
+                             [--tessdata DIR] [--work DIR] [--json FILE]
        mangkon-cli bench [--testdata DIR] [--baseline FILE [--update-baseline]] [--json FILE]
                          [--tessdata DIR] [--work DIR]
        mangkon-cli endpoint test BASE_URL --model NAME [--api-key-env VAR] [--json]
@@ -90,6 +94,21 @@ Commands:
               --json             also write this run's report to FILE
               --tessdata         the OCR language folder, as for ingest
               --work             keep the projects in DIR (default: a temporary folder)
+  llm-bench   Read TD-1 into a new project (phone region GB) and run the chosen models over it
+              as the app does, both lanes at once: score people and organizations against
+              the ground truth, time them, and check embedding recall. Sends text only to
+              those models. By hand before a release; needs llama-server and the models. The
+              median of the runs decides. The app's AI choice goes back to what it was. Prints
+              no names. Exits 1 if a part fails, a rebuild differs or the project is not
+              healthy; a missed target is printed and is not a failure.
+              --testdata         the corpus folder (default testdata/td1)
+              --model            the local extraction model ID
+              --embedding-model  the local embedding model ID (without it, no embeddings)
+              --runs             how many runs (default 1)
+              --app-data, --dir, --llama-server, --tessdata  as for ai and ingest
+              --work             keep the projects in DIR, as run-1, run-2 ... (default: a
+                                 temporary folder)
+              --json             also write the whole report to FILE, names included
   endpoint    test: check the OpenAI-compatible endpoint at BASE_URL (for example
               http://192.168.1.20:8080, /v1 is added when there is no path) with the app's
               fixed test texts: a chat call, structured output and embeddings. Prints where
@@ -219,6 +238,10 @@ fn main() -> ExitCode {
             Ok(opts) => bench::run(&opts),
             Err(e) => usage_error(&e),
         },
+        Some("llm-bench") => match llm_bench_options(&args[1..]) {
+            Ok(opts) => llm_bench::run(&opts),
+            Err(e) => usage_error(&e),
+        },
         // The process the kill test kills. Not in the help.
         Some("kill-test-target") => match &args[1..] {
             [project, source] => kill_test::target(&PathBuf::from(project), &PathBuf::from(source)),
@@ -283,6 +306,44 @@ fn endpoint_options(args: &[String]) -> Result<endpoint::TestOptions, String> {
         api_key_env,
         json,
     })
+}
+
+fn llm_bench_options(args: &[String]) -> Result<llm_bench::Options, String> {
+    let mut opts = llm_bench::Options {
+        testdata: PathBuf::from("testdata/td1"),
+        model: String::new(),
+        embedding_model: None,
+        runs: 1,
+        app_data: None,
+        dir: None,
+        llama_server: None,
+        tessdata: None,
+        work: None,
+        json: None,
+    };
+    let mut model = None;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--testdata" => opts.testdata = PathBuf::from(value()?),
+            "--model" => model = Some(value()?.clone()),
+            "--embedding-model" => opts.embedding_model = Some(value()?.clone()),
+            "--runs" => opts.runs = value()?.parse().map_err(|_| "--runs takes a number")?,
+            "--app-data" => opts.app_data = Some(PathBuf::from(value()?)),
+            "--dir" => opts.dir = Some(PathBuf::from(value()?)),
+            "--llama-server" => opts.llama_server = Some(PathBuf::from(value()?)),
+            "--tessdata" => opts.tessdata = Some(PathBuf::from(value()?)),
+            "--work" => opts.work = Some(PathBuf::from(value()?)),
+            "--json" => opts.json = Some(PathBuf::from(value()?)),
+            other => return Err(format!("unknown llm-bench argument {other:?}")),
+        }
+    }
+    opts.model = model.ok_or("llm-bench needs --model ID")?;
+    if opts.runs == 0 {
+        return Err("--runs takes at least 1".into());
+    }
+    Ok(opts)
 }
 
 fn bench_options(args: &[String]) -> Result<bench::Options, String> {

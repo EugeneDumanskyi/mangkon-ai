@@ -22,6 +22,8 @@ Pass marks: people/org precision ≥ 85% and recall ≥ 70% (NFR-QA-08/09); ≥ 
 
 Machine: **RM-1**: Linux x86_64, Ubuntu-based, 24 threads, 93 GB RAM, NVIDIA RTX 5070 Laptop GPU with 8 GB VRAM. `llama-server` build **10863** (`version: 0.4.0-dev (build 10863, commit 88ada91c1)`), a CUDA source build. Measured 2026-10-24 04:11–05:15 UTC on an idle machine (confirmed before the timed runs), one run per model, release build of the harness.
 
+> **M6c:** the harness below was removed; `mangkon-cli llm-bench` replaces it (`16-entities-acceptance.md` §3). The last commit holding it, with the relations probe M8 may want, is `6ff56dd`. The queries are now `crates/mk-bench/data/queries.json`. The raw run outputs named below were never committed and have been deleted; the tables here are what remains of them.
+
 Harness: `spikes/model-check`, a throwaway crate in the `spikes/` workspace (not the main workspace; `ureq` for loopback HTTP lives only there, ADR-0009 covers the main workspace). Public-slice text comes from `pdf-bakeoff dump-text` (hayro + the M0b layout).
 
 ```sh

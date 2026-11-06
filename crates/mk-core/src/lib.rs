@@ -110,9 +110,9 @@ pub use mk_search::Run as SnippetRun;
 pub use mk_store::{AiCancelled, AiRunRow, ScheduleOutcome, UnitScope};
 pub use mk_store::{
     CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,
-    DocumentInfo, DocumentRow, FailedFile, KnownFile, ListCursor, ListedConnection, MappingView,
-    OccurrenceRow, RemoveOutcome, ReuseCandidate, SHOWN_SAMPLES, STATUS_MISSING, SearchCursor,
-    SearchFilter, SortColumn,
+    DocumentInfo, DocumentRow, FailedFile, KnownFile, LinkedIdentifier, LinkedIdentifiers,
+    ListCursor, ListedConnection, MappingView, OccurrenceRow, RemoveOutcome, ReuseCandidate,
+    SHOWN_SAMPLES, STATUS_MISSING, SearchCursor, SearchFilter, SortColumn,
 };
 pub use mk_workspace::{PatternSetting, ProjectSettings, RegistryEntry, Reprocess, RootKind};
 pub use models::{HardwareView, MODELS_CHANGED_EVERY, ModelError, ModelView, ModelsConfig};
@@ -127,9 +127,9 @@ pub use search::{SEARCH_PAGE, SearchHit, SearchPage, SegmentHit};
 pub use stage_b::{AiExtractionView, AiLaneState, StageBSummary, UnitEstimate};
 pub use view::{
     CHANGED_NOTE, CONTEXT_SEGMENTS, ConnectionsPage, ConnectionsSummary, ContextLine, ContextRow,
-    DocumentLink, EmailField, EmailPart, IngestCounts, JsonRow, MAX_OCCURRENCES, Marked, Original,
-    PageKind, Piece, Position, Run, SourceBody, SourceContext, WHOLE_EMAIL_SEGMENTS,
-    not_found_note,
+    DocumentLink, EmailField, EmailPart, IngestCounts, JsonRow, LINKED_SHOWN, MAX_OCCURRENCES,
+    Marked, Original, PageKind, Piece, Position, Run, SourceBody, SourceContext,
+    WHOLE_EMAIL_SEGMENTS, not_found_note,
 };
 pub use workers::{
     Stopped, WorkerConfig, WorkerError, WorkerStop, restart_with_malloc_tunables, worker_processes,

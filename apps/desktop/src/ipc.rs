@@ -1021,6 +1021,16 @@ impl From<mk_core::ConnectionsSummary> for ConnectionsSummary {
     }
 }
 
+/// An identifier linked to an entity (US-07.7 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LinkedIdentifierItem {
+    pub key: String,
+    pub kind: String,
+    pub value: String,
+}
+
 /// One connection row (US-07.1 AC1/AC2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -1036,7 +1046,7 @@ pub struct ConnectionItem {
     pub value: String,
     /// The pattern name of a `custom` connection.
     pub label: Option<String>,
-    /// "Name (from table)" (US-05.3 AC2).
+    /// "Name (from table)" (US-05.3 AC2): every mention of the entity comes from a table.
     pub from_table: bool,
     pub source_count: u32,
     pub file_type_count: u32,
@@ -1050,10 +1060,18 @@ pub struct ConnectionItem {
     pub low_only: bool,
     /// Ignored by the user (US-07.4); only listed with "Show ignored".
     pub ignored: bool,
+    /// An entity's first linked identifiers (US-07.7 AC2); empty on an identifier row.
+    pub linked_identifiers: Vec<LinkedIdentifierItem>,
+    /// How many identifiers are linked in all.
+    pub linked_total: u32,
 }
 
 impl ConnectionItem {
-    fn new(c: mk_core::ListedConnection, entity: Option<&mk_core::EntityRow>) -> Self {
+    fn new(
+        c: mk_core::ListedConnection,
+        entity: Option<&mk_core::EntityRow>,
+        linked: Option<&mk_core::LinkedIdentifiers>,
+    ) -> Self {
         let r = c.row;
         let label = (c.kind == "custom")
             .then(|| r.subject_key.split(':').nth(1).map(str::to_string))
@@ -1071,6 +1089,17 @@ impl ConnectionItem {
             low_confidence: r.low_confidence,
             low_only: r.low_only,
             ignored: r.ignored,
+            linked_identifiers: linked.map_or_else(Vec::new, |l| {
+                l.first
+                    .iter()
+                    .map(|i| LinkedIdentifierItem {
+                        key: i.key.clone(),
+                        kind: i.kind.clone(),
+                        value: i.value.clone(),
+                    })
+                    .collect()
+            }),
+            linked_total: linked.map_or(0, |l| count(l.total)),
         }
     }
 }
@@ -1092,7 +1121,8 @@ impl From<mk_core::ConnectionsPage> for ConnectionsPage {
                 .into_iter()
                 .map(|r| {
                     let entity = p.entities.get(&r.row.subject_key);
-                    ConnectionItem::new(r, entity)
+                    let linked = p.linked.get(&r.row.subject_key);
+                    ConnectionItem::new(r, entity, linked)
                 })
                 .collect(),
             next: p.next.map(Into::into),

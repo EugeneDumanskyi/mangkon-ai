@@ -55,13 +55,14 @@ impl RunState {
     }
 }
 
-/// Whether the flag's value turns the label on: anything but `0`, `false` or `off`, and unset.
+/// Whether the flag's value turns the label on: `1`, `true` or `on`. Unset leaves it off.
 pub fn experimental_from(flag: Option<&str>) -> bool {
-    !matches!(flag, Some("0" | "false" | "off"))
+    matches!(flag, Some("1" | "true" | "on"))
 }
 
-/// US-10.3 AC1: all LLM features show "Experimental"; `MK_AI_EXPERIMENTAL=0` at build time turns
-/// the label off without a code change. On by default (M1 decision, roadmap §4 #6).
+/// US-10.3 AC1: `MK_AI_EXPERIMENTAL=1` at build time makes all LLM features show "Experimental",
+/// without a code change. Off by default since the minimum-tier model passed NFR-QA-08/09 in M6c
+/// (roadmap §4 #6).
 pub fn experimental() -> bool {
     experimental_from(option_env!("MK_AI_EXPERIMENTAL"))
 }
@@ -70,11 +71,13 @@ pub fn experimental() -> bool {
 mod tests {
     use super::*;
 
-    /// US-10.3 AC1: on unless the flag says otherwise.
+    /// US-10.3 AC1: off unless the flag says otherwise.
     #[test]
     fn us_10_3_ac1_flag() {
-        assert!(experimental_from(None));
-        assert!(experimental_from(Some("1")));
+        assert!(!experimental_from(None));
+        for on in ["1", "true", "on"] {
+            assert!(experimental_from(Some(on)), "{on}");
+        }
         for off in ["0", "false", "off"] {
             assert!(!experimental_from(Some(off)), "{off}");
         }

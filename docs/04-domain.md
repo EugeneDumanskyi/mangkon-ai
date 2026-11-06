@@ -405,7 +405,7 @@ erDiagram
 - `IDENTIFIER`, `ENTITY`, `ENTITY_ALIAS`, and `CONNECTION` are **derived**. They are shown as boxes for clarity. They can be rebuilt from mentions + decisions at any time.
 - A `DOCUMENT` comes from one `SOURCE_CONTENT`. One content can give many documents (an MBOX gives one per message). A document can have child documents (attachments). There are no cycles.
 - `ENTITY_MENTION` comes from two producers: confirmed table columns (Layer 1, no AI run) and an AI run (Layer 2).
-- `ENTITY` ↔ `IDENTIFIER` links come only from shared evidence units: the same CSV row or JSON object (record link), or the same email header value like `Name <address>`. ASSUMPTION: no LLM-made entity–identifier links in v0.1. See D7.
+- `ENTITY` ↔ `IDENTIFIER` links come only from shared evidence units: the same CSV row or JSON object (record link), or the same email header value like `Name <address>`. No LLM-made entity–identifier links in v0.1. See D7.
 - `RELATION_MENTION` and `EVENT_MENTION` point to **entity mentions**, not to entities. Entities are derived, so the link to an entity is found through the mention. This keeps relations correct after a merge or split.
 - `USER_DECISION` points to its target by **anchor value**, not by a foreign key. This is on purpose (section 9.5).
 
@@ -604,7 +604,7 @@ Notes (M4c):
 |---|---|---|
 | INV-AI-01 | An AI mention is kept only if its evidence text is found in its segment's text (after whitespace normalization). Otherwise it is discarded and counted. It is never stored. M6a also needs the name inside the evidence (ignoring case) and in one segment; the stored `raw` is the source's text, not the model's spelling. | US-10.2, NFR-QA-11 |
 | INV-AI-02 | Every AI mention records the AI run that made it. The run records the model and the destination. | US-10.4 AC1 |
-| INV-AI-03 | A response that does not match the output schema is retried once. Then it is logged and skipped. | US-10.1 AC2 |
+| INV-AI-03 | A response that does not match the output schema is retried once. Then it is logged and skipped. A response cut at the token limit is not retried: it is logged and skipped at once (M6c, 2026-11-06). | US-10.1 AC2 |
 | INV-AI-04 | A re-run with another model replaces all AI mentions of that stage. It never changes table mentions or user decisions. The old run becomes "superseded". | US-10.4 |
 | INV-AI-05 | Mentions below 0.5 confidence are stored but hidden by default. | US-10.1 AC3 |
 | INV-AI-08 | A name whose span overlaps a Stage A identifier mention is dropped and counted on its own. So "John Smith <john@x.example>" keeps John Smith, and "john" from the address goes (M6a, `09-model-check.md` §5.3). | US-10.1 |
@@ -780,10 +780,10 @@ stateDiagram-v2
 ```
 
 Rules:
-- An AI response that is still invalid after one retry ends the item as **Done** with zero mentions and an "invalid response" count. The batch goes on (INV-AI-03).
+- An AI response that is still invalid after one retry, or that was cut at the token limit, ends the item as **Done** with zero mentions and an "invalid response" count. The batch goes on (INV-AI-03).
 - A call to a model cannot be interrupted, so pause, cancel and close move AI items out of In progress at once, in the transaction that changes the job. A reply that comes later fails its `(In progress, attempt N)` check inside the commit and is dropped (M6a, NFR-REL-05, INV-PR-04).
 - A Stage B job holds one run. If the chosen model is no longer that run's, the job is Blocked with a reason: choosing the model again unblocks it, "Re-run with Y" replaces it (decided 2026-11-05).
-- Stage B starts by itself when at most 1,600 units wait (about 20 min at 1.39/s, ASSUMPTION). With more, nothing starts until the user picks documents or chooses all (gap A3, decided 2026-11-05).
+- Stage B starts by itself when at most 1,600 units wait (about 32 min at the measured 0.82/s, `16-entities-acceptance.md` §3). With more, nothing starts until the user picks documents or chooses all (gap A3, decided 2026-11-05).
 - A document is Done after Stage A (D9): Stage B work never changes its state.
 - The progress panel (US-03.1) reads job and item counts. The ETA needs at least 5 finished items.
 - Queued → Paused: a project-wide pause also covers jobs that have not started, and a job created while the queue is paused starts Paused. ASSUMPTION (M3c), D11.
@@ -1033,7 +1033,7 @@ After any re-run (re-scan, setting change, model change, app upgrade):
 | D4 | Should Missing documents still show in keyword search? | Yes, with a "Missing" badge. They are hidden only from connections. |
 | D5 | Mapping after headers changed: apply the old mapping to unchanged columns while waiting for review? | Yes, for unchanged headers only (7.3). |
 | D6 | **Conflict:** US-07.7 AC4 says an entity can be "built from a merge that is not yet reviewed", but US-11.2 AC2 says merges are never applied without review. What does "Unreviewed merge" mean? | It means "this entity has a pending merge proposal". |
-| D7 | How does an entity get "linked identifiers" (US-07.7 AC2, US-12.1)? | Only through shared evidence units: same CSV row / JSON object, and `Name <address>` email headers. No LLM linking in v0.1. |
+| D7 | How does an entity get "linked identifiers" (US-07.7 AC2, US-12.1)? | **Decided (2026-11-06, M6c):** only through shared evidence units: same CSV row / JSON object, and `Name <address>` email headers. No LLM linking in v0.1. |
 | D8 | Store card-like numbers at all? | Store only locator + last 4 digits in a sensitive flag. The full number exists only in the segment text. |
 | D9 | When is a document "Done": after Stage A, or after all stages? | After Stage A. AI progress is shown per job. |
 | D10 | Cancel removes queued work. What status do those files show? | New status "Not processed". Re-scan or retry queues them again. |

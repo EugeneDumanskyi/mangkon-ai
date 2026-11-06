@@ -168,7 +168,7 @@ The minimum is unchanged. Unified-memory thresholds are an estimate (no Mac meas
 
 - **Rule:** if behind, **cut scope** (Layer 3 → Layer 2), don't grow the release. Layer 3 is its own milestone (M8), so it is cut first.
 - If M1 shows local models extract poorly: v0.1 = Layer 1 (identifier-based connections) + AI extraction marked "experimental".
-- **M1 outcome (2026-10-24): Layer 2 ships marked "experimental".** The minimum-tier model reached 82.9% precision (target 85%) and 94.0% recall; bigger models pass. M6 re-measures with a rule that drops AI mentions overlapping identifiers; if the minimum-tier model then passes, the label goes (`06-roadmap.md` M1 outcome).
+- **M1 outcome (2026-10-24): Layer 2 ships marked "experimental".** The minimum-tier model reached 82.9% precision (target 85%) and 94.0% recall; bigger models pass. M6 re-measures with a rule that drops AI mentions overlapping identifiers; if the minimum-tier model then passes, the label goes (`06-roadmap.md` M1 outcome). **M6 outcome (2026-11-06): it passes (93.29% / 85.24%), and the label is dropped.**
 - **Order:** the riskiest unknown is proven first. Goal, scope, acceptance criteria and spikes for each milestone are in `06-roadmap.md`.
 
 ### Milestones (estimates)

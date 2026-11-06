@@ -1,13 +1,13 @@
 //! Read queries, run on the reader pool.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use mk_corpus::{FileMeta, IngestionState, StoredRef};
 use mk_graph::model::{
     ContentFact, DecisionRecord, DerivedState, EntityMentionFact, EntityRow, Facts, IdentifierRow,
     MentionFact,
 };
-use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, RankKey, SubjectKind};
+use mk_graph::{ConnectionRow, DecisionKind, DecisionStatus, LOW_CONFIDENCE, RankKey, SubjectKind};
 use mk_jobs::{ItemState, JobState, PendingItem, Stage};
 use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -1280,6 +1280,87 @@ pub(crate) fn record_links(
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// One identifier linked to an entity (D7), as the list shows it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LinkedIdentifier {
+    /// The identifier key, `type:value`.
+    pub key: String,
+    pub kind: String,
+    pub value: String,
+}
+
+/// The identifiers linked to one entity: the first few, and how many there are.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct LinkedIdentifiers {
+    pub first: Vec<LinkedIdentifier>,
+    pub total: u64,
+}
+
+/// The identifiers linked to each of `keys` (name keys), for at most one page of them (US-07.7
+/// AC2). A link comes only from a shared evidence unit (D7): the same CSV row or JSON record
+/// (INV-CM-05), or `Name <address>` in one email header. Counted contents only (INV-CO-07); a
+/// mention under 0.5 links only with `include_low` (INV-AI-05). A domain is left out: it only ever
+/// comes from the host of an email or URL in the same place, and that one is linked. Most documents
+/// first, then by key. Read at page time, so there is nothing derived to keep in step.
+pub(crate) fn linked_identifiers(
+    conn: &Connection,
+    keys: &[String],
+    limit_per_key: usize,
+    include_low: bool,
+) -> Result<BTreeMap<String, LinkedIdentifiers>, StoreError> {
+    let missing = IngestionState::Missing.as_str();
+    let mut from_records = conn.prepare_cached(
+        "SELECT l.identifier_key, l.document_id
+         FROM record_link l JOIN content c ON c.id = l.content_id
+         WHERE l.name_key = ?1 AND c.state != ?2 AND l.identifier_key NOT LIKE 'domain:%'
+         GROUP BY l.identifier_key, l.document_id",
+    )?;
+    let mut from_headers = conn.prepare_cached(&format!(
+        "SELECT i.identifier_key, i.document_id,
+                substr(s.text, m.span_end + 1, i.span_start - m.span_end)
+         FROM entity_mention m
+         JOIN content c ON c.id = m.content_id
+         JOIN segment s ON s.id = m.segment_id
+         JOIN identifier_mention i ON i.segment_id = m.segment_id AND i.span_start >= m.span_end
+         WHERE m.name_key = ?1 AND c.state != ?2 AND s.loc_kind = '{}'
+           AND i.identifier_key NOT LIKE 'domain:%' AND (?3 OR m.confidence >= {})",
+        crate::codec::EMAIL_HEADER,
+        LOW_CONFIDENCE,
+    ))?;
+    let mut out = BTreeMap::new();
+    for key in keys {
+        let mut documents: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
+        let mut rows = from_records.query(params![key, missing])?;
+        while let Some(r) = rows.next()? {
+            documents.entry(r.get(0)?).or_default().insert(r.get(1)?);
+        }
+        let mut rows = from_headers.query(params![key, missing, include_low])?;
+        while let Some(r) = rows.next()? {
+            let between: String = r.get(2)?;
+            if mk_graph::is_header_pair(&between) {
+                documents.entry(r.get(0)?).or_default().insert(r.get(1)?);
+            }
+        }
+        if documents.is_empty() {
+            continue;
+        }
+        let total = documents.len() as u64;
+        let mut ranked: Vec<(String, usize)> =
+            documents.into_iter().map(|(k, d)| (k, d.len())).collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        ranked.truncate(limit_per_key);
+        let first = ranked
+            .into_iter()
+            .map(|(key, _)| {
+                let (kind, value) = crate::derive::kind_and_value(&key);
+                LinkedIdentifier { key, kind, value }
+            })
+            .collect();
+        out.insert(key.clone(), LinkedIdentifiers { first, total });
+    }
+    Ok(out)
 }
 
 /// Where a re-run step stands: what the stored mentions were made with (the rules version or

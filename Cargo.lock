@@ -2887,6 +2887,7 @@ dependencies = [
  "mk-core",
  "mk-egress",
  "mk-models",
+ "mk-search",
  "mk-store",
  "serde_json",
  "tempfile",

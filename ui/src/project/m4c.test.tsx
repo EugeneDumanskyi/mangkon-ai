@@ -42,6 +42,8 @@ const connection = (over: Partial<ConnectionItem>): ConnectionItem => ({
   lowOnly: false,
   fileTypes: [],
   ignored: false,
+  linkedIdentifiers: [],
+  linkedTotal: 0,
   ...over,
 });
 

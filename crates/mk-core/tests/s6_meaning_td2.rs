@@ -192,16 +192,6 @@ fn embed_all(ws: &Workspace, project: &Project, id: &str) -> Value {
     })
 }
 
-/// M1's hand-written queries (synthetic and public topics only, NFR-LEG-04).
-fn hand_written() -> Vec<String> {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spikes/model-check/queries.json");
-    let all: Vec<Value> = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-    all.iter()
-        .map(|q| q["text"].as_str().unwrap().to_string())
-        .collect()
-}
-
 /// M1's seeded known-item queries: the longest sentence (≥ 40 chars, cut at 200) of a random
 /// stored window, here over TD-2.
 fn seeded(project: &Project, n: usize) -> Vec<String> {
@@ -383,7 +373,7 @@ fn s6_meaning_td2() {
         return;
     }
 
-    let mut queries = hand_written();
+    let mut queries = mk_bench::names::hand_written_queries();
     queries.extend(seeded(&project, 50));
     assert_eq!(queries.len(), 100);
 

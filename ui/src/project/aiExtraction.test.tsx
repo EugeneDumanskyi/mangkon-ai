@@ -235,6 +235,8 @@ describe("low confidence (US-10.1 AC3)", () => {
     lowConfidence: false,
     lowOnly: false,
     ignored: false,
+    linkedIdentifiers: [],
+    linkedTotal: 0,
     ...over,
   });
 
