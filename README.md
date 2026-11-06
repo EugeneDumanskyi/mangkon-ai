@@ -6,7 +6,7 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 
 ## Status
 
-**Early development.** The desktop shell builds and starts, but it cannot open a project yet. There is no release.
+**In development, no release yet.** You can build it from source and use it on real folders; it has been tested on Linux only. Finding identifiers, keyword search, AI extraction of people and organizations, and meaning search all work. Merging duplicate entities and the review queue come next.
 
 ## Design docs
 
@@ -51,7 +51,7 @@ One command builds the app: `cargo xtask build --release`. It first checks the p
 
 ```sh
 sudo apt install build-essential cmake curl pkg-config \
-  libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev
+  libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev libdbus-1-dev
 ```
 
 Other distributions (not tested): Fedora `sudo dnf install gcc-c++ cmake curl webkit2gtk4.1-devel libsoup3-devel librsvg2-devel`; Arch `sudo pacman -S base-devel cmake curl webkit2gtk-4.1 libsoup3 librsvg`.
@@ -68,7 +68,7 @@ cargo xtask build --release
 target/release/mangkon            # target\release\mangkon.exe on Windows
 ```
 
-In this early build the app reads TXT, MD and CSV files and finds email addresses. Click **New project…** and pick an empty folder, then add a folder (button or drag and drop). Connections are addresses found in two or more files; click one, then a mention, to see it in its file.
+Click **New project…** and pick an empty folder, then add a folder (button or drag and drop). Connections are identifiers, people or organizations found in two or more sources; click one, then a mention, to see it in its file.
 
 The same from the command line:
 
@@ -82,7 +82,7 @@ target/release/mangkon-cli rebuild --project ~/mangkon/p1
 - All checks, in the same order as CI: `cargo xtask ci` (needs `cargo install --locked cargo-deny` once).
 - UI work with hot reload: `npm run dev` in `ui/`, and in another terminal `cargo run -p mangkon-desktop --no-default-features`.
 
-## Planned stack
+## Stack
 
 Tauri 2 desktop shell, React + TypeScript UI, Rust core. Tesseract compiled in for OCR. One SQLite file per project. Local models through `llama-server` (llama.cpp), or any OpenAI-compatible endpoint you set. No telemetry.
 
