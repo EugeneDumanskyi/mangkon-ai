@@ -65,6 +65,8 @@ export function useKeysetList<Row, Cursor>(options: {
     error: total.error ?? pages.error,
     /** Bumps when a refetch lands, so a caller can time its re-render. */
     updatedAt: Math.max(total.dataUpdatedAt, pages.dataUpdatedAt),
+    /** When the rows themselves were read. */
+    pagesUpdatedAt: pages.dataUpdatedAt,
     /** Loads the current rows and count now, also while paused. */
     refresh: async () => {
       const fresh = await total.refetch();

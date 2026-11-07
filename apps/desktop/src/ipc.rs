@@ -27,6 +27,18 @@ pub struct AppInfo {
     /// The scripted queue walk (`MK_QUEUE_WALK=1` or `2`): the UI clicks through the project and
     /// queue controls, then saves the steps with `record_queue_walk` (M3c release check).
     pub queue_walk: Option<QueueWalkInfo>,
+    /// The scripted review walk (`MK_REVIEW_WALK=1`): the UI opens this project and presses the
+    /// review queue's keys and the entity page's buttons, then saves the steps with
+    /// `record_review_walk` (M7b).
+    pub review_walk: Option<ReviewWalkInfo>,
+}
+
+/// What the review walk works on: `MK_REVIEW_WALK_PROJECT`, a project folder it may change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewWalkInfo {
+    pub project: String,
 }
 
 /// What the queue walk works on: `MK_QUEUE_WALK_LOCATION` (where phase 1 makes the project) and
@@ -71,6 +83,7 @@ impl From<mk_core::AppInfo> for AppInfo {
                     })
                     .unwrap_or_default(),
             }),
+            review_walk: review_walk_project().map(|project| ReviewWalkInfo { project }),
         }
     }
 }
@@ -246,6 +259,22 @@ pub fn queue_walk_phase() -> Option<u8> {
         Ok("2") => Some(2),
         _ => None,
     }
+}
+
+/// The project of the review walk: `MK_REVIEW_WALK=1` and `MK_REVIEW_WALK_PROJECT`.
+pub fn review_walk_project() -> Option<String> {
+    (std::env::var("MK_REVIEW_WALK").as_deref() == Ok("1"))
+        .then(|| std::env::var("MK_REVIEW_WALK_PROJECT").ok())
+        .flatten()
+}
+
+/// The review walk: each step with the time it took, and what went wrong.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewWalk {
+    pub steps: Vec<QueueWalkStep>,
+    pub errors: Vec<String>,
 }
 
 /// One phase of the queue walk: each step with the time it took, and what went wrong.
@@ -1064,6 +1093,8 @@ pub struct ConnectionItem {
     pub linked_identifiers: Vec<LinkedIdentifierItem>,
     /// How many identifiers are linked in all.
     pub linked_total: u32,
+    /// An entity with a pending merge proposal: "Unreviewed merge" (US-07.7 AC4).
+    pub unreviewed: bool,
 }
 
 impl ConnectionItem {
@@ -1071,6 +1102,7 @@ impl ConnectionItem {
         c: mk_core::ListedConnection,
         entity: Option<&mk_core::EntityRow>,
         linked: Option<&mk_core::LinkedIdentifiers>,
+        unreviewed: bool,
     ) -> Self {
         let r = c.row;
         let label = (c.kind == "custom")
@@ -1078,6 +1110,7 @@ impl ConnectionItem {
             .flatten();
         Self {
             label,
+            unreviewed,
             from_table: entity.is_some_and(|e| e.from_table),
             key: r.subject_key,
             kind: c.kind,
@@ -1122,12 +1155,285 @@ impl From<mk_core::ConnectionsPage> for ConnectionsPage {
                 .map(|r| {
                     let entity = p.entities.get(&r.row.subject_key);
                     let linked = p.linked.get(&r.row.subject_key);
-                    ConnectionItem::new(r, entity, linked)
+                    let unreviewed = p.unreviewed.contains(&r.row.subject_key);
+                    ConnectionItem::new(r, entity, linked, unreviewed)
                 })
                 .collect(),
             next: p.next.map(Into::into),
         }
     }
+}
+
+// ---- M7b: review queue, entity page, decision list ----
+
+/// A pending merge proposal (US-11.3 AC1): the pair of name keys it is on, the entities holding them
+/// now, its score and plain reasons (US-11.2 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalItem {
+    pub a: String,
+    pub b: String,
+    pub left_key: String,
+    pub right_key: String,
+    pub left_name: String,
+    pub right_name: String,
+    pub score: f32,
+    pub reasons: Vec<String>,
+}
+
+impl From<mk_core::ProposalRow> for ProposalItem {
+    fn from(p: mk_core::ProposalRow) -> Self {
+        Self {
+            a: p.a,
+            b: p.b,
+            left_key: p.left_key,
+            right_key: p.right_key,
+            left_name: p.left_name,
+            right_name: p.right_name,
+            score: p.score,
+            reasons: p.reasons,
+        }
+    }
+}
+
+/// Where a proposals page continues.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalCursor {
+    pub score: f32,
+    pub a: String,
+    pub b: String,
+}
+
+impl From<ProposalCursor> for mk_core::ProposalCursor {
+    fn from(c: ProposalCursor) -> Self {
+        Self {
+            score: c.score,
+            a: c.a,
+            b: c.b,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ProposalsPage {
+    pub rows: Vec<ProposalItem>,
+    /// `null` on the last page.
+    pub next: Option<ProposalCursor>,
+}
+
+/// A name as written, and how many mentions have it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NameCount {
+    pub name: String,
+    pub mentions: u32,
+}
+
+fn name_counts(names: Vec<(String, u64)>) -> Vec<NameCount> {
+    names
+        .into_iter()
+        .map(|(name, mentions)| NameCount {
+            name,
+            mentions: count(mentions),
+        })
+        .collect()
+}
+
+/// A document an entity appears in (US-12.1 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EntityDocumentItem {
+    #[ts(type = "number")]
+    pub document_id: i64,
+    pub file_type: String,
+    /// `null` when the file is no longer in any source folder.
+    pub path: Option<String>,
+    pub mentions: u32,
+}
+
+/// An accepted merge inside an entity, each side by its most frequent written name (US-11.4 AC1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MergedPairItem {
+    pub a: String,
+    pub b: String,
+    pub a_name: String,
+    pub b_name: String,
+}
+
+/// An entity named from another one's page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct RelatedEntityItem {
+    pub key: String,
+    pub name: String,
+    pub mentions: u32,
+}
+
+impl From<mk_core::RelatedEntity> for RelatedEntityItem {
+    fn from(r: mk_core::RelatedEntity) -> Self {
+        Self {
+            key: r.key,
+            name: r.name,
+            mentions: count(r.mentions),
+        }
+    }
+}
+
+/// What an entity's page shows (US-12.1, US-11.4).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct EntityDetail {
+    /// The key as it is now: a name key in a group reads as its group.
+    pub key: String,
+    pub name: String,
+    /// `person` or `org`.
+    pub entity_type: String,
+    pub note: Option<String>,
+    pub from_table: bool,
+    pub mention_count: u32,
+    /// Other names, most frequent first (INV-ER-07).
+    pub aliases: Vec<NameCount>,
+    /// Names a decision took off its aliases.
+    pub removed_aliases: Vec<NameCount>,
+    pub linked_identifiers: Vec<LinkedIdentifierItem>,
+    pub linked_total: u32,
+    /// The first 1,000, most mentions first.
+    pub documents: Vec<EntityDocumentItem>,
+    pub documents_total: u32,
+    /// Its counted mentions in all documents; the evidence list stops at 1,000.
+    pub evidence_total: u32,
+    pub merges: Vec<MergedPairItem>,
+    /// Entities split out of this one (US-11.4 AC2).
+    pub splits: Vec<RelatedEntityItem>,
+    /// For a split entity: where "Put back" returns its mentions.
+    pub split_from: Vec<RelatedEntityItem>,
+    pub is_split: bool,
+    pub pending_proposals: u32,
+}
+
+impl From<mk_core::EntityDetail> for EntityDetail {
+    fn from(d: mk_core::EntityDetail) -> Self {
+        Self {
+            key: d.key,
+            name: d.names.display,
+            entity_type: d.entity_type,
+            note: d.note,
+            from_table: d.from_table,
+            mention_count: count(d.mention_count),
+            aliases: name_counts(d.names.aliases),
+            removed_aliases: name_counts(d.names.removed),
+            linked_identifiers: d
+                .linked
+                .first
+                .into_iter()
+                .map(|i| LinkedIdentifierItem {
+                    key: i.key,
+                    kind: i.kind,
+                    value: i.value,
+                })
+                .collect(),
+            linked_total: count(d.linked.total),
+            documents: d
+                .documents
+                .into_iter()
+                .map(|x| EntityDocumentItem {
+                    document_id: x.document_id,
+                    file_type: x.file_type,
+                    path: x.path,
+                    mentions: count(x.mentions),
+                })
+                .collect(),
+            documents_total: count(d.documents_total),
+            evidence_total: count(d.evidence_total),
+            merges: d
+                .merges
+                .into_iter()
+                .map(|m| MergedPairItem {
+                    a: m.a,
+                    b: m.b,
+                    a_name: m.a_name,
+                    b_name: m.b_name,
+                })
+                .collect(),
+            splits: d.splits.into_iter().map(Into::into).collect(),
+            split_from: d.split_from.into_iter().map(Into::into).collect(),
+            is_split: d.is_split,
+            pending_proposals: count(d.pending_proposals),
+        }
+    }
+}
+
+/// What a split did: its decision and the new entity, to open from the status line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SplitResult {
+    #[ts(type = "number")]
+    pub seq: i64,
+    pub key: String,
+}
+
+/// A decision in the log (US-11.5 AC2).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DecisionItem {
+    #[ts(type = "number")]
+    pub seq: i64,
+    /// `accept_merge`, `reject_merge`, `split`, `rename`, …
+    pub kind: String,
+    /// What it is on (domain §9.5).
+    pub anchor: String,
+    pub before: Option<String>,
+    /// `null` for a split, whose `after` lists mention keys: `moved` says how many.
+    pub after: Option<String>,
+    /// UTC, ISO 8601.
+    pub decided_at: String,
+    /// `active`, `superseded` or `orphaned`; `null` for a mapping decision, whose state is its
+    /// file's mapping state.
+    pub status: Option<String>,
+    /// The entity it is on, to open; `null` when it is not on an entity.
+    pub entity_key: Option<String>,
+    /// How many mentions a split moved.
+    pub moved: Option<u32>,
+}
+
+impl From<mk_core::DecisionRow> for DecisionItem {
+    fn from(d: mk_core::DecisionRow) -> Self {
+        let (entity_key, moved) = (d.entity_key(), d.moved_mentions());
+        Self {
+            seq: d.seq,
+            kind: d.kind.as_str().to_string(),
+            anchor: d.anchor,
+            before: d.before,
+            after: if moved.is_some() { None } else { d.after },
+            decided_at: d.decided_at,
+            status: d.status.map(|s| s.as_str().to_string()),
+            entity_key,
+            moved: moved.map(count),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DecisionsPage {
+    pub rows: Vec<DecisionItem>,
+    /// The `seq` to read older decisions from; `null` on the last page.
+    #[ts(type = "number | null")]
+    pub next: Option<i64>,
 }
 
 /// Where a mention is (INV-CO-03), as the UI labels it.

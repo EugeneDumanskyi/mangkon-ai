@@ -31,7 +31,7 @@ Known, low-risk work (pure Rust parsers, screens over settled data) comes **afte
 | 7 | K7 | **UI at scale on the slowest webview.** 100,000-row lists at 60 fps on WebKitGTK; typed IPC tool. (ADR-0003) | NFR-PERF-04. | Low–medium. | Low. | M2 |
 | 8 | K8 | **Egress gate details.** Pin the checked IP while keeping TLS SNI; classify multi-address hosts; DNS rebinding. (ADR-0009) **Retired in M5a** (S5, `13-model-manager.md` §1). | NFR-SEC-02/04/05. Privacy promise. | Low. | Low. Contained in one crate. | M5a (done) |
 | 9 | K9 | **Merge proposals are good enough** to review without noise. (E11) **Answered in M7a (S7, 2026-11-07): yes, with narrower rules at 0.6** (`17-entity-resolution.md` §1). | Layer 2 usefulness. | Medium. | Low. Thresholds and rules, not structure. | M7 |
-| 10 | K10 | **Relations and events** from local models. (E13) | Layer 3 only. First to cut. | High. | None. Optional by design. | M8 (only if time) |
+| 10 | K10 | **Relations and events** from local models. (E13) | Layer 3 only. First to cut. | High. | None. Optional by design. | M8 (cut 2026-11-07) |
 
 ### 1.2 Milestone order
 
@@ -56,9 +56,8 @@ flowchart LR
     M6b --> M6c
     M6c --> M7a["M7a<br/>Decisions +<br/>proposals"]
     M7a --> M7b["M7b<br/>Review queue +<br/>entity detail"]
-    M7b --> M8["M8<br/>Layer 3<br/>(timebox, cut first)"]
+    M7b -. cut .-> M8["M8<br/>Layer 3<br/>(cut 2026-11-07)"]
     M7b --> M9["M9<br/>Release v0.1"]
-    M8 --> M9
     M9 --> M10["M10<br/>Deferred manual<br/>checks"]
 ```
 
@@ -92,7 +91,7 @@ The brief's first milestone plan (approved 2026-09-22) said its estimates would 
 
 Split: M0 = M0a 0.5 + M0b 0.5 + M0c 0.5. M2 = M2a 0.25 + M2b 0.5 + M2c 0.5 + M2d 0.25. M3 = M3a 0.5 + M3b 0.5 + M3c 0.5 + M3d 0.5. M4 = M4a 0.25 + M4b 0.5 + M4c 0.5 + M4d 0.25. M5 = M5a 0.5 + M5b 0.25 + M5c 0.5. M6 = M6a 0.75 + M6b 0.25 + M6c 0.5. M7 = M7a 0.75 + M7b 0.75. Splitting does not change the totals.
 
-All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. **Re-baselined after M1 (2026-10-24):** M5 1 → 1.25 (the external path moved in from M1); M6 stays 1.5 (it adds the identifier-overlap rule and 4-slot Stage B); M7 and M8 unchanged, with the M8 go/no-go leaning no (`09-model-check.md` §7).
+All in weeks. ASSUMPTION. The brief says ~11; the difference is the ~1 week for worker isolation that ADR-0001 already accepts. M8 fits only if earlier milestones finish early. **Re-baselined after M1 (2026-10-24):** M5 1 → 1.25 (the external path moved in from M1); M6 stays 1.5 (it adds the identifier-overlap rule and 4-slot Stage B); M7 and M8 unchanged, with the M8 go/no-go leaning no (`09-model-check.md` §7). **M8 cut (2026-11-07):** its optional week is not spent.
 
 **Cut order if behind** (brief §10): M8 first, then Layer 2. Inside Layer 2, ASSUMPTION: US-12.2 (edit entity) → US-06.2 (meaning search) → US-11.2/11.3 (proposals + review queue, keeping US-11.1 exact-name groups) → E10 marked experimental.
 
@@ -532,11 +531,17 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 
 **Outcome (M7a, 2026-11-07).** `mk-kernel`: `MentionKey`, the `split:` entity key. `mk-graph`: decision kinds with families, groups by union-find, split assignment, group display name and type, and the proposal scorer (`entity`, `proposal`); the reference model covers all of it. `mk-store`: derived rows v6 with no numbered migration (`entity_member`, `merge_edge`, `split_anchor`, `split_mention`, `merge_proposal`), regrouping on a decision, one helper for an entity's mentions, decision and proposal reads. `mk-core`: the decision services and the proposal thread (each run on its own thread and connection). CLI: `proposals`, `merge`, `split`, `decisions`, `proposal-bench`; `llm-bench` gains link and proposal reports. S7 passed after a first real run failed every threshold: similar spelling and acronyms now only support a shared identifier, organization parts must be one word apart, and a one-word name must fit one entity. The threshold stays 0.6 (decided 2026-11-07). Criterion 2: met on a TD-2 copy built by the code before M7a, 13,379 decisions, every effect held at every step. Criterion 3: recall 80.52%, precision 97.59% (median of 3, real 4B on TD-1). Criterion 5: the property test covers every kind and was checked by mutation (35 of 35 caught); S2c 1,479 ms. Proposal run on TD-2's 495,013 entities: 3.6 to 6.8 s. **Not met:** NFR-RES-01 after a recompute, 635 MiB on TD-2 (§4 #22). Deviations: the model change on TD-2 uses a stand-in, since a real model would take about 31 hours; the "migration" is the old project's derived rebuild plus an injected v11; the Settings decision list moved to M7b. Not verified: macOS, Windows, RM-2. Results and open points: `17-entity-resolution.md`.
 
-**Exit decision.** Go/no-go for M8: go only if M0–M7 are on or ahead of plan **and** the M1 relations probe was promising.
+**Outcome (M7b, 2026-11-07; hand walk moved to M9 or M10).** `mk-store` and `mk-core`: the entity page's read (names, identifiers, documents with counts, merges, splits), evidence with a caller's limit, proposals filtered by entity, the unreviewed mark per page, and the connections event when a proposal run changes the rows. `apps/desktop`: 15 commands for the queue, page and log. `ui`: Review tab with `A`, `R`, `E`, `J`, `K`; entity page with rename, type, aliases, note, undo merge, split and put back; the decision list in Settings; the "Unreviewed merge" link. Criterion 1: all 20 steps of the scripted walk pass in the release app's WebKit, on a stand-in project with the fake model, with `rebuild` the same afterwards. Criterion 4: **the scripted part passes; NFR-USE-06's hand walk moved to M9 or M10 (2026-11-07).** Guard timing on TD-2's biggest entities: met, the page p95 about 10 ms or less and a queue card about 5 ms against an assumed 200 ms, the core's reads alone. Not verified: macOS, Windows, RM-2, and the screens on real model output or at TD-2's size. Results, choices and open points: `17-entity-resolution.md` §11.
+
+**Outcome (M7, 2026-11-07).** M7a and M7b are done, and M7 is closed. Criteria 1, 2, 3 and 5 are met on Linux with RM-1, criterion 1 by the scripted walk. Criterion 4 is met by script only, and its hand walk is in M10's scope. NFR-RES-01 after a recompute stays over its limit (§4 #22).
+
+**Exit decision.** Go/no-go for M8: go only if M0–M7 are on or ahead of plan **and** the M1 relations probe was promising. **Decided (2026-11-07): no-go.** The probe was not promising (P 48%, R 72%, `09-model-check.md` §7), so the second condition fails. M9 follows M7.
 
 ---
 
 ### M8 — Layer 3: relations and events (timeboxed, cut first)
+
+**Status: cut (2026-11-07), not in v0.1.** Nothing here was built. The plan below stays as the starting point if relations and events are taken up later; they would need their own precision work first.
 
 **Goal.** Show relations (works_for, owns, paid, …) and dated events with evidence, marked experimental.
 
@@ -600,6 +605,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 - Release-app webview key check: a known key never appears in the app-data, project or webview data folder (NFR-SEC-07; M5 criterion 6, from M5a; steps in `13-model-manager.md` §3).
 - Network capture of a full TD-1 run + model download: only allowed hosts (NFR-SEC-02; M9 criterion 4).
 - Full NFR sweep on RM-1 and RM-2 (from M9 scope).
+- Hand walk of the review queue and entity page, in M9 if convenient, otherwise here (NFR-USE-06; M7 criterion 4, from M7b; steps in `17-entity-resolution.md` §11).
 
 **Out of scope.** Anything that blocks the v0.1 tag.
 
@@ -625,7 +631,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | R1 FTS5 at 1M segments (K6). **Retired in M4a:** 100 mixed queries on TD-2 (1.11M segments), first 50 results p95 18.8 ms unfiltered, 11.2 ms filtered, against 200 ms (`12-layer1.md` §1). | S4 | M4a (done) | Yes (Tantivy derived index, not needed). |
 | Egress pinning (K8). **Retired in M5a:** ureq 3 with a resolver that returns only the checked addresses keeps SNI and the certificate check for the host name; rebinding (local network → internet), a multi-address host and a revoke during a running job all block or reconfirm; redirects are refused (`13-model-manager.md` §1). | S5 | M5a (done) | Yes (socket-level connector, not needed). |
 | Proposal quality (K9). **Retired in M7a:** at 0.6, 89 to 99 proposals on TD-1 with 82.1 to 84.2% precision on judged pairs and 82.1% of variants reached over three real runs. Thin margin: one proposal under the limit, one variant over the mark (`17-entity-resolution.md` §1). | S7 | M7a (done) | Yes (fewer proposal rules). |
-| Relations/events quality (K10) | M1 probe | M8 | Yes (cut). |
+| Relations/events quality (K10). **Closed by the cut (2026-11-07):** M8 is not in v0.1, so the risk is not carried. | M1 probe | M7 exit (done) | Yes (cut, taken). |
 
 ---
 
@@ -646,7 +652,7 @@ A milestone is done only when all its acceptance criteria pass. Story ACs come f
 | 11 | **Decided (2026-10-30).** D2: a value in an email and in its own attachment counts as 2 sources (follows Q1); it could rank lower later. | 04 §10 | Start of M4 |
 | 12 | A4 — re-run shows old results until done. **Decided (2026-11-05):** yes, then one switch; Cancel changes nothing visible. | 05-architecture §10 | Start of M6 |
 | 13 | D6 — "Unreviewed merge" meaning: **Decided (2026-11-07):** the entity has a pending merge proposal. D7 — how entities get linked identifiers: **Decided (2026-11-06, taken early in M6c):** same CSV row or JSON record and `Name <address>` headers only, no LLM linking. | 04 §10 | Done |
-| 14 | M8 go/no-go. | This file M7 | End of M7b |
+| 14 | M8 go/no-go. **Decided (2026-11-07):** no-go; M8 is cut and E13 is not in v0.1. | This file M7 | End of M7b |
 | 15 | **Decided (2026-10-27).** Windows hard memory cap: the watchdog only, like macOS; no ADR-0002 exception. | ADR-0007 follow-up, M2c | Start of M3 |
 | 16 | **Decided (2026-10-27).** CSV size: NFR-CAP-05 stays at 500 MB (≈ 175 MB is the limit today); M3 builds a streaming CSV parser and a commit that does not hold the whole result. | 10-walking-skeleton §S2a | Start of M3 |
 | 17 | **Decided (2026-10-29).** ADR-0016 accepted as written: MBOX deadline per finished message and the staged commit with a spill file. The per-page rule for PDFs and images is ADR-0017 (Proposed). | ADR-0016 | End of M3a |

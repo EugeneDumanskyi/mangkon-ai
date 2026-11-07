@@ -6,6 +6,7 @@ import type { ProjectInfo } from "../ipc/bindings/ProjectInfo";
 import { onOpenProjectSettings } from "../lib/ai";
 import { onCoreEvent } from "../lib/coreEvents";
 import {
+  EMPTY_PLACE,
   type History,
   type Place,
   START,
@@ -19,17 +20,20 @@ import {
 import { addSummary, skippedLines } from "../lib/progress";
 import { ConnectionsList } from "./ConnectionsList";
 import { DocumentsList } from "./DocumentsList";
+import { EntityPanel } from "./EntityDetail";
 import { OccurrencesPanel } from "./OccurrencesPanel";
 import { ProgressPanel } from "./ProgressPanel";
+import { ReviewQueue } from "./ReviewQueue";
 import { SearchPanel } from "./SearchPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { SourcePane } from "./SourcePane";
 import { runClickSweep, runViewSweep } from "./viewSweep";
 
-type Tab = "connections" | "search" | "documents" | "settings";
+type Tab = "connections" | "search" | "review" | "documents" | "settings";
 const TABS: [Tab, string][] = [
   ["connections", "Connections"],
   ["search", "Search"],
+  ["review", "Review"],
   ["documents", "Documents"],
   ["settings", "Settings"],
 ];
@@ -85,7 +89,7 @@ export function ProjectScreen({
   const client = useQueryClient();
   // Where the connections screen is, and where it was (US-08.2 AC2).
   const [history, setHistory] = useState<History>(START);
-  const { connection: selected, mention, document: openedDocument, hit } = history.place;
+  const { connection: selected, mention, document: openedDocument, hit, entity } = history.place;
   const goTo = useCallback((place: Place) => {
     const scroll = readScrolls();
     setHistory((h) => go(h, place, scroll));
@@ -93,6 +97,12 @@ export function ProjectScreen({
   const goBack = useCallback(() => {
     setHistory(back);
   }, []);
+  const openMention = (m: number) => {
+    goTo({ ...history.place, mention: m, document: null, hit: null });
+  };
+  const openDocument = (d: number) => {
+    goTo({ ...history.place, document: d });
+  };
   const [tab, setTab] = useState<Tab>("connections");
   // The status bar's "Settings" link (US-09.7 AC3).
   useEffect(
@@ -102,6 +112,25 @@ export function ProjectScreen({
       }),
     [],
   );
+  // The entity the review queue is narrowed to (US-07.7 AC4), and the row it is at.
+  const [reviewOf, setReviewOf] = useState<{ key: string; name: string } | null>(null);
+  const [reviewIndex, setReviewIndex] = useState(0);
+  const reviewCount = useQuery({
+    queryKey: ["review", "tab count"],
+    queryFn: () => commands.proposalCount(null),
+  });
+  const openEntity = useCallback(
+    (key: string) => {
+      setTab("connections");
+      goTo({ ...history.place, entity: key });
+    },
+    [goTo, history.place],
+  );
+  const openReview = useCallback((key: string, name: string) => {
+    setReviewOf({ key, name });
+    setReviewIndex(0);
+    setTab("review");
+  }, []);
   const [summary, setSummary] = useState<Summary | null>(null);
   const progress = useQuery({
     queryKey: ["progress"],
@@ -150,14 +179,14 @@ export function ProjectScreen({
     if (!viewSweep || !finished || swept.current) return;
     swept.current = true;
     void runViewSweep((c, m) => {
-      goTo({ connection: c, mention: m, document: null, hit: null });
+      goTo({ ...EMPTY_PLACE, connection: c, mention: m });
     }).then(commands.recordViewSweep);
   }, [viewSweep, finished, goTo]);
   useEffect(() => {
     if (clickSweep === null || !finished || swept.current) return;
     swept.current = true;
     void runClickSweep(clickSweep, (c) => {
-      goTo({ connection: c, mention: null, document: null, hit: null });
+      goTo({ ...EMPTY_PLACE, connection: c });
     }).then(commands.recordViewSweep);
   }, [clickSweep, finished, goTo]);
 
@@ -187,7 +216,7 @@ export function ProjectScreen({
   }, [restore, want]);
   // Alt+← goes back, as in a browser.
   useEffect(() => {
-    if (tab !== "connections" && tab !== "search") return;
+    if (tab !== "connections" && tab !== "search" && tab !== "review") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey && e.key === "ArrowLeft") {
         e.preventDefault();
@@ -278,10 +307,11 @@ export function ProjectScreen({
               tab === id ? "border-accent font-semibold" : "border-transparent text-muted"
             }`}
             onClick={() => {
+              if (id === "review") setReviewOf(null);
               setTab(id);
             }}
           >
-            {label}
+            {id === "review" ? `${label} (${(reviewCount.data ?? 0).toLocaleString()})` : label}
           </button>
         ))}
       </div>
@@ -293,7 +323,7 @@ export function ProjectScreen({
             <SearchPanel
               opened={hit}
               onOpen={(h) => {
-                goTo({ connection: selected, mention: null, document: null, hit: h.hit });
+                goTo({ ...history.place, mention: null, document: null, hit: h.hit });
               }}
             />
             <SourcePane
@@ -303,49 +333,90 @@ export function ProjectScreen({
               empty="Pick a result to see it in its file."
               canBack={history.back.length > 0}
               onBack={goBack}
-              onMention={(m) => {
-                goTo({ connection: selected, mention: m, document: null, hit: null });
-              }}
-              onOpenDocument={(d) => {
-                goTo({ ...history.place, document: d });
-              }}
+              onMention={openMention}
+              onOpenDocument={openDocument}
             />
           </div>
+        ) : tab === "review" ? (
+          <ReviewQueue
+            entity={reviewOf}
+            onShowAll={() => {
+              setReviewOf(null);
+            }}
+            index={reviewIndex}
+            onIndex={setReviewIndex}
+            mention={mention}
+            onMention={openMention}
+            onOpenEntity={openEntity}
+            source={
+              <SourcePane
+                mentionId={mention}
+                documentId={openedDocument}
+                hit={hit}
+                empty="Pick a piece of evidence to see it in its file."
+                canBack={history.back.length > 0}
+                onBack={goBack}
+                onMention={openMention}
+                onOpenDocument={openDocument}
+              />
+            }
+          />
         ) : tab === "settings" ? (
-          <SettingsPanel />
+          <SettingsPanel onOpenEntity={openEntity} />
         ) : empty ? (
           <div className="m-4 flex h-[calc(100%-2rem)] flex-col items-center justify-center gap-2 rounded border-2 border-dashed border-border text-center">
             <p className="text-lg">Drop files or folders here</p>
             <p className="text-muted">or use Add folder… or Add files…</p>
           </div>
         ) : (
-          <div className="grid h-full min-h-0 grid-cols-[minmax(16rem,1fr)_minmax(14rem,1fr)_minmax(20rem,2fr)]">
+          <div
+            className={`grid h-full min-h-0 ${
+              entity === null
+                ? "grid-cols-[minmax(16rem,1fr)_minmax(14rem,1fr)_minmax(20rem,2fr)]"
+                : "grid-cols-[minmax(16rem,1fr)_minmax(20rem,1.5fr)_minmax(20rem,1.5fr)]"
+            }`}
+          >
             <ConnectionsList
               selectedKey={selected?.key ?? null}
               onSelect={(c) => {
-                goTo({ connection: c, mention: null, document: null, hit: null });
+                goTo({ ...EMPTY_PLACE, connection: c });
+              }}
+              onReview={(c) => {
+                openReview(c.key, c.value);
               }}
               uiTiming={uiTiming}
             />
-            <OccurrencesPanel
-              connection={selected}
-              selected={mention}
-              onSelect={(m) => {
-                goTo({ connection: selected, mention: m, document: null, hit: null });
-              }}
-            />
+            {entity === null ? (
+              <OccurrencesPanel
+                connection={selected}
+                selected={mention}
+                onSelect={openMention}
+                onDetails={openEntity}
+                onReview={(c) => {
+                  openReview(c.key, c.value);
+                }}
+              />
+            ) : (
+              <EntityPanel
+                entityKey={entity}
+                selected={mention}
+                onMention={openMention}
+                onDocument={openDocument}
+                onOpenEntity={openEntity}
+                onClose={() => {
+                  goTo({ ...history.place, entity: null });
+                }}
+                onReview={openReview}
+              />
+            )}
             <SourcePane
               mentionId={mention}
               documentId={openedDocument}
               hit={hit}
               canBack={history.back.length > 0}
               onBack={goBack}
-              onMention={(m) => {
-                goTo({ connection: selected, mention: m, document: null, hit: null });
-              }}
-              onOpenDocument={(d) => {
-                goTo({ ...history.place, document: d });
-              }}
+              onMention={openMention}
+              onOpenDocument={openDocument}
             />
           </div>
         )}

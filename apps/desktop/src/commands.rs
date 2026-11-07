@@ -476,6 +476,199 @@ pub async fn set_ignored(
     Ok(())
 }
 
+/// How many merge proposals are pending, only the entity's when given (US-11.3, US-07.7 AC4).
+#[tauri::command]
+pub async fn proposal_count(
+    state: State<'_, AppState>,
+    entity: Option<String>,
+) -> Result<u32, IpcError> {
+    let n = state.current()?.project.proposal_count(entity.as_deref())?;
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
+}
+
+/// A page of pending merge proposals, highest score first (US-11.3 AC1).
+#[tauri::command]
+pub async fn proposals_page(
+    state: State<'_, AppState>,
+    entity: Option<String>,
+    cursor: Option<ipc::ProposalCursor>,
+    limit: u32,
+) -> Result<ipc::ProposalsPage, IpcError> {
+    let limit = limit.clamp(1, MAX_PAGE) as usize;
+    let after = cursor.map(mk_core::ProposalCursor::from);
+    let rows = state
+        .current()?
+        .project
+        .proposals_of(entity.as_deref(), after.as_ref(), limit)?;
+    let next = (rows.len() == limit)
+        .then(|| {
+            rows.last().map(|r| ipc::ProposalCursor {
+                score: r.score,
+                a: r.a.clone(),
+                b: r.b.clone(),
+            })
+        })
+        .flatten();
+    Ok(ipc::ProposalsPage {
+        rows: rows.into_iter().map(Into::into).collect(),
+        next,
+    })
+}
+
+fn entity_type(name: &str) -> Result<mk_core::EntityType, IpcError> {
+    mk_core::EntityType::from_name(name)
+        .ok_or_else(|| IpcError::new("project", format!("Unknown type: {name}")))
+}
+
+/// Accepts a pending proposal, with the chosen name and type (US-11.3 AC2, AC4). Returns the
+/// decision's `seq`.
+#[tauri::command]
+pub async fn proposal_accept(
+    state: State<'_, AppState>,
+    a: String,
+    b: String,
+    name: Option<String>,
+    entity_type: Option<String>,
+) -> Result<i64, IpcError> {
+    let edit = mk_core::MergeEdit {
+        name,
+        entity_type: entity_type.as_deref().map(self::entity_type).transpose()?,
+    };
+    Ok(state.current()?.project.accept_proposal(&a, &b, edit)?)
+}
+
+/// Rejects a pair: never proposed again (US-11.3 AC3).
+#[tauri::command]
+pub async fn proposal_reject(
+    state: State<'_, AppState>,
+    a: String,
+    b: String,
+) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.reject_proposal(&a, &b)?)
+}
+
+/// An entity's page (US-12.1); `null` when no entity holds the key now.
+#[tauri::command]
+pub async fn entity_detail(
+    state: State<'_, AppState>,
+    key: String,
+    include_low: bool,
+) -> Result<Option<ipc::EntityDetail>, IpcError> {
+    let detail = state.current()?.project.entity_detail(&key, include_low)?;
+    Ok(detail.map(Into::into))
+}
+
+/// An entity's mentions, at most `limit` and never over 1,000 (US-12.1 AC1, US-11.3 AC1).
+#[tauri::command]
+pub async fn entity_evidence(
+    state: State<'_, AppState>,
+    key: String,
+    limit: u32,
+    include_low: bool,
+) -> Result<Vec<ipc::Occurrence>, IpcError> {
+    let limit = (limit as usize).min(mk_core::MAX_OCCURRENCES);
+    let rows = state
+        .current()?
+        .project
+        .entity_evidence(&key, limit, include_low)?;
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// Undoes an accepted merge (US-11.4 AC1).
+#[tauri::command]
+pub async fn merge_undo(state: State<'_, AppState>, a: String, b: String) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.undo_merge(&a, &b)?)
+}
+
+/// Moves picked mentions to a new entity (US-11.4 AC2, US-11.1 AC2).
+#[tauri::command]
+pub async fn entity_split(
+    state: State<'_, AppState>,
+    key: String,
+    mentions: Vec<i64>,
+) -> Result<ipc::SplitResult, IpcError> {
+    let made = state.current()?.project.split_mentions(&key, &mentions)?;
+    Ok(ipc::SplitResult {
+        seq: made.seq,
+        key: made.key,
+    })
+}
+
+/// Puts a split entity's mentions back (US-11.4).
+#[tauri::command]
+pub async fn split_undo(state: State<'_, AppState>, key: String) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.undo_split(&key)?)
+}
+
+/// Renames an entity (US-12.2 AC1).
+#[tauri::command]
+pub async fn entity_rename(
+    state: State<'_, AppState>,
+    key: String,
+    name: String,
+) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.rename_entity(&key, &name)?)
+}
+
+/// Changes an entity's type (US-12.2 AC1).
+#[tauri::command]
+pub async fn entity_set_type(
+    state: State<'_, AppState>,
+    key: String,
+    entity_type: String,
+) -> Result<i64, IpcError> {
+    let t = self::entity_type(&entity_type)?;
+    Ok(state.current()?.project.change_entity_type(&key, t)?)
+}
+
+/// Sets an entity's note; an empty one clears it (US-12.2 AC2).
+#[tauri::command]
+pub async fn entity_set_note(
+    state: State<'_, AppState>,
+    key: String,
+    note: String,
+) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.set_entity_note(&key, &note)?)
+}
+
+/// Takes a name off an entity's aliases (US-12.2 AC1).
+#[tauri::command]
+pub async fn alias_remove(
+    state: State<'_, AppState>,
+    key: String,
+    alias: String,
+) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.remove_alias(&key, &alias)?)
+}
+
+/// Brings a removed alias back.
+#[tauri::command]
+pub async fn alias_restore(
+    state: State<'_, AppState>,
+    key: String,
+    alias: String,
+) -> Result<i64, IpcError> {
+    Ok(state.current()?.project.restore_alias(&key, &alias)?)
+}
+
+/// A page of the decision log, newest first, older than `before` (US-11.5 AC2).
+#[tauri::command]
+pub async fn decisions_page(
+    state: State<'_, AppState>,
+    before: Option<i64>,
+    limit: u32,
+) -> Result<ipc::DecisionsPage, IpcError> {
+    let limit = limit.clamp(1, MAX_PAGE) as usize;
+    let rows = state.current()?.project.decisions(before, limit)?;
+    let next = (rows.len() == limit)
+        .then(|| rows.last().map(|r| r.seq))
+        .flatten();
+    Ok(ipc::DecisionsPage {
+        rows: rows.into_iter().map(Into::into).collect(),
+        next,
+    })
+}
+
 /// The mentions of one connection's identifier (US-07.3 AC2).
 #[tauri::command]
 pub async fn occurrences(
@@ -832,6 +1025,27 @@ pub fn record_queue_walk<R: tauri::Runtime>(
         .unwrap_or_else(|| {
             std::env::temp_dir().join(format!("mangkon-queue-walk-{}.json", walk.phase))
         });
+    let json = serde_json::to_string_pretty(&walk)
+        .map_err(|e| IpcError::new("internal", e.to_string()))?;
+    std::fs::write(&path, json)
+        .map_err(|e| IpcError::new("io", format!("{}: {e}", path.display())))?;
+    app.exit(0);
+    Ok(path.display().to_string())
+}
+
+/// Writes the review walk to `MK_REVIEW_WALK_OUT` (default: `mangkon-review-walk.json` in the temp
+/// folder), then exits the app. Refused unless the walk is on.
+#[tauri::command]
+pub fn record_review_walk<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    walk: ipc::ReviewWalk,
+) -> Result<String, IpcError> {
+    if ipc::review_walk_project().is_none() {
+        return Err(IpcError::new("disabled", "The review walk is off."));
+    }
+    let path = std::env::var_os("MK_REVIEW_WALK_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("mangkon-review-walk.json"));
     let json = serde_json::to_string_pretty(&walk)
         .map_err(|e| IpcError::new("internal", e.to_string()))?;
     std::fs::write(&path, json)

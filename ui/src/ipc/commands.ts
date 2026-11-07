@@ -25,8 +25,10 @@ import type { DestinationClass } from "./bindings/DestinationClass";
 import type { DocumentCursor } from "./bindings/DocumentCursor";
 import type { DocumentFilter } from "./bindings/DocumentFilter";
 import type { DocumentsPage } from "./bindings/DocumentsPage";
+import type { DecisionsPage } from "./bindings/DecisionsPage";
 import type { DocumentType } from "./bindings/DocumentType";
 import type { EgressRecord } from "./bindings/EgressRecord";
+import type { EntityDetail } from "./bindings/EntityDetail";
 import type { EndpointItem } from "./bindings/EndpointItem";
 import type { EndpointSave } from "./bindings/EndpointSave";
 import type { EndpointTestReport } from "./bindings/EndpointTestReport";
@@ -40,11 +42,14 @@ import type { Occurrence } from "./bindings/Occurrence";
 import type { PageView } from "./bindings/PageView";
 import type { PatternTest } from "./bindings/PatternTest";
 import type { Progress } from "./bindings/Progress";
+import type { ProposalCursor } from "./bindings/ProposalCursor";
+import type { ProposalsPage } from "./bindings/ProposalsPage";
 import type { ProjectEndpoint } from "./bindings/ProjectEndpoint";
 import type { ProjectInfo } from "./bindings/ProjectInfo";
 import type { QueueWalk } from "./bindings/QueueWalk";
 import type { RecentProject } from "./bindings/RecentProject";
 import type { RemoveSummary } from "./bindings/RemoveSummary";
+import type { ReviewWalk } from "./bindings/ReviewWalk";
 import type { RowPage } from "./bindings/RowPage";
 import type { RuntimeInfo } from "./bindings/RuntimeInfo";
 import type { RowsRequest } from "./bindings/RowsRequest";
@@ -57,6 +62,7 @@ import type { Settings } from "./bindings/Settings";
 import type { SettingsInfo } from "./bindings/SettingsInfo";
 import type { SettingsSaved } from "./bindings/SettingsSaved";
 import type { SourceRoot } from "./bindings/SourceRoot";
+import type { SplitResult } from "./bindings/SplitResult";
 import type { SourceView } from "./bindings/SourceView";
 import type { TryResult } from "./bindings/TryResult";
 import type { UiEvent } from "./bindings/UiEvent";
@@ -147,6 +153,39 @@ export const commands = {
   /** `includeLow`: also mentions under 0.5 confidence ("Show low confidence", US-10.1 AC3). */
   occurrences: (key: string, includeLow = false) =>
     invoke<Occurrence[]>("occurrences", { key, includeLow }),
+  /** How many merge proposals are pending, only the entity's when given (US-11.3, US-07.7 AC4). */
+  proposalCount: (entity: string | null) => invoke<number>("proposal_count", { entity }),
+  /** A page of pending merge proposals, highest score first (US-11.3 AC1). */
+  proposalsPage: (entity: string | null, cursor: ProposalCursor | null, limit: number) =>
+    invoke<ProposalsPage>("proposals_page", { entity, cursor, limit }),
+  /** Accepts a pending proposal; `null` keeps the name or type it would have (US-11.3 AC2, AC4). */
+  proposalAccept: (a: string, b: string, name: string | null, entityType: string | null) =>
+    invoke<number>("proposal_accept", { a, b, name, entityType }),
+  /** Rejects a pair: never proposed again (US-11.3 AC3). */
+  proposalReject: (a: string, b: string) => invoke<number>("proposal_reject", { a, b }),
+  /** An entity's page (US-12.1); `null` when no entity holds the key now. */
+  entityDetail: (key: string, includeLow = false) =>
+    invoke<EntityDetail | null>("entity_detail", { key, includeLow }),
+  /** An entity's mentions, at most `limit` and never over 1,000 (US-12.1 AC1, US-11.3 AC1). */
+  entityEvidence: (key: string, limit: number, includeLow = false) =>
+    invoke<Occurrence[]>("entity_evidence", { key, limit, includeLow }),
+  /** Undoes an accepted merge; the pair is stored as rejected (US-11.4 AC1). */
+  mergeUndo: (a: string, b: string) => invoke<number>("merge_undo", { a, b }),
+  /** Moves picked mentions to a new entity (US-11.4 AC2). */
+  entitySplit: (key: string, mentions: number[]) =>
+    invoke<SplitResult>("entity_split", { key, mentions }),
+  /** Puts a split entity's mentions back. */
+  splitUndo: (key: string) => invoke<number>("split_undo", { key }),
+  entityRename: (key: string, name: string) => invoke<number>("entity_rename", { key, name }),
+  entitySetType: (key: string, entityType: string) =>
+    invoke<number>("entity_set_type", { key, entityType }),
+  /** Sets an entity's note; an empty one clears it (US-12.2 AC2). */
+  entitySetNote: (key: string, note: string) => invoke<number>("entity_set_note", { key, note }),
+  aliasRemove: (key: string, alias: string) => invoke<number>("alias_remove", { key, alias }),
+  aliasRestore: (key: string, alias: string) => invoke<number>("alias_restore", { key, alias }),
+  /** A page of the decision log, newest first, older than `before` (US-11.5 AC2). */
+  decisionsPage: (before: number | null, limit: number) =>
+    invoke<DecisionsPage>("decisions_page", { before, limit }),
   sourceContext: (mentionId: number) => invoke<SourceView>("source_context", { mentionId }),
   /** A document from its start: an attachment, or the email it came in. */
   sourceDocument: (documentId: number) => invoke<SourceView>("source_document", { documentId }),
@@ -260,6 +299,8 @@ export const commands = {
   recordViewSweep: (sweep: ViewSweep) => invoke<string>("record_view_sweep", { sweep }),
   /** `MK_QUEUE_WALK=1` or `2` only. Saves the walk and exits the app. */
   recordQueueWalk: (walk: QueueWalk) => invoke<string>("record_queue_walk", { walk }),
+  /** `MK_REVIEW_WALK=1` only. Saves the walk and exits the app. */
+  recordReviewWalk: (walk: ReviewWalk) => invoke<string>("record_review_walk", { walk }),
   /** Spike S2d builds only. */
   syntheticRows: (request: RowsRequest) => invoke<RowPage>("synthetic_rows", { request }),
   /** Spike S2d builds only. Returns the path the stats were written to. */

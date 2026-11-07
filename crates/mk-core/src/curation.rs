@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 use mk_graph::proposal::{Proposal, THRESHOLD, proposals};
 use mk_kernel::EntityType;
 use mk_store::{
-    DecisionOutcome, DecisionRow, EntityEdit, EntityNames, MergeEdit, ProposalCursor, ProposalRow,
-    Store,
+    DecisionOutcome, DecisionRow, EntityDetail, EntityEdit, EntityNames, MergeEdit, OccurrenceRow,
+    ProposalCursor, ProposalRow, SplitMade, Store,
 };
 
+use crate::events::Changes;
 use crate::project::{Project, ProjectError};
 
 /// How often the thread looks for changed entities.
@@ -39,20 +40,27 @@ pub(crate) struct Shared {
 /// The proposal thread of an open project. Dropping it stops the thread.
 pub(crate) struct ProposalLane {
     pub(crate) shared: Arc<Shared>,
+    /// A run that changed the stored rows says so, or the mark and the count stay stale (ADR-0003).
+    pub(crate) changes: Changes,
     thread: Option<JoinHandle<()>>,
 }
 
 impl ProposalLane {
-    pub(crate) fn start(store: Arc<Store>) -> ProposalLane {
+    pub(crate) fn start(store: Arc<Store>, changes: Changes) -> ProposalLane {
         let shared = Arc::new(Shared::default());
         let thread = {
             let shared = shared.clone();
+            let changes = changes.clone();
             std::thread::Builder::new()
                 .name("mk-proposals".into())
-                .spawn(move || lane(&store, &shared))
+                .spawn(move || lane(&store, &shared, &changes))
                 .ok()
         };
-        ProposalLane { shared, thread }
+        ProposalLane {
+            shared,
+            changes,
+            thread,
+        }
     }
 }
 
@@ -66,7 +74,7 @@ impl Drop for ProposalLane {
     }
 }
 
-fn lane(store: &Store, shared: &Shared) {
+fn lane(store: &Store, shared: &Shared, changes: &Changes) {
     let mut next_run = Instant::now();
     loop {
         {
@@ -89,7 +97,7 @@ fn lane(store: &Store, shared: &Shared) {
             continue;
         }
         let started = Instant::now();
-        let finished = refresh(store, shared);
+        let finished = refresh(store, shared, changes);
         next_run = Instant::now()
             + match finished {
                 Ok(_) => started.elapsed().saturating_mul(PACE),
@@ -99,25 +107,31 @@ fn lane(store: &Store, shared: &Shared) {
 }
 
 /// One proposal run: read, compare, replace. How many are stored after it.
-fn refresh(store: &Store, shared: &Shared) -> Result<usize, ProjectError> {
+fn refresh(store: &Store, shared: &Shared, changes: &Changes) -> Result<usize, ProjectError> {
     let _run = shared.run.lock().unwrap_or_else(|e| e.into_inner());
     // On a thread of its own: a large project allocates hundreds of MiB of small pieces here. When
     // nothing else has used the thread's heap, the allocator can give all of it back afterwards;
     // otherwise it keeps what it freed for as long as the app runs (NFR-RES-01).
-    std::thread::scope(|s| {
+    let stored = std::thread::scope(|s| {
         s.spawn(|| {
             let input = store.proposal_input()?;
             let made = proposals(input.candidates, &input.blocked, THRESHOLD, &shared.stop);
             if shared.stop.load(Ordering::SeqCst) {
-                return Ok(0);
+                return Ok(Default::default());
             }
-            Ok(store
-                .replace_proposals(input.generation, made)?
-                .unwrap_or_default())
+            Ok::<_, ProjectError>(
+                store
+                    .replace_proposals(input.generation, made)?
+                    .unwrap_or_default(),
+            )
         })
         .join()
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    })
+    })?;
+    if stored.changed {
+        changes.changed();
+    }
+    Ok(stored.stored)
 }
 
 impl Project {
@@ -147,9 +161,13 @@ impl Project {
     }
 
     /// Moves some mentions of an entity to a new entity (US-11.1 AC2, US-11.4 AC2). `mentions` are
-    /// the ids of its occurrence rows.
-    pub fn split_mentions(&self, key: &str, mentions: &[i64]) -> Result<i64, ProjectError> {
-        Ok(self.after_decision(self.store().split_mentions(key, mentions.to_vec())?))
+    /// the ids of its occurrence rows. Returns the decision and the new entity's key.
+    pub fn split_mentions(&self, key: &str, mentions: &[i64]) -> Result<SplitMade, ProjectError> {
+        let (outcome, key) = self.store().split_mentions(key, mentions.to_vec())?;
+        Ok(SplitMade {
+            seq: self.after_decision(outcome),
+            key,
+        })
     }
 
     /// Puts a split entity's mentions back.
@@ -203,7 +221,42 @@ impl Project {
         after: Option<&ProposalCursor>,
         limit: usize,
     ) -> Result<Vec<ProposalRow>, ProjectError> {
-        Ok(self.store().proposals_page(after, limit)?)
+        self.proposals_of(None, after, limit)
+    }
+
+    /// A page of pending proposals, only those of the entity holding `entity` when given (US-07.7
+    /// AC4).
+    pub fn proposals_of(
+        &self,
+        entity: Option<&str>,
+        after: Option<&ProposalCursor>,
+        limit: usize,
+    ) -> Result<Vec<ProposalRow>, ProjectError> {
+        Ok(self.store().proposals_page(entity, after, limit)?)
+    }
+
+    /// How many pending proposals there are, only those of the entity when given.
+    pub fn proposal_count(&self, entity: Option<&str>) -> Result<u64, ProjectError> {
+        Ok(self.store().proposal_count(entity)?)
+    }
+
+    /// An entity's page (US-12.1, US-11.4). `None` when no entity holds `key` now.
+    pub fn entity_detail(
+        &self,
+        key: &str,
+        include_low: bool,
+    ) -> Result<Option<EntityDetail>, ProjectError> {
+        Ok(self.store().entity_detail(key, include_low)?)
+    }
+
+    /// The counted mentions of the entity holding `key`, at most `limit` (US-12.1 AC1, US-11.3 AC1).
+    pub fn entity_evidence(
+        &self,
+        key: &str,
+        limit: usize,
+        include_low: bool,
+    ) -> Result<Vec<OccurrenceRow>, ProjectError> {
+        Ok(self.store().entity_evidence(key, limit, include_low)?)
     }
 
     /// An entity's names: display name and aliases (INV-ER-07). `None` if it is gone.
@@ -221,7 +274,8 @@ impl Project {
 
     /// Makes the proposals now and waits for them, instead of for the thread. How many are stored.
     pub fn refresh_proposals(&self) -> Result<usize, ProjectError> {
-        refresh(self.store(), &self.proposal_lane().shared)
+        let lane = self.proposal_lane();
+        refresh(self.store(), &lane.shared, &lane.changes)
     }
 
     /// Every proposal at or above `threshold`, stored or not: what spike S7 sweeps.

@@ -72,7 +72,26 @@ pub(crate) struct Events {
     thread: Option<JoinHandle<()>>,
 }
 
+/// Lets another thread report a change.
+#[derive(Clone)]
+pub(crate) struct Changes(Arc<(Mutex<State>, Condvar)>);
+
+impl Changes {
+    pub(crate) fn changed(&self) {
+        let (lock, cv) = &*self.0;
+        lock.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .debouncer
+            .on_change(Instant::now());
+        cv.notify_all();
+    }
+}
+
 impl Events {
+    pub(crate) fn changes(&self) -> Changes {
+        Changes(self.shared.clone())
+    }
+
     pub(crate) fn start(window: Duration) -> Events {
         let shared = Arc::new((
             Mutex::new(State {
@@ -96,12 +115,7 @@ impl Events {
     }
 
     pub(crate) fn changed(&self) {
-        let (lock, cv) = &*self.shared;
-        lock.lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .debouncer
-            .on_change(Instant::now());
-        cv.notify_all();
+        self.changes().changed();
     }
 
     pub(crate) fn subscribe(&self) -> Receiver<ConnectionsChanged> {

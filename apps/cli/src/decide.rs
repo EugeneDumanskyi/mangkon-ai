@@ -197,13 +197,8 @@ fn run_split(opts: &SplitOptions) -> Result<()> {
             }
         }
         SplitAction::Split(key, mentions) => {
-            let seq = project.split_mentions(key, mentions)?;
-            let new_key = project
-                .decisions(Some(seq + 1), 1)?
-                .into_iter()
-                .next()
-                .map(|d| d.anchor)
-                .unwrap_or_default();
+            let made = project.split_mentions(key, mentions)?;
+            let (seq, new_key) = (made.seq, made.key);
             if opts.json {
                 print_json(&json!({ "seq": seq, "key": new_key }));
             } else {
@@ -324,10 +319,9 @@ fn run_kill_target(dir: &Path) -> Result<()> {
                 .take(1)
                 .map(|o| o.mention_id)
                 .collect();
-            if let Ok(seq) = project.split_mentions(key, &picked) {
-                say(format!("decided {seq}"));
-                let anchor = project.decisions(Some(seq + 1), 1)?.remove(0).anchor;
-                done.push(project.undo_split(&anchor));
+            if let Ok(made) = project.split_mentions(key, &picked) {
+                say(format!("decided {}", made.seq));
+                done.push(project.undo_split(&made.key));
             }
             done.push(project.set_ignored(key, round % 2 == 1));
         }

@@ -12,6 +12,8 @@ export interface Place {
   document: number | null;
   /** A search result opened (US-06.1 AC4), instead of a mention. */
   hit: SegmentHit | null;
+  /** An entity's page (US-12.1), in place of the occurrences. */
+  entity: string | null;
 }
 
 /** Scroll offsets of the three panes, in pixels. */
@@ -31,7 +33,13 @@ export interface History {
 /** Most places kept to go back to. */
 export const HISTORY_LIMIT = 100;
 
-export const EMPTY_PLACE: Place = { connection: null, mention: null, document: null, hit: null };
+export const EMPTY_PLACE: Place = {
+  connection: null,
+  mention: null,
+  document: null,
+  hit: null,
+  entity: null,
+};
 
 function sameHit(a: SegmentHit | null, b: SegmentHit | null): boolean {
   if (a === null || b === null) return a === b;
@@ -54,6 +62,7 @@ export function samePlace(a: Place, b: Place): boolean {
     (a.connection?.key ?? null) === (b.connection?.key ?? null) &&
     a.mention === b.mention &&
     a.document === b.document &&
+    a.entity === b.entity &&
     sameHit(a.hit, b.hit)
   );
 }

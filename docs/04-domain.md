@@ -838,6 +838,7 @@ stateDiagram-v2
 Rules:
 - No decision is ever deleted (INV-CU-01).
 - The decision list in project settings shows all three states. Orphaned decisions show "No longer applies — the source is gone or changed". ASSUMPTION.
+- An orphaned merge shows "One of these names has no mentions now. It applies again when they come back." instead: it can still hold through its other members (M7b). ASSUMPTION.
 
 ### 7.6 Endpoint permission (per project, non-local endpoints only)
 

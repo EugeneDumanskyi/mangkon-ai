@@ -38,10 +38,13 @@ export function ConnectionSummary({
   row,
   selected,
   onIgnore,
+  onReview,
 }: {
   row: ConnectionItem;
   selected: boolean;
   onIgnore?: (row: ConnectionItem) => void;
+  /** Opens the review queue for this entity (US-07.7 AC4). */
+  onReview?: (row: ConnectionItem) => void;
 }) {
   const warning = kindWarning(row.kind);
   const linked = linkedLabel(row);
@@ -69,6 +72,24 @@ export function ConnectionSummary({
         {row.ignored && (
           <span className="shrink-0 rounded border border-current px-1 text-xs">Ignored</span>
         )}
+        {row.unreviewed &&
+          (onReview ? (
+            <button
+              type="button"
+              tabIndex={-1}
+              className="shrink-0 rounded border border-current px-1 text-xs underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReview(row);
+              }}
+            >
+              Unreviewed merge
+            </button>
+          ) : (
+            <span className="shrink-0 rounded border border-current px-1 text-xs">
+              Unreviewed merge
+            </span>
+          ))}
         {warning !== null && (
           <span
             className="shrink-0 rounded border border-current px-1 text-xs"
@@ -351,10 +372,12 @@ function useUpdateTiming(enabled: boolean, updatedAt: number) {
 export function ConnectionsList({
   selectedKey,
   onSelect,
+  onReview,
   uiTiming,
 }: {
   selectedKey: string | null;
   onSelect: (c: ConnectionItem) => void;
+  onReview: (c: ConnectionItem) => void;
   uiTiming: boolean;
 }) {
   const client = useQueryClient();
@@ -521,7 +544,12 @@ export function ConnectionsList({
                 }}
               >
                 {row ? (
-                  <ConnectionSummary row={row} selected={isSelected} onIgnore={ignore} />
+                  <ConnectionSummary
+                    row={row}
+                    selected={isSelected}
+                    onIgnore={ignore}
+                    onReview={onReview}
+                  />
                 ) : (
                   <span className="text-muted">…</span>
                 )}

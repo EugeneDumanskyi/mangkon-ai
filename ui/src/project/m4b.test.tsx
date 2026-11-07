@@ -46,6 +46,7 @@ const connection = (over: Partial<ConnectionItem>): ConnectionItem => ({
   fromTable: false,
   linkedIdentifiers: [],
   linkedTotal: 0,
+  unreviewed: false,
   ...over,
 });
 

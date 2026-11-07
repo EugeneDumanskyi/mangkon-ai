@@ -160,7 +160,7 @@ export function SourcePane({
       setLink(null);
     },
   });
-  const place = { connection: null, mention: mentionId, document: documentId, hit };
+  const place = { connection: null, mention: mentionId, document: documentId, hit, entity: null };
   // Which view is on screen, for Back and the scripted sweeps (`viewSweep.ts`).
   const shown = viewKey(place);
   const view = useQuery({

@@ -1,3 +1,4 @@
+import type { DecisionItem } from "../ipc/bindings/DecisionItem";
 import type { Location } from "../ipc/bindings/Location";
 import type { OriginalFile } from "../ipc/bindings/OriginalFile";
 
@@ -130,4 +131,101 @@ export const COLUMN_TYPE_CHOICES = Object.keys(COLUMN_TYPES);
 
 export function columnTypeLabel(type: string): string {
   return COLUMN_TYPES[type] ?? type;
+}
+
+/** What an entity's type is called: "person" is "Person", "org" is "Organization". */
+export const ENTITY_TYPES = ["person", "org"];
+
+/** The value part of a key: `person:corvin hale` is `corvin hale`. */
+function keyValue(key: string): string {
+  const at = key.indexOf(":");
+  return at < 0 ? key : key.slice(at + 1);
+}
+
+const ALIAS_MARK = "#alias:";
+
+const DECISION_KINDS: Record<string, string> = {
+  ignore_identifier: "Ignored",
+  unignore_identifier: "Un-ignored",
+  ignore_entity: "Ignored",
+  unignore_entity: "Un-ignored",
+  confirm_mapping: "Confirmed columns",
+  accept_merge: "Merged",
+  reject_merge: "Rejected merge",
+  split: "Split",
+  undo_split: "Put back",
+  rename: "Renamed",
+  change_type: "Changed type",
+  set_note: "Note",
+  remove_alias: "Removed alias",
+  restore_alias: "Restored alias",
+};
+
+/** A decision's kind in plain words (US-11.5 AC2). An undone merge is stored as a rejection. */
+export function decisionKindLabel(d: Pick<DecisionItem, "kind" | "before">): string {
+  if (d.kind === "reject_merge" && d.before === "merged") return "Undid merge";
+  return DECISION_KINDS[d.kind] ?? d.kind;
+}
+
+function arrow(before: string | null, after: string | null): string {
+  return before === null ? (after ?? "") : `${before} → ${after ?? ""}`;
+}
+
+/**
+ * What a decision changed, before → after (US-11.5 AC2), in words a person can read: never the raw
+ * keys a split lists or the JSON of a column mapping.
+ */
+export function decisionChange(d: DecisionItem): string {
+  switch (d.kind) {
+    case "split":
+      return `${d.before ?? ""} → ${plural(d.moved ?? 0, "mention")} moved`;
+    case "undo_split":
+      return "Its mentions went back";
+    case "confirm_mapping":
+      return "Columns of a table file";
+    case "change_type":
+      return `${kindLabel(d.before ?? "")} → ${kindLabel(d.after ?? "")}`;
+    case "set_note":
+      return d.after === "" || d.after === null ? "Note cleared" : arrow(d.before, d.after);
+    case "reject_merge": {
+      const [a = "", b = ""] = d.anchor.split("|");
+      return `${keyValue(a)} / ${keyValue(b)}: ${arrow(d.before, d.after)}`;
+    }
+    case "remove_alias":
+    case "restore_alias": {
+      const at = d.anchor.indexOf(ALIAS_MARK);
+      const alias = at < 0 ? "" : d.anchor.slice(at + ALIAS_MARK.length);
+      return `${alias}: ${arrow(d.before, d.after)}`;
+    }
+    case "ignore_identifier":
+    case "unignore_identifier":
+    case "ignore_entity":
+    case "unignore_entity":
+      return `${keyValue(d.anchor)}: ${arrow(d.before, d.after)}`;
+    default:
+      return arrow(d.before, d.after);
+  }
+}
+
+/** Whether a decision still applies (domain §7.5). A mapping's state is its file's, so no text. */
+export function decisionStatusLabel(d: Pick<DecisionItem, "kind" | "status">): string {
+  switch (d.status) {
+    case "active":
+      return "Applies";
+    case "superseded":
+      return "Replaced by a newer decision";
+    case "orphaned":
+      // A merge with one name out of mentions holds: it applies again when they come back.
+      return d.kind === "accept_merge" || d.kind === "reject_merge"
+        ? "One of these names has no mentions now. It applies again when they come back."
+        : "No longer applies — the source is gone or changed";
+    default:
+      return "";
+  }
+}
+
+/** A decision's time, in the machine's own time zone. */
+export function decisionTime(decidedAt: string): string {
+  const time = new Date(decidedAt);
+  return Number.isNaN(time.getTime()) ? decidedAt : time.toLocaleString();
 }

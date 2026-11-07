@@ -44,8 +44,9 @@ pub use ai::{
 };
 pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow, ModelDownloadRow};
 pub use curation::{
-    DecisionOutcome, DecisionRow, EntityEdit, EntityNames, MergeEdit, ProposalCursor,
-    ProposalInput, ProposalRow,
+    DETAIL_DOCUMENTS, DETAIL_LINKED, DecisionOutcome, DecisionRow, EntityDetail, EntityDocument,
+    EntityEdit, EntityNames, MergeEdit, MergedPair, ProposalCursor, ProposalInput, ProposalRow,
+    ProposalsStored, RelatedEntity, SplitMade,
 };
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use egress::{EgressRecordRow, PermissionRow};
@@ -659,7 +660,7 @@ impl Store {
         &self,
         key: &str,
         mentions: Vec<i64>,
-    ) -> Result<DecisionOutcome, StoreError> {
+    ) -> Result<(DecisionOutcome, String), StoreError> {
         let key = key.to_string();
         self.writer
             .call(move |tx| curation::split_mentions(tx, &key, &mentions))
@@ -707,7 +708,7 @@ impl Store {
         &self,
         from_generation: u64,
         proposals: Vec<mk_graph::proposal::Proposal>,
-    ) -> Result<Option<usize>, StoreError> {
+    ) -> Result<Option<ProposalsStored>, StoreError> {
         self.writer
             .call(move |tx| curation::replace_proposals(tx, from_generation, &proposals))
     }
@@ -916,14 +917,41 @@ impl Store {
         self.readers.with(curation::proposal_generations)
     }
 
-    /// One page of pending proposals, highest score first.
+    /// One page of pending proposals, highest score first, only the entity's when given.
     pub fn proposals_page(
         &self,
+        entity: Option<&str>,
         after: Option<&ProposalCursor>,
         limit: usize,
     ) -> Result<Vec<ProposalRow>, StoreError> {
         self.readers
-            .with(|c| curation::proposals_page(c, after, limit))
+            .with(|c| curation::proposals_page(c, entity, after, limit))
+    }
+
+    /// How many proposals [`proposals_page`](Self::proposals_page) lists in all.
+    pub fn proposal_count(&self, entity: Option<&str>) -> Result<u64, StoreError> {
+        self.readers.with(|c| curation::proposal_count(c, entity))
+    }
+
+    /// An entity's page (US-12.1, US-11.4). `None` when no entity holds `key` now.
+    pub fn entity_detail(
+        &self,
+        key: &str,
+        include_low: bool,
+    ) -> Result<Option<EntityDetail>, StoreError> {
+        self.readers
+            .with(|c| curation::entity_detail(c, key, include_low))
+    }
+
+    /// The counted mentions of the entity holding `key`, at most `limit`.
+    pub fn entity_evidence(
+        &self,
+        key: &str,
+        limit: usize,
+        include_low: bool,
+    ) -> Result<Vec<OccurrenceRow>, StoreError> {
+        self.readers
+            .with(|c| read::mentions_of(c, &curation::entity_key(c, key)?, limit, include_low))
     }
 
     /// Those of `keys` with a pending proposal: the "Unreviewed merge" mark (D6).

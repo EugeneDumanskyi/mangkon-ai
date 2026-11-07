@@ -73,7 +73,7 @@ Non-technical users (lawyers, NGOs, most journalists) are v0.2+. They are not de
 | E10 | LLM extraction: people and organizations | 2 | M6 |
 | E11 | Entity resolution and review queue | 2 | M6 / M7 |
 | E12 | Entity detail | 2 | M7 |
-| E13 | LLM extraction: relations and events | 3 | M8 (if time) |
+| E13 | LLM extraction: relations and events | 3 | M8, cut (2026-11-07), not in v0.1 |
 | E14 | Build, docs, demo corpus, responsible use | 1 | M0 / M2 / M4 / M5 / M9 |
 
 ### Core workflow → stories (brief §4)
@@ -875,6 +875,7 @@ As a researcher, I want people and companies that appear in 2+ sources on the sa
 **AC3 — Evidence**
 - **When** I expand an entity row
 - **Then** I see each mention with snippet and confidence, and one click opens the source
+- A mention from a table has no model confidence and reads "From a table" (M7b).
 
 **AC4 — Unreviewed merges**
 - **Given** an entity is built from a merge that is not yet reviewed
@@ -1283,6 +1284,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 **AC1 — Detail page**
 - **When** I open an entity
 - **Then** I see: name, type, aliases, linked identifiers, "Appears in" (list of documents with counts), and all evidence with snippets
+- ASSUMPTION (M7b): evidence and "Appears in" each stop at the first 1,000, saying "first 1,000 of N" (`MAX_OCCURRENCES`). A mention past that cannot be picked for a split.
 
 **AC2 — One click**
 - **When** I click any evidence
@@ -1308,7 +1310,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 ---
 
 #### US-13.1 — Extract relations
-*Layer 3 · M8 (if time)*
+*Layer 3 · M8, cut (2026-11-07), not in v0.1*
 **AC1 — Relations**
 - **Given** Stage B is done for a segment
 - **When** Stage C runs
@@ -1322,7 +1324,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 ---
 
 #### US-13.2 — Extract dated events
-*Layer 3 · M8 (if time)*
+*Layer 3 · M8, cut (2026-11-07), not in v0.1*
 **AC1 — Events**
 - **When** Stage C runs
 - **Then** events are stored with: date (ISO 8601; partial dates like `2024-03` allowed), short description, involved entities, evidence, and confidence
@@ -1334,7 +1336,7 @@ As a researcher, I want people and companies found automatically, so that I see 
 ---
 
 #### US-13.3 — Show relations and events
-*Layer 3 · M8 (if time)*
+*Layer 3 · M8, cut (2026-11-07), not in v0.1*
 **AC1 — Entity detail**
 - **Then** the entity detail shows its relations and events, each with evidence and one-click source
 

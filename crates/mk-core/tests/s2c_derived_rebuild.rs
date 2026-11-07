@@ -578,14 +578,8 @@ fn s2c_derived_rebuild() {
                     .take(occurrences.len().saturating_sub(1).min(3))
                     .map(|o| o.mention_id)
                     .collect();
-                if let Ok(seq) = project.split_mentions(entity, &picked) {
-                    splits.push(
-                        project
-                            .decisions(Some(seq + 1), 1)
-                            .unwrap()
-                            .remove(0)
-                            .anchor,
-                    );
+                if let Ok(made) = project.split_mentions(entity, &picked) {
+                    splits.push(made.key);
                 }
             }),
             4 if !splits.is_empty() => timed("undo_split", &mut || {

@@ -40,6 +40,7 @@ const row = (over: Partial<ConnectionItem> = {}): ConnectionItem => ({
   ignored: false,
   linkedIdentifiers: [],
   linkedTotal: 0,
+  unreviewed: false,
   ...over,
 });
 
@@ -255,7 +256,13 @@ describe("evidence by document (US-07.3 AC1, NFR-USE-04)", () => {
     client.setQueryData(["occurrences", "email:ann@x.example", false], items);
     const html = renderToStaticMarkup(
       <QueryClientProvider client={client}>
-        <OccurrencesPanel connection={row()} selected={2} onSelect={none} />
+        <OccurrencesPanel
+          connection={row()}
+          selected={2}
+          onSelect={none}
+          onDetails={none}
+          onReview={none}
+        />
       </QueryClientProvider>,
     );
     expect(html).toContain("people.csv");
