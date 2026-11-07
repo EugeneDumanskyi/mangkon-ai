@@ -358,7 +358,10 @@ impl Workspace {
             }
             if client.is_none() {
                 match self.ai_client(project, Role::Embeddings) {
-                    Ok(c) => client = Some(c),
+                    Ok(mut c) => {
+                        c.pin_to_run(identity);
+                        client = Some(c);
+                    }
                     Err(e) if e.blocked => {
                         // `ai_client` Blocked the job with this reason (NFR-REL-12).
                         summary.blocked = Some(e.message);
@@ -412,6 +415,10 @@ impl Workspace {
                     }
                 }
                 Ok(None) => summary.dropped_replies += 1,
+                Err(CallFailure::RunChanged) => {
+                    store.release_ai_item(item.item, item.attempt)?;
+                    return Ok(false);
+                }
                 Err(CallFailure::Refused(reason)) => {
                     return self.block_embeddings(project, summary, Some(&item), reason);
                 }

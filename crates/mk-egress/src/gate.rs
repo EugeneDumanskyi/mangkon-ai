@@ -134,6 +134,9 @@ pub enum GateError {
         endpoint_id: String,
         reason: ReconfirmReason,
     },
+    /// The destination's settings are no longer the ones this client is pinned to
+    /// ([`ModelClient::pin`], ADR-0005). Nothing sent or recorded.
+    PinChanged,
     /// The check could not be made (DNS, store, key), or the call itself failed.
     Failed(EgressError),
 }
@@ -148,6 +151,7 @@ impl GateError {
         match self {
             GateError::NotAllowed { .. } => "not_allowed",
             GateError::NeedsReconfirmation { .. } => "needs_reconfirmation",
+            GateError::PinChanged => "pin_changed",
             GateError::Failed(e) => e.code.as_str(),
         }
     }
@@ -164,6 +168,7 @@ impl fmt::Display for GateError {
             GateError::NeedsReconfirmation { reason, .. } => {
                 write!(f, "Confirm this endpoint again for this project: {reason}")
             }
+            GateError::PinChanged => f.write_str("The model settings changed during this run"),
             GateError::Failed(e) => e.fmt(f),
         }
     }
@@ -180,6 +185,7 @@ impl From<EgressError> for GateError {
 /// How long one model call may take.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(600);
 
+type PinCheck = dyn Fn(&str, &Origin) -> bool + Send + Sync;
 type OnSend = Arc<dyn Fn(&Sending) + Send + Sync>;
 type OnFinish = Arc<dyn Fn(&Sending, Finished) + Send + Sync>;
 
@@ -261,6 +267,7 @@ impl Gate {
             store: Box::new(store),
             destination,
             purpose,
+            pin: None,
             agent: Mutex::new(None),
         })
     }
@@ -344,6 +351,8 @@ pub struct ModelClient<'a> {
     store: Box<dyn EgressStore + 'a>,
     destination: Destination,
     purpose: Purpose,
+    /// Says whether a model and origin are the ones this client may still send to.
+    pin: Option<Box<PinCheck>>,
     /// The pinned agent of the last call and the addresses it is pinned to. A new address set
     /// gets a new agent, so a pooled connection never outlives its check.
     agent: Mutex<Option<(Origin, Vec<IpAddr>, Agent)>>,
@@ -356,6 +365,13 @@ impl ModelClient<'_> {
 
     pub fn purpose(&self) -> Purpose {
         self.purpose
+    }
+
+    /// Every later call is refused with [`GateError::PinChanged`] unless `matches` accepts the
+    /// model and origin that call would use. They are the values the call sends with, so an edit
+    /// cannot slip in between the check and the send.
+    pub fn pin(&mut self, matches: impl Fn(&str, &Origin) -> bool + Send + Sync + 'static) {
+        self.pin = Some(Box::new(matches));
     }
 
     fn agent(&self, c: &Checked) -> Agent {
@@ -378,6 +394,11 @@ impl ModelClient<'_> {
         body: impl FnOnce(&str) -> Value,
     ) -> Result<(String, u64), GateError> {
         let c = self.gate.check(self.store.as_ref(), &self.destination)?;
+        if let Some(matches) = &self.pin
+            && !matches(&c.model, c.base.origin())
+        {
+            return Err(GateError::PinChanged);
+        }
         // The key is read now, from the secret store, and dropped after the call (ADR-0012).
         let key: Option<SecretString> = match (&c.secret_ref, &c.local_key) {
             (_, Some(k)) => Some(k.clone()),
