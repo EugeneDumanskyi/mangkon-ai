@@ -1,10 +1,12 @@
 //! `mangkon-cli` (ADR-0002): `ingest` and `rebuild` (M2d), `render` (M3b), `projects`, `retry`,
 //! `remove` and `relocate` (M3c), the kill-test driver (NFR-REL-02/03/04, M2c), `bench` (M4b),
 //! `endpoint test` (M5a), `hardware`, `models` and `model download|delete` (M5b), `runtime`
-//! and `model try` (M5c), `ai` (M6a) and the `--worker` entry.
+//! and `model try` (M5c), `ai` (M6a), `proposals`, `merge`, `split`, `decisions` and
+//! `proposal-bench` (M7a) and the `--worker` entry.
 
 mod ai;
 mod bench;
+mod decide;
 mod embed;
 mod endpoint;
 mod ingest;
@@ -12,6 +14,7 @@ mod kill_test;
 mod llm_bench;
 mod manage;
 mod models;
+mod proposal_bench;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -46,6 +49,13 @@ Usage: mangkon-cli [--help | --version]
                       [--model ID] [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
        mangkon-cli meaning QUERY --project DIR
                       [--llama-server PATH] [--app-data DIR] [--dir DIR] [--json]
+       mangkon-cli proposals --project DIR [--limit N] [--json]
+       mangkon-cli merge (accept | reject | undo) KEY KEY --project DIR
+                         [--name NAME] [--type person|org] [--json]
+       mangkon-cli split KEY --project DIR [--mention ID...] [--json]
+       mangkon-cli split undo KEY --project DIR [--json]
+       mangkon-cli decisions --project DIR [--before SEQ] [--limit N] [--json]
+       mangkon-cli proposal-bench --project DIR [--testdata DIR] [--json FILE]
 
 Commands:
   ingest      Open the project in DIR (created if needed), add each SOURCE folder or file
@@ -162,7 +172,23 @@ Commands:
   meaning     The 20 stored passages closest in meaning to QUERY, best first, each with its
               score and where it is. QUERY goes to the AI chosen for embeddings. Exits 1 and
               says why when meaning search is not ready.
-              Exits 1 if it is Blocked; the reason is printed.";
+              Exits 1 if it is Blocked; the reason is printed.
+  proposals   Compare the people and organizations found and list the pairs that may be one,
+              highest score first, each with its name keys and plain reasons. Nothing is merged
+              until you accept it. A pair you rejected is not listed again.
+  merge       The two name KEYs of a proposal, as `proposals` lists them.
+              accept: merge them; --name and --type set the merged entity's name and type.
+              reject: keep them apart, now and after every re-run.
+              undo: take an accepted merge apart; the pair is stored as rejected.
+  split       KEY alone lists an entity's mentions with their ids. With --mention (repeatable),
+              those mentions move to a new entity, whose key is printed; undo puts them back.
+  decisions   The decision log, newest first: when, what, before and after, and whether each is
+              Active, Superseded or Orphaned. --limit is 100 unless set.
+  proposal-bench
+              Score the merge proposals of a project on TD-1 that `llm-bench --work` kept, with
+              no model: a sweep of thresholds, the link score as it stands, and the link score
+              after deciding by the ground truth, on a copy. Prints no names; --json FILE holds
+              them.";
 
 fn main() -> ExitCode {
     // `mangkon-cli --worker`: a parser worker (ADR-0001, ADR-0007). Not in the help.
@@ -242,10 +268,35 @@ fn main() -> ExitCode {
             Ok(opts) => llm_bench::run(&opts),
             Err(e) => usage_error(&e),
         },
+        Some("proposals") => match proposals_options(&args[1..]) {
+            Ok(opts) => decide::proposals(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("merge") => match merge_options(&args[1..]) {
+            Ok(opts) => decide::merge(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("split") => match split_options(&args[1..]) {
+            Ok(opts) => decide::split(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("decisions") => match decisions_options(&args[1..]) {
+            Ok(opts) => decide::decisions(&opts),
+            Err(e) => usage_error(&e),
+        },
+        Some("proposal-bench") => match proposal_bench_options(&args[1..]) {
+            Ok(opts) => proposal_bench::run(&opts),
+            Err(e) => usage_error(&e),
+        },
         // The process the kill test kills. Not in the help.
         Some("kill-test-target") => match &args[1..] {
             [project, source] => kill_test::target(&PathBuf::from(project), &PathBuf::from(source)),
             _ => usage_error("kill-test-target takes PROJECT SOURCE"),
+        },
+        // The process the decision kill test kills. Not in the help.
+        Some("kill-decide-target") => match &args[1..] {
+            [project] => decide::kill_target(&PathBuf::from(project)),
+            _ => usage_error("kill-decide-target takes PROJECT"),
         },
         Some(other) => usage_error(&format!("unknown argument {other:?}")),
     }
@@ -254,6 +305,135 @@ fn main() -> ExitCode {
 fn usage_error(msg: &str) -> ExitCode {
     eprintln!("error: {msg}\n\n{HELP}");
     ExitCode::from(2)
+}
+
+fn proposals_options(args: &[String]) -> Result<decide::ProposalsOptions, String> {
+    let (mut project, mut limit, mut json) = (None, None, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--limit" => limit = Some(value()?.parse().map_err(|_| "--limit takes a number")?),
+            "--json" => json = true,
+            other => return Err(format!("unknown proposals argument {other:?}")),
+        }
+    }
+    Ok(decide::ProposalsOptions {
+        project: project.ok_or("proposals needs --project DIR")?,
+        limit,
+        json,
+    })
+}
+
+fn entity_type_option(text: &str) -> Result<mk_core::EntityType, String> {
+    mk_core::EntityType::from_name(text).ok_or_else(|| "--type takes person or org".to_string())
+}
+
+fn merge_options(args: &[String]) -> Result<decide::MergeOptions, String> {
+    let (mut project, mut name, mut entity_type, mut json) = (None, None, None, false);
+    let mut words = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--name" => name = Some(value()?.clone()),
+            "--type" => entity_type = Some(entity_type_option(value()?)?),
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown merge argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let [action, a, b] = words.as_slice() else {
+        return Err("merge takes accept, reject or undo and two name keys".into());
+    };
+    let edits = name.is_some() || entity_type.is_some();
+    let action = match *action {
+        "accept" => decide::MergeAction::Accept { name, entity_type },
+        "reject" if !edits => decide::MergeAction::Reject,
+        "undo" if !edits => decide::MergeAction::Undo,
+        "reject" | "undo" => return Err("--name and --type are for merge accept".into()),
+        _ => return Err("merge takes accept, reject or undo and two name keys".into()),
+    };
+    Ok(decide::MergeOptions {
+        project: project.ok_or("merge needs --project DIR")?,
+        action,
+        a: (*a).to_string(),
+        b: (*b).to_string(),
+        json,
+    })
+}
+
+fn split_options(args: &[String]) -> Result<decide::SplitOptions, String> {
+    let (mut project, mut json) = (None, false);
+    let (mut words, mut mentions) = (Vec::new(), Vec::new());
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--mention" => mentions.push(value()?.parse().map_err(|_| "--mention takes a number")?),
+            "--json" => json = true,
+            other if other.starts_with("--") => {
+                return Err(format!("unknown split argument {other:?}"));
+            }
+            word => words.push(word),
+        }
+    }
+    let action = match words.as_slice() {
+        ["undo", key] if mentions.is_empty() => decide::SplitAction::Undo((*key).to_string()),
+        [key] if mentions.is_empty() => decide::SplitAction::List((*key).to_string()),
+        [key] => decide::SplitAction::Split((*key).to_string(), mentions),
+        _ => return Err("split takes KEY [--mention ID...] or undo KEY".into()),
+    };
+    Ok(decide::SplitOptions {
+        project: project.ok_or("split needs --project DIR")?,
+        action,
+        json,
+    })
+}
+
+fn decisions_options(args: &[String]) -> Result<decide::DecisionsOptions, String> {
+    let (mut project, mut before, mut limit, mut json) = (None, None, 100, false);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--before" => before = Some(value()?.parse().map_err(|_| "--before takes a number")?),
+            "--limit" => limit = value()?.parse().map_err(|_| "--limit takes a number")?,
+            "--json" => json = true,
+            other => return Err(format!("unknown decisions argument {other:?}")),
+        }
+    }
+    Ok(decide::DecisionsOptions {
+        project: project.ok_or("decisions needs --project DIR")?,
+        before,
+        limit,
+        json,
+    })
+}
+
+fn proposal_bench_options(args: &[String]) -> Result<proposal_bench::Options, String> {
+    let (mut project, mut testdata, mut json) = (None, PathBuf::from("testdata/td1"), None);
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        let mut value = || it.next().ok_or_else(|| format!("{a} needs a value"));
+        match a.as_str() {
+            "--project" => project = Some(PathBuf::from(value()?)),
+            "--testdata" => testdata = PathBuf::from(value()?),
+            "--json" => json = Some(PathBuf::from(value()?)),
+            other => return Err(format!("unknown proposal-bench argument {other:?}")),
+        }
+    }
+    Ok(proposal_bench::Options {
+        project: project.ok_or("proposal-bench needs --project DIR")?,
+        testdata,
+        json,
+    })
 }
 
 fn kill_test_options(args: &[String]) -> Result<kill_test::Options, String> {

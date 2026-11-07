@@ -9,8 +9,13 @@
 //!    the Stage A lane and measures "parse finished → commit done" per item (which includes
 //!    waiting for the one writer); then, one at a time, 10 hot-key files, 10 new-key files and
 //!    5 CSVs of 5,000 rows (the commit alone). The phase runs once with 0 decisions, then again after
-//!    10,000 `ignore_identifier` decisions (80% on existing keys, 20% orphaned, some in
-//!    supersede chains).
+//!    10,000 decisions.
+//! 4. M7a: the synthetic documents also hold people's names, stored through the Stage B commit, with
+//!    a hot group of three written forms in every one. The decisions are real and mixed: merges (the
+//!    hot group among them), rejects, undos, splits and undo-splits, renames, types, notes, alias
+//!    removals, ignores of entities and of identifiers (80% on existing keys, 20% orphaned, some in
+//!    supersede chains). Each phase also commits 50 files' Stage B output naming the hot group, the
+//!    worst case: a commit rebuilds a group of every synthetic document.
 //!
 //! Pass mark: p95 of the commit latency + the 500 ms debounce ≤ 2 s. Machine-dependent, so
 //! `#[ignore]`; run on RM-1 when it is idle:
@@ -25,9 +30,12 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use mk_core::{DEBOUNCE, Project};
+use mk_ai::{CheckedMention, RunIdentity};
+use mk_core::{DEBOUNCE, EntityType, MergeEdit, Project};
+use mk_jobs::Trigger;
+use mk_kernel::NameKey;
 use mk_parsers::Format;
-use mk_store::NewContent;
+use mk_store::{AiItemResult, NewContent, RunBinding, UnitScope};
 use serde_json::{Value, json};
 
 const DOCUMENTS: usize = 10_000;
@@ -39,6 +47,12 @@ const HOT: usize = 3;
 const LANE_FILES: usize = 100;
 const SERIAL_FILES: usize = 10;
 const PASS: Duration = Duration::from_secs(2);
+/// Files of Stage B output a phase commits.
+const NAMED_FILES: usize = 50;
+/// The hot group: three written forms the scorer proposes, in every synthetic document.
+const HOT_NAMES: [&str; 3] = ["Corvin Hale", "C. Hale", "Mr Hale"];
+/// Merges among the decisions, besides the hot group's.
+const MERGES: usize = 1_000;
 
 /// SplitMix64: a small fixed-seed generator, so the runs are repeatable without extra crates.
 struct Rng(u64);
@@ -87,6 +101,79 @@ impl Zipf {
 
 fn pool_key(rank: usize) -> String {
     format!("p{rank}@s2c.example")
+}
+
+/// A person of the pool: an even rank and the next one are two forms the scorer proposes.
+fn pool_name(rank: usize) -> String {
+    if rank.is_multiple_of(2) {
+        format!("Ann Lee {rank}")
+    } else {
+        format!("A. Lee {}", rank - 1)
+    }
+}
+
+fn binding() -> RunBinding {
+    RunBinding {
+        identity: RunIdentity::local("s2c"),
+        model_name: "S2c".into(),
+        destination_host: "127.0.0.1".into(),
+        destination_class: "local".into(),
+        prompt_version: 1,
+    }
+}
+
+/// Runs Stage B over `contents`, finding `names` by their text, as checks would have left them. The
+/// commit latencies.
+fn commit_names(project: &Project, contents: Vec<i64>, names: &[String]) -> Vec<Duration> {
+    let store = project.store();
+    store
+        .schedule_ai_units(UnitScope::Contents(contents), Trigger::Add)
+        .unwrap();
+    store.bind_ai_run(binding()).unwrap();
+    let mut out = Vec::new();
+    while let Some(item) = store.start_next_ai_item().unwrap() {
+        let mut mentions = Vec::new();
+        for piece in &item.pieces {
+            for name in names {
+                for (at, _) in piece.text.match_indices(name.as_str()) {
+                    let start = piece.text[..at].chars().count() + piece.start;
+                    mentions.push(CheckedMention {
+                        segment: piece.segment,
+                        key: NameKey::new(EntityType::Person, name).unwrap(),
+                        entity_type: EntityType::Person,
+                        raw: name.clone(),
+                        span: (start, start + name.chars().count()),
+                        confidence: 0.9,
+                    });
+                }
+            }
+        }
+        let result = AiItemResult {
+            mentions,
+            ..AiItemResult::default()
+        };
+        let c = Instant::now();
+        store
+            .commit_ai_item(item.item, item.attempt, result)
+            .unwrap();
+        out.push(c.elapsed());
+    }
+    out
+}
+
+fn newest_content(project: &Project) -> i64 {
+    count(project, "SELECT COALESCE(MAX(id), 0) FROM content")
+}
+
+fn contents_after(project: &Project, id: i64) -> Vec<i64> {
+    project
+        .store()
+        .read_raw(move |c| {
+            let mut s = c.prepare("SELECT id FROM content WHERE id > ?1 ORDER BY id")?;
+            let rows = s.query_map([id], |r| r.get(0))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .unwrap()
 }
 
 fn percentile(sorted: &[Duration], p: f64) -> Duration {
@@ -235,6 +322,24 @@ fn phase(project: &mut Project, mix: &mut Mix<'_>, dir: &Path, cores: usize) -> 
     project.rescan(false).unwrap();
     let large_csv = project.run_stage_a().unwrap();
     assert_eq!(large_csv.done, 5);
+    // People's names in new files, the hot group each time: a commit rebuilds the group (M7a).
+    let named = dir.join("named");
+    std::fs::create_dir_all(&named).unwrap();
+    for i in 0..NAMED_FILES {
+        let body: String = HOT_NAMES
+            .iter()
+            .map(|n| format!("{tag} {i} signed by {n}.\n"))
+            .collect();
+        std::fs::write(named.join(format!("n{i}.txt")), body).unwrap();
+    }
+    let before_named = newest_content(project);
+    project.add_source_root(&named).unwrap();
+    project.rescan(false).unwrap();
+    project.run_stage_a().unwrap();
+    let names: Vec<String> = HOT_NAMES.iter().map(|n| n.to_string()).collect();
+    let mut ai_latencies = commit_names(project, contents_after(project, before_named), &names);
+    ai_latencies.sort();
+    let ai_p95 = percentile(&ai_latencies, 0.95);
     json!({
         "lane": {
             "workers": mk_jobs::stage_a_limit(cores),
@@ -246,6 +351,11 @@ fn phase(project: &mut Project, mix: &mut Mix<'_>, dir: &Path, cores: usize) -> 
         "hot_key_serial": hot_only,
         "new_key_serial": new_only,
         "large_csv_serial": stats(large_csv.commit_latencies),
+        "names_serial": {
+            "latency": stats(ai_latencies),
+            "p95_plus_debounce_ms": ms(ai_p95 + DEBOUNCE),
+            "pass": ai_p95 + DEBOUNCE <= PASS,
+        },
     })
 }
 
@@ -300,6 +410,7 @@ fn s2c_derived_rebuild() {
         .div_ceil(synthetic.max(1))
         .max(HOT + 5);
     let t = Instant::now();
+    let before_synthetic = newest_content(&project);
     let contents: Vec<NewContent> = (0..synthetic)
         .map(|i| NewContent {
             hash: mk_kernel::ContentHash::of(format!("s2c synthetic {i}").as_bytes()),
@@ -309,14 +420,21 @@ fn s2c_derived_rebuild() {
         .collect();
     let items = project.store().enqueue_contents(contents).unwrap();
     let mut topup_latencies = Vec::with_capacity(items.len());
+    let mut names_used: std::collections::BTreeSet<String> =
+        HOT_NAMES.iter().map(|n| n.to_string()).collect();
     for item in items {
         project.store().start_item(item).unwrap().unwrap();
         let mut text = String::new();
         for k in &hot {
             let _ = writeln!(text, "hot {k}");
         }
+        for n in HOT_NAMES {
+            let _ = writeln!(text, "signed by {n}.");
+        }
         for j in 0..per_doc - HOT {
-            let _ = writeln!(text, "{j} {}", pool_key(zipf.sample(&mut rng)));
+            let rank = zipf.sample(&mut rng);
+            let _ = writeln!(text, "{j} {} for {}.", pool_key(rank), pool_name(rank));
+            names_used.insert(pool_name(rank));
         }
         let parsed = mk_parsers::parse(Format::Text, text.as_bytes()).unwrap();
         let output = mk_core::stage_a::extract(&parsed);
@@ -325,6 +443,14 @@ fn s2c_derived_rebuild() {
         topup_latencies.push(c.elapsed());
     }
     let step2 = t.elapsed();
+    let t = Instant::now();
+    let names_used: Vec<String> = names_used.into_iter().collect();
+    let name_latencies = commit_names(
+        &project,
+        contents_after(&project, before_synthetic),
+        &names_used,
+    );
+    let step2b = t.elapsed();
     let hot_documents: Vec<Value> = hot
         .iter()
         .map(|k| {
@@ -349,6 +475,8 @@ fn s2c_derived_rebuild() {
         "mentions": count(&project, "SELECT COUNT(*) FROM identifier_mention"),
         "segments": count(&project, "SELECT COUNT(*) FROM segment"),
         "identifiers": count(&project, "SELECT COUNT(*) FROM identifier"),
+        "entity_mentions": count(&project, "SELECT COUNT(*) FROM entity_mention"),
+        "entities": count(&project, "SELECT COUNT(*) FROM entity"),
         "connections": count(&project, "SELECT COUNT(*) FROM connection"),
         "hot_keys": hot_documents,
     });
@@ -361,8 +489,8 @@ fn s2c_derived_rebuild() {
     };
     let zero = phase(&mut project, &mut mix, &tmp.path().join("phase0"), cores);
 
-    // Step 3: 10,000 decisions. 80% on existing keys (10% of those re-decide a key already
-    // decided, so supersede chains form, including on a hot key), 20% on keys never seen.
+    // Step 3: 10,000 mixed decisions. The hot group is merged first; 80% land on what exists (10% of
+    // those decide again, so supersede chains form, including on a hot key), 20% on what never was.
     let existing: Vec<String> = project
         .store()
         .read_raw(|c| {
@@ -372,27 +500,138 @@ fn s2c_derived_rebuild() {
         })
         .unwrap();
     let t = Instant::now();
-    let mut decided: Vec<String> = Vec::new();
-    let mut decision_latencies = Vec::with_capacity(DECISIONS);
-    let mut ignored = std::collections::HashMap::<String, bool>::new();
-    for i in 0..DECISIONS {
-        let key = if i < 6 {
-            format!("email:{}", hot[1])
-        } else if i % 5 == 0 {
-            format!("email:orphan{i}@s2c.example")
-        } else if !decided.is_empty() && rng.below(10) == 0 {
-            decided[rng.below(decided.len())].clone()
-        } else {
-            let k = existing[rng.below(existing.len())].clone();
-            decided.push(k.clone());
-            k
-        };
-        let now = !ignored.get(&key).copied().unwrap_or(false);
-        ignored.insert(key.clone(), now);
+    let proposal_run = Instant::now();
+    let proposals = project.refresh_proposals().unwrap();
+    let proposal_s = proposal_run.elapsed().as_secs_f64();
+    let hot_key = |n: usize| {
+        NameKey::new(EntityType::Person, HOT_NAMES[n])
+            .unwrap()
+            .to_string()
+    };
+    let mut by_kind: std::collections::BTreeMap<&str, Vec<Duration>> = Default::default();
+    let mut timed = |kind: &'static str, f: &mut dyn FnMut()| {
         let c = Instant::now();
-        project.set_ignored(&key, now).unwrap();
-        decision_latencies.push(c.elapsed());
+        f();
+        by_kind.entry(kind).or_default().push(c.elapsed());
+    };
+    let group = hot_key(1);
+    timed("merge", &mut || {
+        project
+            .accept_proposal(&hot_key(1), &hot_key(0), MergeEdit::default())
+            .unwrap();
+    });
+    project.refresh_proposals().unwrap();
+    let last = project
+        .proposals(None, 100_000)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.left_key == group || p.right_key == group)
+        .expect("the third form of the hot group is proposed");
+    timed("merge", &mut || {
+        project
+            .accept_proposal(&last.a, &last.b, MergeEdit::default())
+            .unwrap();
+    });
+    project.refresh_proposals().unwrap();
+    let pending = project.proposals(None, MERGES * 2).unwrap();
+    let mut merged: Vec<(String, String)> = Vec::new();
+    for p in pending.iter().take(MERGES) {
+        timed("merge", &mut || {
+            if project
+                .accept_proposal(&p.a, &p.b, MergeEdit::default())
+                .is_ok()
+            {
+                merged.push((p.a.clone(), p.b.clone()));
+            }
+        });
     }
+    let entity_keys: Vec<String> = project
+        .store()
+        .read_raw(|c| {
+            let mut s = c.prepare("SELECT entity_key FROM entity ORDER BY entity_key")?;
+            let rows = s.query_map([], |r| r.get(0))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .unwrap();
+    let mut decided: Vec<String> = Vec::new();
+    let mut ignored = std::collections::HashMap::<String, bool>::new();
+    let mut splits: Vec<String> = Vec::new();
+    let mut i = 0;
+    // Counted from the log: an attempt the store refuses is not a decision.
+    while (count(&project, "SELECT COALESCE(MAX(seq), 0) FROM decision") as usize) < DECISIONS {
+        i += 1;
+        let entity = &entity_keys[rng.below(entity_keys.len())];
+        match i % 20 {
+            0..=1 => timed("reject", &mut || {
+                let a = entity_keys[rng.below(entity_keys.len())].clone();
+                let _ = project.reject_proposal(&format!("person:orphan {i}"), &a);
+            }),
+            2 if !merged.is_empty() => timed("undo", &mut || {
+                let (a, b) = merged.swap_remove(rng.below(merged.len()));
+                project.undo_merge(&a, &b).unwrap();
+            }),
+            3 => timed("split", &mut || {
+                let occurrences = project.occurrences(entity).unwrap();
+                // A split must leave at least one mention behind.
+                let picked: Vec<i64> = occurrences
+                    .iter()
+                    .take(occurrences.len().saturating_sub(1).min(3))
+                    .map(|o| o.mention_id)
+                    .collect();
+                if let Ok(seq) = project.split_mentions(entity, &picked) {
+                    splits.push(
+                        project
+                            .decisions(Some(seq + 1), 1)
+                            .unwrap()
+                            .remove(0)
+                            .anchor,
+                    );
+                }
+            }),
+            4 if !splits.is_empty() => timed("undo_split", &mut || {
+                let split = splits.swap_remove(rng.below(splits.len()));
+                project.undo_split(&split).unwrap();
+            }),
+            5..=7 => timed("rename", &mut || {
+                let _ = project.rename_entity(entity, &format!("Renamed {i}"));
+            }),
+            8 => timed("type", &mut || {
+                let _ = project.change_entity_type(entity, EntityType::Org);
+            }),
+            9..=10 => timed("note", &mut || {
+                let _ = project.set_entity_note(entity, &format!("Note {i}"));
+            }),
+            11 => timed("alias", &mut || {
+                if let Some(names) = project.entity_names(entity).unwrap()
+                    && let Some((alias, _)) = names.aliases.first()
+                {
+                    let _ = project.remove_alias(entity, alias);
+                }
+            }),
+            12..=13 => timed("ignore_entity", &mut || {
+                project.set_ignored(entity, true).unwrap();
+            }),
+            _ => {
+                let key = if i < 6 {
+                    format!("email:{}", hot[1])
+                } else if i % 5 == 0 {
+                    format!("email:orphan{i}@s2c.example")
+                } else if !decided.is_empty() && rng.below(10) == 0 {
+                    decided[rng.below(decided.len())].clone()
+                } else {
+                    let k = existing[rng.below(existing.len())].clone();
+                    decided.push(k.clone());
+                    k
+                };
+                let now = !ignored.get(&key).copied().unwrap_or(false);
+                ignored.insert(key.clone(), now);
+                timed("ignore", &mut || {
+                    project.set_ignored(&key, now).unwrap();
+                });
+            }
+        }
+    }
+    drop(timed);
     let step3 = t.elapsed();
     let statuses: Vec<(String, i64)> = project
         .store()
@@ -403,6 +642,19 @@ fn s2c_derived_rebuild() {
             Ok(rows.collect::<Result<_, _>>()?)
         })
         .unwrap();
+    let logged: Vec<(String, i64)> = project
+        .store()
+        .read_raw(|c| {
+            let mut s = c.prepare("SELECT kind, COUNT(*) FROM decision GROUP BY kind")?;
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })
+        .unwrap();
+    let decision_latencies: Vec<Duration> = by_kind.values().flatten().copied().collect();
+    let by_kind: std::collections::BTreeMap<&str, Value> = by_kind
+        .into_iter()
+        .map(|(kind, latencies)| (kind, stats(latencies)))
+        .collect();
 
     let ten_k = phase(&mut project, &mut mix, &tmp.path().join("phase10k"), cores);
 
@@ -413,8 +665,10 @@ fn s2c_derived_rebuild() {
     let rebuild = t.elapsed();
     assert_eq!(incremental, project.store().derived_state().unwrap());
 
-    let pass = zero["lane"]["pass"].as_bool() == Some(true)
-        && ten_k["lane"]["pass"].as_bool() == Some(true);
+    let pass = [&zero, &ten_k].iter().all(|p| {
+        p["lane"]["pass"].as_bool() == Some(true)
+            && p["names_serial"]["pass"].as_bool() == Some(true)
+    });
     let db_bytes = std::fs::metadata(project.layout().database()).map_or(0, |m| m.len());
     let summary = json!({
         "spike": "S2c",
@@ -435,12 +689,17 @@ fn s2c_derived_rebuild() {
             "mentions_per_document": per_doc,
             "build_s": step2.as_secs_f64(),
             "commit": stats(topup_latencies),
+            "names_s": step2b.as_secs_f64(),
+            "names_commit": stats(name_latencies),
         },
         "scale": scale,
+        "proposals": { "stored": proposals, "run_s": proposal_s },
         "decisions": {
-            "count": DECISIONS,
+            "count": count(&project, "SELECT COUNT(*) FROM decision"),
             "append_s": step3.as_secs_f64(),
             "append": stats(decision_latencies),
+            "by_kind": by_kind,
+            "logged": logged.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
             "status": statuses.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
         },
         "phase_0_decisions": zero,

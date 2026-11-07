@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use mk_bench::GroundTruth;
+use mk_bench::links::{LinkScore, ProposalPoint};
 use mk_bench::names::{self, FoundName, NameReport};
 use mk_core::{AiChoice, ConnectionQuery, ModelRole, Project, ProjectSettings, Workspace};
 use mk_search::meaning::{
@@ -22,10 +23,8 @@ use mk_search::meaning::{
 use serde_json::{Value, json};
 
 use crate::ai::open_workspace;
-use crate::bench::gt_document;
+use crate::proposal_bench::{self, Decided, PARTS, stored_documents};
 
-/// The two parts of TD-1, each a root of the one project.
-const PARTS: [&str; 2] = ["synthetic", "public"];
 const REGION: &str = "GB";
 /// How often the first person or organization is looked for (NFR-PERF-12). The desktop adds its
 /// own 500 ms debounce before the screen shows it.
@@ -40,6 +39,8 @@ const FIRST_CONNECTION_TARGET_S: f64 = 300.0;
 const STAGE_B_TARGET_S: f64 = 1200.0;
 const UNITS_PER_SECOND_TARGET: f64 = 1.0;
 const EMBEDDING_RECALL_TARGET: f64 = 0.9;
+const LINK_RECALL_TARGET: f64 = 80.0;
+const LINK_PRECISION_TARGET: f64 = 90.0;
 
 pub struct Options {
     pub testdata: PathBuf,
@@ -90,6 +91,14 @@ struct Run {
     healthy: bool,
     unmapped: Vec<String>,
     names: NameReport,
+    /// NFR-QA-01/02: the rows shown by default, with no merge accepted.
+    links: LinkScore,
+    /// Spike S7 at the threshold in use.
+    proposals: ProposalPoint,
+    sweep: Vec<ProposalPoint>,
+    pairs: Vec<Value>,
+    /// Information only: the links after deciding by the ground truth, on a copy.
+    decided: Decided,
 }
 
 struct Embeddings {
@@ -109,6 +118,8 @@ impl Run {
             && self.rebuild_matches
             && self.healthy
             && self.unmapped.is_empty()
+            && self.decided.rebuild_matches
+            && self.decided.healthy
             && self.embeddings.as_ref().is_none_or(|e| e.parts_failed == 0)
     }
 
@@ -144,6 +155,11 @@ impl Run {
             "healthy": self.healthy,
             "unmapped": self.unmapped,
             "names": self.names,
+            "links": self.links,
+            "proposals": self.proposals,
+            "sweep": self.sweep,
+            "pairs": self.pairs,
+            "decided": self.decided,
         })
     }
 }
@@ -340,10 +356,17 @@ fn one_run_in(opts: &Options, gt: &GroundTruth, dir: &Path, ws: &Workspace) -> R
             })
         }
     };
+    let (documents, _) = stored_documents(&project, gt, &part_of(&roots))?;
+    let links = proposal_bench::link_score(&project, gt, &documents)?;
+    let sweep = proposal_bench::sweep(&project, gt, &documents)?;
     let rebuilt = project.rebuild()?;
+    let files_failed = project.counts()?.failed;
+    let healthy = project.check_health()?.is_healthy();
+    drop(project);
+    let decided = proposal_bench::decided(dir, gt)?;
     Ok(Run {
         stage_a_s,
-        files_failed: project.counts()?.failed,
+        files_failed,
         first_connection_s,
         stage_b_s: lanes.stage_b_s,
         units: lanes.stage_b.done,
@@ -356,10 +379,22 @@ fn one_run_in(opts: &Options, gt: &GroundTruth, dir: &Path, ws: &Workspace) -> R
         embeddings,
         both_lanes_s: lanes.both_s,
         rebuild_matches: rebuilt.same_as_incremental && rebuilt.consistent,
-        healthy: project.check_health()?.is_healthy(),
+        healthy,
         unmapped,
         names,
+        links,
+        proposals: sweep.in_use(),
+        sweep: sweep.points,
+        pairs: sweep.pairs,
+        decided,
     })
+}
+
+fn part_of(roots: &BTreeMap<i64, &str>) -> BTreeMap<i64, String> {
+    roots
+        .iter()
+        .map(|(id, part)| (*id, part.to_string()))
+        .collect()
 }
 
 struct Lanes {
@@ -425,37 +460,14 @@ fn run_lanes(opts: &Options, ws: &Workspace, project: &Project) -> Result<Lanes>
 }
 
 /// The names a model stored, with their ground-truth documents, and the stored documents the
-/// ground truth does not have. A file found under two paths counts for both.
+/// ground truth does not have.
 fn found_names(
     project: &Project,
     gt: &GroundTruth,
     roots: &BTreeMap<i64, &str>,
 ) -> Result<(Vec<FoundName>, Vec<String>)> {
     let store = project.store();
-    let mut ids: BTreeMap<i64, Vec<String>> = BTreeMap::new();
-    let mut unmapped = Vec::new();
-    for r in store.stored_refs()? {
-        let Some(part) = roots.get(&r.root).filter(|_| r.present) else {
-            continue;
-        };
-        let file = format!("{part}/{}", r.rel_path);
-        let Some(content) = store.content(&r.hash)? else {
-            continue;
-        };
-        let mut documents: Vec<i64> = store
-            .segments(content.id)?
-            .iter()
-            .map(|s| s.document_id)
-            .collect();
-        documents.sort_unstable();
-        documents.dedup();
-        for d in documents {
-            match gt_document(project, gt, &file, d)? {
-                Ok(id) => ids.entry(d).or_default().push(id),
-                Err(position) => unmapped.push(format!("{file} ({position})")),
-            }
-        }
-    }
+    let (ids, unmapped) = stored_documents(project, gt, &part_of(roots))?;
     let rows: Vec<(i64, Option<u32>, String, String, f64)> = store.read_raw(|c| {
         let mut stmt = c.prepare(
             "SELECT m.document_id,
@@ -655,6 +667,18 @@ fn targets(runs: &[Run]) -> Vec<Target> {
             EMBEDDING_RECALL_TARGET,
             median(&|r| r.embeddings.as_ref().map(|e| e.recall_at_20)),
         ),
+        at_least(
+            "NFR-QA-01",
+            "link recall, no merges (%)",
+            LINK_RECALL_TARGET,
+            median(&|r| Some(r.links.recall())),
+        ),
+        at_least(
+            "NFR-QA-02",
+            "link precision, no merges (%)",
+            LINK_PRECISION_TARGET,
+            median(&|r| Some(r.links.precision())),
+        ),
     ]
 }
 
@@ -711,6 +735,22 @@ fn print_run(n: usize, r: &Run) {
             e.parts, e.parts_failed, e.windows, e.lane_s, e.recall_at_20, e.worst_query, e.queries,
         );
     }
+    proposal_bench::print_links("  links", &r.links);
+    proposal_bench::print_links("  links decided", &r.decided.links);
+    println!(
+        "  proposals      {} at {:.2}: {} of {} judged correct, {} of {} variants reach their main name, {}",
+        r.proposals.proposals,
+        r.proposals.threshold,
+        r.proposals.correct,
+        r.proposals.judged,
+        r.proposals.variants_reached,
+        r.proposals.variants_found,
+        if r.proposals.passes() {
+            "S7 marks met"
+        } else {
+            "S7 marks NOT met"
+        },
+    );
     println!(
         "  checks         files failed: {}, rebuild matches: {}, healthy: {}, unmapped documents: {}",
         r.files_failed,

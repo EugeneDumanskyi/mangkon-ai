@@ -571,6 +571,7 @@ pub(crate) fn apply_rescan(
             content_keys(conn, id, &mut touched)?;
             conn.prepare_cached("DELETE FROM document WHERE content_id = ?1")?
                 .execute([id])?;
+            crate::curation::refresh_splits(conn, id, &mut touched)?;
             conn.prepare_cached("DELETE FROM content WHERE id = ?1")?
                 .execute([id])?;
             out.replaced_contents += 1;
@@ -1021,7 +1022,8 @@ pub(crate) fn release_item(conn: &Connection, item: i64) -> Result<(), StoreErro
     Ok(())
 }
 
-/// Appends a decision to the log (INV-CU-01) and rebuilds its anchor (ADR-0005). Returns the
+/// Appends a decision to the log (INV-CU-01) and applies it in the same transaction (ADR-0005): a
+/// merge regroups, a split moves its mentions, and every subject it reaches is rebuilt. Returns the
 /// decision's `seq` and whether a connection row changed.
 pub(crate) fn append_decision(
     conn: &Connection,
@@ -1036,9 +1038,8 @@ pub(crate) fn append_decision(
     )?
     .execute(params![kind.as_str(), anchor, before, after, now_iso()])?;
     let seq = conn.last_insert_rowid();
-    let changed =
-        kind.on_connection() && rebuild_keys(conn, &BTreeSet::from([anchor.to_string()]))?;
-    Ok((seq, changed))
+    let touched = crate::curation::apply_decision(conn, kind, anchor)?;
+    Ok((seq, rebuild_keys(conn, &touched)?))
 }
 
 /// After a crash or quit (ADR-0006, INV-PR-05/07): items In progress go back to Pending and

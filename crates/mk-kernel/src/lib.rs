@@ -14,6 +14,7 @@ mod geometry;
 mod hash;
 mod identifier;
 mod locator;
+mod mention_key;
 mod name;
 mod ocr;
 mod span;
@@ -27,6 +28,7 @@ pub use locator::{
     Column, LineNumber, Locator, PageNumber, csv_column_names, csv_columns, csv_header_row,
     json_path,
 };
+pub use mention_key::{MentionKey, ParseMentionKeyError, SPLIT_PREFIX, is_split_key};
 pub use name::{EntityType, NameKey, ParseNameKeyError};
 pub use ocr::{ImageSize, OcrGeometry, OcrWord};
 pub use span::{Span, SpanError};

@@ -12,6 +12,7 @@
 mod ai;
 mod app_store;
 mod codec;
+mod curation;
 mod derive;
 mod documents;
 mod egress;
@@ -42,6 +43,10 @@ pub use ai::{
     ScheduleOutcome, StartedAiItem, UnitScope,
 };
 pub use app_store::{APP_MIGRATIONS, AppStore, EndpointRow, EndpointTestRow, ModelDownloadRow};
+pub use curation::{
+    DecisionOutcome, DecisionRow, EntityEdit, EntityNames, MergeEdit, ProposalCursor,
+    ProposalInput, ProposalRow,
+};
 pub use documents::{DocumentCursor, DocumentFilter, DocumentRow, ProgressDetail, STATUS_MISSING};
 pub use egress::{EgressRecordRow, PermissionRow};
 pub use embeddings::{EmbeddingRow, EmbeddingSearchRow, StartedEmbeddingItem, WindowText};
@@ -623,6 +628,90 @@ impl Store {
         })
     }
 
+    /// Accepts a pending merge proposal, with the chosen name and type, in one transaction (US-11.2
+    /// AC2, US-11.3 AC4).
+    pub fn accept_proposal(
+        &self,
+        a: &str,
+        b: &str,
+        edit: MergeEdit,
+    ) -> Result<DecisionOutcome, StoreError> {
+        let (a, b) = (a.to_string(), b.to_string());
+        self.writer
+            .call(move |tx| curation::accept_proposal(tx, &a, &b, &edit))
+    }
+
+    /// Rejects a pair of name keys: never proposed again (INV-ER-04).
+    pub fn reject_merge(&self, a: &str, b: &str) -> Result<DecisionOutcome, StoreError> {
+        let (a, b) = (a.to_string(), b.to_string());
+        self.writer
+            .call(move |tx| curation::reject_merge(tx, &a, &b))
+    }
+
+    /// Undoes an accepted merge: the pair is stored as rejected (US-11.4 AC1).
+    pub fn undo_merge(&self, a: &str, b: &str) -> Result<DecisionOutcome, StoreError> {
+        let (a, b) = (a.to_string(), b.to_string());
+        self.writer.call(move |tx| curation::undo_merge(tx, &a, &b))
+    }
+
+    /// Moves mentions of the entity holding `key` to a new entity (US-11.4 AC2).
+    pub fn split_mentions(
+        &self,
+        key: &str,
+        mentions: Vec<i64>,
+    ) -> Result<DecisionOutcome, StoreError> {
+        let key = key.to_string();
+        self.writer
+            .call(move |tx| curation::split_mentions(tx, &key, &mentions))
+    }
+
+    /// Puts a split group's mentions back.
+    pub fn undo_split(&self, split: &str) -> Result<DecisionOutcome, StoreError> {
+        let split = split.to_string();
+        self.writer.call(move |tx| curation::undo_split(tx, &split))
+    }
+
+    /// Renames, retypes or annotates the entity holding `key` (US-12.2).
+    pub fn edit_entity(&self, key: &str, edit: EntityEdit) -> Result<DecisionOutcome, StoreError> {
+        let key = key.to_string();
+        self.writer
+            .call(move |tx| curation::edit_entity(tx, &key, &edit))
+    }
+
+    /// Removes an alias of the entity holding `key`, or brings it back (US-12.2 AC1).
+    pub fn set_alias_removed(
+        &self,
+        key: &str,
+        alias: &str,
+        removed: bool,
+    ) -> Result<DecisionOutcome, StoreError> {
+        let (key, alias) = (key.to_string(), alias.to_string());
+        self.writer
+            .call(move |tx| curation::set_alias_removed(tx, &key, &alias, removed))
+    }
+
+    /// Ignores or un-ignores the entity holding `key` (US-07.4).
+    pub fn set_entity_ignored(
+        &self,
+        key: &str,
+        ignored: bool,
+    ) -> Result<DecisionOutcome, StoreError> {
+        let key = key.to_string();
+        self.writer
+            .call(move |tx| curation::set_entity_ignored(tx, &key, ignored))
+    }
+
+    /// Replaces the stored proposals, filtered against the decisions as they are now. `None` if
+    /// newer ones are stored already.
+    pub fn replace_proposals(
+        &self,
+        from_generation: u64,
+        proposals: Vec<mk_graph::proposal::Proposal>,
+    ) -> Result<Option<usize>, StoreError> {
+        self.writer
+            .call(move |tx| curation::replace_proposals(tx, from_generation, &proposals))
+    }
+
     /// Finds one content's identifiers of `step` again from its stored segments with `find`,
     /// replacing that step's mentions (and, for the built-in step, its card-like flags), running
     /// its table step again and rebuilding the keys, in one transaction (M4b, M4c; see
@@ -815,6 +904,49 @@ impl Store {
     /// not read as a table.
     pub fn mapping_view(&self, ref_id: i64) -> Result<Option<MappingView>, StoreError> {
         self.readers.with(|c| mapping::mapping_view(c, ref_id))
+    }
+
+    /// What a proposal run reads.
+    pub fn proposal_input(&self) -> Result<ProposalInput, StoreError> {
+        self.readers.once(curation::proposal_input)
+    }
+
+    /// `(entities changed so far, what the stored proposals were made from)`.
+    pub fn proposal_generations(&self) -> Result<(u64, u64), StoreError> {
+        self.readers.with(curation::proposal_generations)
+    }
+
+    /// One page of pending proposals, highest score first.
+    pub fn proposals_page(
+        &self,
+        after: Option<&ProposalCursor>,
+        limit: usize,
+    ) -> Result<Vec<ProposalRow>, StoreError> {
+        self.readers
+            .with(|c| curation::proposals_page(c, after, limit))
+    }
+
+    /// Those of `keys` with a pending proposal: the "Unreviewed merge" mark (D6).
+    pub fn unreviewed_keys(
+        &self,
+        keys: &[String],
+    ) -> Result<std::collections::BTreeSet<String>, StoreError> {
+        self.readers.with(|c| curation::unreviewed_keys(c, keys))
+    }
+
+    /// The names of the entity holding `key`: display name and aliases. `None` if it is gone.
+    pub fn entity_names(&self, key: &str) -> Result<Option<EntityNames>, StoreError> {
+        self.readers.with(|c| curation::entity_names(c, key))
+    }
+
+    /// A page of the decision log, newest first, older than `before`.
+    pub fn decisions_page(
+        &self,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<DecisionRow>, StoreError> {
+        self.readers
+            .with(|c| curation::decisions_page(c, before, limit))
     }
 
     /// The entity rows of `keys` that exist.

@@ -102,6 +102,20 @@ impl Readers {
         let _ = conn.execute_batch("COMMIT");
         result
     }
+
+    /// Runs `f` on a connection of its own in one read transaction, then closes it with all it
+    /// read. For a read so large that what it allocates must not stay behind on the calling thread
+    /// through a pooled connection (NFR-RES-01).
+    pub(crate) fn once<R>(
+        &self,
+        f: impl FnOnce(&Connection) -> Result<R, StoreError>,
+    ) -> Result<R, StoreError> {
+        let conn = crate::schema::open_read(&self.path)?;
+        conn.execute_batch("BEGIN")?;
+        let result = f(&conn);
+        let _ = conn.execute_batch("COMMIT");
+        result
+    }
 }
 
 #[cfg(test)]

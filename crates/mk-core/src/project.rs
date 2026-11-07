@@ -21,6 +21,7 @@ use mk_worker::Settings;
 use mk_workspace::{ProjectLayout, RootKind};
 
 use crate::control::{RunControl, Stop};
+use crate::curation::ProposalLane;
 use crate::embeddings::EmbeddingLane;
 use crate::events::{ConnectionsChanged, DEBOUNCE, Events};
 use crate::identifiers::RerunSummary;
@@ -185,7 +186,7 @@ const _: () = {
 /// this one).
 pub struct Project {
     layout: ProjectLayout,
-    store: Store,
+    store: Arc<Store>,
     events: Events,
     workers: usize,
     worker_config: WorkerConfig,
@@ -210,6 +211,8 @@ pub struct Project {
     embedding_lane: EmbeddingLane,
     /// The meaning index while in use (M6b).
     meaning: Arc<MeaningCell>,
+    /// Makes merge proposals off the writer (US-11.2).
+    proposal_lane: ProposalLane,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -265,6 +268,8 @@ impl Project {
             .map_err(|e| ProjectError::Io(layout.cache(), e))?;
         let workers =
             mk_jobs::stage_a_limit(std::thread::available_parallelism().map_or(1, |n| n.get()));
+        let store = Arc::new(store);
+        let proposal_lane = ProposalLane::start(store.clone());
         let project = Project {
             layout,
             store,
@@ -282,6 +287,7 @@ impl Project {
             ai_lane: AiLane::default(),
             embedding_lane: EmbeddingLane::default(),
             meaning: Arc::default(),
+            proposal_lane,
         };
         project.note_ai_switch();
         project.stamp_identifier_rules_if_empty()?;
@@ -334,6 +340,10 @@ impl Project {
 
     pub(crate) fn meaning(&self) -> &Arc<MeaningCell> {
         &self.meaning
+    }
+
+    pub(crate) fn proposal_lane(&self) -> &ProposalLane {
+        &self.proposal_lane
     }
 
     /// Raises `ConnectionsChanged` when a re-run has switched since the last look: the switch
@@ -1017,10 +1027,17 @@ impl Project {
     }
 
     /// Ignores (or un-ignores) an identifier or entity connection: appends the decision and
-    /// rebuilds its anchor in one transaction (US-07.4, INV-CU-01). Returns the decision's
-    /// `seq`.
+    /// rebuilds what it reaches in one transaction (US-07.4, INV-CU-01). Returns the decision's
+    /// `seq`. An entity's anchor is the name key of its display name (domain §9.5).
     pub fn set_ignored(&self, key: &str, ignored: bool) -> Result<i64, ProjectError> {
-        let [ignore, unignore] = DecisionKind::ignore_pair(SubjectKind::of_key(key));
+        if SubjectKind::of_key(key) == SubjectKind::Entity {
+            let d = self.store.set_entity_ignored(key, ignored)?;
+            if d.connections_changed {
+                self.events.changed();
+            }
+            return Ok(d.seq);
+        }
+        let [ignore, unignore] = DecisionKind::ignore_pair(SubjectKind::Identifier);
         let kind = if ignored { ignore } else { unignore };
         let (seq, changed) = self.store.append_decision(
             kind,

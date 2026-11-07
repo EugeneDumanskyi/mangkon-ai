@@ -7,12 +7,13 @@
 //! item), so they cover new, changed (replaced), missing, found-again and duplicate content,
 //! ignore / un-ignore, superseded and orphaned decisions. M4c adds custom patterns and their
 //! re-run, mapping confirms of the CSV files ("Name (from table)" entities, record links) and
-//! ignores on entities.
+//! ignores on entities. M7a adds every decision on entities (merge, reject, undo, split, undo-split,
+//! rename, type, note, alias) in a second property, among the same file changes (M7a criterion 5).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use mk_core::{Assignments, ColumnType, DocumentFilter, Project};
+use mk_core::{Assignments, ColumnType, DecisionKind, DocumentFilter, MergeEdit, Project};
 use mk_kernel::{EntityType, NameKey};
 use proptest::prelude::*;
 
@@ -54,11 +55,53 @@ enum Op {
     Confirm(u8, Option<EntityType>),
     /// Ignores or un-ignores the entity of name `n` (US-07.4 on entities).
     IgnoreEntity(usize, EntityType, bool),
+    /// Accepts the pending proposal between two names, if there is one (US-11.2 AC2), maybe with a
+    /// name and a type.
+    Accept(usize, usize, EntityType, Option<EntityType>, bool),
+    /// Rejects the pair, whether or not it is proposed (US-11.3 AC3).
+    Reject(usize, usize, EntityType),
+    /// Undoes the pair, if merged (US-11.4 AC1).
+    Undo(usize, usize, EntityType),
+    /// Moves the mentions a mask picks out of the `n`-th entity (US-11.4 AC2).
+    Split(usize, u8),
+    /// Undoes the `n`-th split in the log.
+    UndoSplit(usize),
+    /// Renames, types or notes the `n`-th entity (US-12.2): `salt` varies the value.
+    Edit(usize, EditKind, u8),
+    /// Removes or restores the `a`-th alias of the `n`-th entity (US-12.2 AC1).
+    Alias(usize, usize, bool),
 }
 
-/// The name in a CSV row of key `k`: names collide across keys and files.
-fn name(k: usize) -> String {
-    format!("Name{} Ltd", k % 3)
+#[derive(Clone, Copy, Debug)]
+enum EditKind {
+    Rename,
+    Type,
+    Note,
+}
+
+/// The name in a CSV row of key `k`: names collide across keys and files, one name key is written
+/// two ways, and the three name keys look alike, so they are proposed.
+const NAMES: [&str; WRITTEN_KEYS] = [
+    "Acme Harbour Ltd",
+    "ACME HARBOUR",
+    "Acme Harbour Group",
+    "Harbour Acme",
+    "Acme Harbour Group Ltd",
+];
+/// Index 3 is never written: decisions on it stay orphaned.
+const ENTITIES: [&str; 4] = [
+    "Acme Harbour",
+    "Acme Harbour Group",
+    "Harbour Acme",
+    "Never Written",
+];
+
+fn name(k: usize) -> &'static str {
+    NAMES[k]
+}
+
+fn entity_key(n: usize, t: EntityType) -> String {
+    NameKey::new(t, ENTITIES[n]).unwrap().to_string()
 }
 
 fn entity_type() -> impl Strategy<Value = EntityType> {
@@ -82,6 +125,43 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (0..4usize, entity_type(), any::<bool>())
             .prop_map(|(n, t, on)| Op::IgnoreEntity(n, t, on)),
     ]
+}
+
+/// The file changes of [`op`], with more re-scans and every decision on entities.
+fn decision_op() -> impl Strategy<Value = Op> {
+    let name = 0..4usize;
+    prop_oneof![
+        2 => (0..FILES, proptest::collection::vec(0..WRITTEN_KEYS, 1..4), 0u8..3)
+            .prop_map(|(file, keys, salt)| Op::Write { file, keys, salt, csv: true }),
+        1 => (0..FILES).prop_map(Op::Delete),
+        1 => (0..FILES).prop_map(Op::Restore),
+        1 => (0..FILES, 0..FILES).prop_map(|(a, b)| Op::Copy(a, b)),
+        2 => Just(Op::Rescan),
+        2 => Just(Op::StageA),
+        2 => (0..FILES, proptest::option::of(entity_type())).prop_map(|(f, t)| Op::Confirm(f, t)),
+        1 => (name.clone(), entity_type(), any::<bool>())
+            .prop_map(|(n, t, on)| Op::IgnoreEntity(n, t, on)),
+        5 => (name.clone(), name.clone(), entity_type(), proptest::option::of(entity_type()), any::<bool>())
+            .prop_map(|(a, b, t, to, named)| Op::Accept(a, b, t, to, named)),
+        2 => (name.clone(), name.clone(), entity_type()).prop_map(|(a, b, t)| Op::Reject(a, b, t)),
+        2 => (name.clone(), name.clone(), entity_type()).prop_map(|(a, b, t)| Op::Undo(a, b, t)),
+        4 => (0..8usize, any::<u8>()).prop_map(|(n, mask)| Op::Split(n, mask)),
+        2 => (0..4usize).prop_map(Op::UndoSplit),
+        3 => (
+            0..8usize,
+            prop_oneof![Just(EditKind::Rename), Just(EditKind::Type), Just(EditKind::Note)],
+            0u8..3,
+        )
+            .prop_map(|(n, k, salt)| Op::Edit(n, k, salt)),
+        2 => (0..8usize, 0..3usize, any::<bool>()).prop_map(|(n, a, on)| Op::Alias(n, a, on)),
+    ]
+}
+
+/// The `n`-th entity of the project, modulo how many there are.
+fn nth_entity(project: &Project, n: usize) -> Option<String> {
+    let entities = project.store().derived_state().unwrap().entities;
+    let i = n.checked_rem(entities.len())?;
+    entities.into_keys().nth(i)
 }
 
 struct World {
@@ -216,11 +296,145 @@ impl World {
                 }
             }
             Op::IgnoreEntity(n, t, on) => {
-                let key = NameKey::new(*t, &format!("Name{n} Ltd")).unwrap();
-                project.set_ignored(&key.to_string(), *on).unwrap();
+                project.set_ignored(&entity_key(*n, *t), *on).unwrap();
+            }
+            // A decision refused (no such proposal, no such entity) changes nothing: the comparison
+            // after the step still has to hold, so these only ignore the refusal.
+            Op::Accept(a, b, t, to, named) => {
+                project.refresh_proposals().unwrap();
+                let edit = MergeEdit {
+                    name: named.then(|| "Chosen Name".to_string()),
+                    entity_type: *to,
+                };
+                let _ = project.accept_proposal(&entity_key(*a, *t), &entity_key(*b, *t), edit);
+            }
+            Op::Reject(a, b, t) => {
+                let _ = project.reject_proposal(&entity_key(*a, *t), &entity_key(*b, *t));
+            }
+            Op::Undo(a, b, t) => {
+                let _ = project.undo_merge(&entity_key(*a, *t), &entity_key(*b, *t));
+            }
+            Op::Split(n, mask) => {
+                if let Some(key) = nth_entity(project, *n) {
+                    let picked: Vec<i64> = project
+                        .occurrences(&key)
+                        .unwrap()
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| mask >> (i % 8) & 1 == 1)
+                        .map(|(_, o)| o.mention_id)
+                        .collect();
+                    let _ = project.split_mentions(&key, &picked);
+                }
+            }
+            Op::UndoSplit(n) => {
+                let splits: Vec<String> = project
+                    .decisions(None, 1_000)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|d| d.kind == DecisionKind::Split)
+                    .map(|d| d.anchor)
+                    .collect();
+                if let Some(split) = n.checked_rem(splits.len()).map(|i| &splits[i]) {
+                    let _ = project.undo_split(split);
+                }
+            }
+            Op::Edit(n, kind, salt) => {
+                if let Some(key) = nth_entity(project, *n) {
+                    match kind {
+                        EditKind::Rename => {
+                            project.rename_entity(&key, &format!("New Name {salt}"))
+                        }
+                        EditKind::Type if salt % 2 == 0 => {
+                            project.change_entity_type(&key, EntityType::Org)
+                        }
+                        EditKind::Type => project.change_entity_type(&key, EntityType::Person),
+                        EditKind::Note => {
+                            project.set_entity_note(&key, &"n".repeat(*salt as usize))
+                        }
+                    }
+                    .unwrap();
+                }
+            }
+            Op::Alias(n, a, true) => {
+                if let Some(key) = nth_entity(project, *n) {
+                    let names = project.entity_names(&key).unwrap().unwrap();
+                    if let Some(i) = a.checked_rem(names.aliases.len()) {
+                        project.remove_alias(&key, &names.aliases[i].0).unwrap();
+                    }
+                }
+            }
+            // Any removed alias, or there would rarely be one on the entity picked.
+            Op::Alias(_, _, false) => {
+                for key in project
+                    .store()
+                    .derived_state()
+                    .unwrap()
+                    .entities
+                    .into_keys()
+                {
+                    let names = project.entity_names(&key).unwrap().unwrap();
+                    if let Some((alias, _)) = names.removed.first() {
+                        project.restore_alias(&key, alias).unwrap();
+                        break;
+                    }
+                }
             }
         }
     }
+}
+
+/// Runs `ops`, comparing with the reference after each and with a full rebuild at the end.
+fn check_ops(prefix: &[Op], ops: &[Op]) -> Result<(), TestCaseError> {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    let trash = src.join(".trash");
+    std::fs::create_dir_all(&trash).unwrap();
+    let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
+    *project.worker_config_mut() =
+        mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
+    project.add_source_root(&src).unwrap();
+    let mut world = World {
+        src,
+        trash,
+        clock: 0,
+    };
+    for (i, op) in prefix.iter().chain(ops).enumerate() {
+        world.apply(&project, op);
+        let incremental = project.store().derived_state().unwrap();
+        let reference = mk_graph::model::reference(&project.store().facts().unwrap());
+        prop_assert_eq!(&incremental, &reference, "after step {} ({:?})", i, op);
+    }
+    // Finish the work, then compare with a rebuild from scratch.
+    project.rescan(false).unwrap();
+    project.run_stage_a().unwrap();
+    project.rerun_identifiers().unwrap();
+    let incremental = project.store().derived_state().unwrap();
+    project.store().rebuild_all().unwrap();
+    let rebuilt = project.store().derived_state().unwrap();
+    prop_assert_eq!(&incremental, &rebuilt);
+    prop_assert_eq!(
+        &rebuilt,
+        &mk_graph::model::reference(&project.store().facts().unwrap())
+    );
+    Ok(())
+}
+
+/// Four confirmed tables holding every name, so proposals and decisions have something to act on.
+fn four_tables(t: EntityType) -> Vec<Op> {
+    let mut out = Vec::new();
+    for file in 0..FILES {
+        out.push(Op::Write {
+            file,
+            keys: (0..WRITTEN_KEYS).collect(),
+            salt: file,
+            csv: true,
+        });
+    }
+    out.push(Op::Rescan);
+    out.push(Op::StageA);
+    out.extend((0..FILES).map(|f| Op::Confirm(f, Some(t))));
+    out
 }
 
 proptest! {
@@ -230,28 +444,16 @@ proptest! {
     /// end (ADR-0005, INV-CU-03/04/05, INV-LK-01, INV-CO-06/07).
     #[test]
     fn m2_ac4_incremental_equals_rebuild(ops in proptest::collection::vec(op(), 1..25)) {
-        let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src");
-        let trash = src.join(".trash");
-        std::fs::create_dir_all(&trash).unwrap();
-        let (mut project, _) = Project::open(&tmp.path().join("project")).unwrap();
-        *project.worker_config_mut() = mk_core::WorkerConfig::with_program(env!("CARGO_BIN_EXE_mk-test-worker"));
-        project.add_source_root(&src).unwrap();
-        let mut world = World { src, trash, clock: 0 };
-        for (i, op) in ops.iter().enumerate() {
-            world.apply(&project, op);
-            let incremental = project.store().derived_state().unwrap();
-            let reference = mk_graph::model::reference(&project.store().facts().unwrap());
-            prop_assert_eq!(&incremental, &reference, "after step {} ({:?})", i, op);
-        }
-        // Finish the work, then compare with a rebuild from scratch.
-        project.rescan(false).unwrap();
-        project.run_stage_a().unwrap();
-        project.rerun_identifiers().unwrap();
-        let incremental = project.store().derived_state().unwrap();
-        project.store().rebuild_all().unwrap();
-        let rebuilt = project.store().derived_state().unwrap();
-        prop_assert_eq!(&incremental, &rebuilt);
-        prop_assert_eq!(&rebuilt, &mk_graph::model::reference(&project.store().facts().unwrap()));
+        check_ops(&[], &ops)?;
+    }
+
+    /// M7a criterion 5: the same, with every decision on entities among the file changes (ADR-0005,
+    /// INV-ER-01..08, INV-CU-03/04/05).
+    #[test]
+    fn m7a_ac5_decisions_incremental_equals_rebuild(
+        t in entity_type(),
+        ops in proptest::collection::vec(decision_op(), 1..40),
+    ) {
+        check_ops(&four_tables(t), &ops)?;
     }
 }

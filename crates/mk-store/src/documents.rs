@@ -215,9 +215,12 @@ pub(crate) fn removal_impact(conn: &Connection, refs: &[i64]) -> Result<u64, Sto
          JOIN connection k ON k.subject_key = m.identifier_key
          WHERE m.content_id = ?1",
     )?;
+    // The entity each mention belongs to: its split group, its name key's group, or its name key.
     let mut entities = conn.prepare_cached(
-        "SELECT DISTINCT m.name_key FROM entity_mention m
-         JOIN connection k ON k.subject_key = m.name_key
+        "SELECT DISTINCT k.subject_key FROM entity_mention m
+         LEFT JOIN split_mention x ON x.mention_id = m.id
+         LEFT JOIN entity_member e ON e.name_key = m.name_key
+         JOIN connection k ON k.subject_key = COALESCE(x.split_key, e.entity_key, m.name_key)
          WHERE m.content_id = ?1",
     )?;
     for c in contents {
