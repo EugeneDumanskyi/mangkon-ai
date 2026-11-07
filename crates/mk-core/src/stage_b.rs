@@ -174,6 +174,8 @@ pub struct AiExtractionView {
 pub(crate) enum CallFailure {
     /// The destination refuses this project now: the job is Blocked at once.
     Refused(String),
+    /// The settings left the run's model: the item goes back and the lane looks again (ADR-0005).
+    RunChanged,
     /// Only this item: it fails, the rest goes on.
     Item(String, String),
     /// May pass: back to Pending, a backoff, then Blocked.
@@ -182,6 +184,7 @@ pub(crate) enum CallFailure {
 
 pub(crate) fn classify(e: GateError) -> CallFailure {
     match &e {
+        GateError::PinChanged => CallFailure::RunChanged,
         GateError::NotAllowed { .. } | GateError::NeedsReconfirmation { .. } => {
             CallFailure::Refused(refusal_text(&e))
         }
@@ -583,7 +586,10 @@ impl Workspace {
             }
             if client.is_none() {
                 match self.ai_client(project, Role::Extraction) {
-                    Ok(c) => client = Some(c),
+                    Ok(mut c) => {
+                        c.pin_to_run(identity);
+                        client = Some(c);
+                    }
                     Err(e) if e.blocked => {
                         // `ai_client` Blocked the job with this reason (NFR-REL-12).
                         run.summary().blocked = Some(e.message);
@@ -605,8 +611,8 @@ impl Workspace {
             let Some(item) = store.start_next_ai_item()? else {
                 return Ok(());
             };
-            // Run identity on every item (ADR-0005): the gate reads an endpoint's config again on
-            // each call, so a model edited mid-run would otherwise mix silently.
+            // Run identity on every item (ADR-0005). This is the early way out; the client's pin
+            // is what guarantees no call goes to another model, retries included.
             let now = self.extraction_target(project);
             if now.as_ref().map(|t| &t.identity) != Ok(&item.identity) || *identity != item.identity
             {
@@ -624,6 +630,10 @@ impl Workspace {
                 Err(e) => match classify(e) {
                     CallFailure::Refused(reason) => {
                         return self.block_lane(project, run, Some(&item), reason);
+                    }
+                    CallFailure::RunChanged => {
+                        store.release_ai_item(item.item, item.attempt)?;
+                        return Ok(());
                     }
                     CallFailure::Item(code, reason) => {
                         failures = 0;

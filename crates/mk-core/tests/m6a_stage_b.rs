@@ -853,6 +853,83 @@ fn run_identity_edit_during_a_call_sends_nothing_to_the_new_model() {
     s.healthy();
 }
 
+/// ADR-0005 with no timing in it: a pinned client sends to the run's model, and after an edit
+/// sends nothing at all.
+#[test]
+fn run_identity_pinned_client_refuses_after_an_edit() {
+    let s = setup(Control::default());
+    let log = s.tmp.path().join("calls.log");
+    let mut control = finding_everywhere(finding(vec![]));
+    control.requests_log = Some(log.clone());
+    let served = serve(&s, IpAddr::V4(Ipv4Addr::LOCALHOST), control);
+    let url = format!("http://127.0.0.1:{}", served.port);
+    let id = add_endpoint(&s, url.clone(), "model-a");
+    s.ws.set_ai_choice(ModelRole::Extraction, Some(AiChoice::Endpoint(id.clone())))
+        .unwrap();
+    let origin = mk_egress::BaseUrl::parse(&url).unwrap().origin().key();
+    let mut client = s.ws.ai_client(&s.project, ModelRole::Extraction).unwrap();
+    client.pin_to_run(&mk_ai::RunIdentity::endpoint(&id, "model-a", &origin));
+    let request = mk_egress::ChatRequest {
+        messages: vec![mk_egress::ChatMessage::user("Hello")],
+        schema: None,
+        max_tokens: None,
+        temperature: None,
+        seed: None,
+    };
+    client.client.chat(&request).unwrap();
+    s.ws.save_endpoint(EndpointInput {
+        id: Some(id.clone()),
+        name: "Edited".into(),
+        base_url: url.clone(),
+        model: "model-b".into(),
+        key: KeyChange::Keep,
+    })
+    .unwrap();
+    assert_eq!(
+        client.client.chat(&request).unwrap_err(),
+        mk_egress::GateError::PinChanged
+    );
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.lines().count(), 1, "{calls}");
+}
+
+/// The retry of an unreadable reply is a call of its own: an edit during the first call stops it.
+#[test]
+fn run_identity_edit_before_a_retry_sends_nothing_to_the_new_model() {
+    let s = setup_with_files(Control::default(), &[("a.txt", "Corvin Hale wrote this.")]);
+    let log = s.tmp.path().join("calls.log");
+    let mut control = finding_everywhere(FakeExtraction {
+        bad_first: true,
+        delay_ms: 500,
+        ..finding(vec![name("Corvin Hale")])
+    });
+    control.requests_log = Some(log.clone());
+    let served = serve(&s, IpAddr::V4(Ipv4Addr::LOCALHOST), control);
+    let url = format!("http://127.0.0.1:{}", served.port);
+    let id = add_endpoint(&s, url.clone(), "model-a");
+    s.ws.set_ai_choice(ModelRole::Extraction, Some(AiChoice::Endpoint(id.clone())))
+        .unwrap();
+    s.ws.schedule_stage_b(&s.project).unwrap();
+    let out = std::thread::scope(|scope| {
+        let lane = scope.spawn(|| s.run());
+        wait_until("the first call", || log.exists());
+        s.ws.save_endpoint(EndpointInput {
+            id: Some(id.clone()),
+            name: "Edited".into(),
+            base_url: url.clone(),
+            model: "model-b".into(),
+            key: KeyChange::Keep,
+        })
+        .unwrap();
+        lane.join().unwrap()
+    });
+    assert_eq!(out.done, 0, "{out:?}");
+    assert_eq!(s.view().state, AiLaneState::Blocked);
+    let calls = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(calls.lines().count(), 1, "{calls}");
+    s.healthy();
+}
+
 /// NFR-QA-11, ADR-0005: the health check really finds what it says it looks for, so a kill test
 /// that passes means something.
 #[test]

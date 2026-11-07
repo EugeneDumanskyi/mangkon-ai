@@ -442,7 +442,8 @@ impl Workspace {
         };
 
         let t = Instant::now();
-        let client = self.ai_client_for(project, Role::Embeddings, Purpose::SearchQuery)?;
+        let mut client = self.ai_client_for(project, Role::Embeddings, Purpose::SearchQuery)?;
+        client.pin_to_run(&run.identity);
         let (prefix, _) = self.embedding_prefixes();
         let reply = client
             .client

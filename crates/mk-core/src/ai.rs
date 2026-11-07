@@ -188,6 +188,21 @@ pub struct AiClient<'a> {
 }
 
 impl AiClient<'_> {
+    /// Refuses every later call that would not go to the model and address of `run` (ADR-0005).
+    pub fn pin_to_run(&mut self, run: &mk_ai::RunIdentity) {
+        let run = run.clone();
+        let destination = self.client.destination().clone();
+        self.client.pin(move |model, origin| {
+            let now = match &destination {
+                mk_egress::Destination::LocalRuntime { .. } => mk_ai::RunIdentity::local(model),
+                mk_egress::Destination::Endpoint(id) => {
+                    mk_ai::RunIdentity::endpoint(id, model, &origin.key())
+                }
+            };
+            now == run
+        });
+    }
+
     /// A call succeeded: the local runtime's restart count starts again (INV-MM-06).
     pub fn succeeded(&self) {
         if let Some(l) = &self.lease {
