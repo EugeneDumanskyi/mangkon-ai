@@ -1,7 +1,7 @@
 # 17 — Entity resolution
 
 > Input: `06-roadmap.md` §2 M7a and spike S7, `02-requirements.md` US-11.1, US-11.2, US-11.4, US-11.5, US-12.2, `03-nfr.md` (NFR-QA-01/02, NFR-REL-09, NFR-MNT-07, NFR-PERF-34), `04-domain.md` D6, §9.1, §9.5, INV-ER-*, INV-CU-*, ADR-0004, ADR-0005. **If this file disagrees with those, they win.**
-> Status: M7a done on RM-1 (2026-11-07). Linux only; macOS, Windows and RM-2 are not verified here.
+> Status: M7a done on RM-1 (2026-11-07). M7b built, walked by script and timed on TD-2 on RM-1 (2026-11-07), hand walk moved to M9 or M10 (§11). Linux only; macOS, Windows and RM-2 are not verified here.
 > Anything marked **ASSUMPTION:** is a guess. Please confirm or correct it.
 
 ---
@@ -349,12 +349,11 @@ Tried for the rest, without effect and not kept: one arena for the whole process
 
 - **NFR-RES-01 after a recompute:** 635 MiB on TD-2 against 500 (§7, roadmap §4 #22).
 - **Memory during Stage A, not measured.** On a project with confirmed tables, a recompute during a run adds to what NFR-RES-02's 2 GB covers. ASSUMPTION: its peak is about 600 MiB on TD-2's size.
-- **A split holds the writer** about 100 to 170 ms on TD-2 and about 30 ms on a small project (§3). That is well under the 2 s limit, so no fix is planned. Worth a look if M7b's screen makes many at once.
-- **A merge can read Orphaned while it holds.** If every mention of one member is split out, that name key has no mentions left, so the merge's status is Orphaned until the split is undone. This follows the chain rule (§8). M7b's decision list needs wording for it.
+- **A split holds the writer** about 100 to 170 ms on TD-2 and about 30 ms on a small project (§3). That is well under the 2 s limit, so no fix is planned. M7b's screen makes one per click.
+- **A merge can read Orphaned while it holds.** If every mention of one member is split out, that name key has no mentions left, so the merge's status is Orphaned until the split is undone. This follows the chain rule (§8). The decision list has wording for it (§11).
 - **Thin margins:** link recall passes by one link (§2), S7 mark 1 by one variant and mark 3 by one proposal (§1). The S7 limits were fitted on one corpus.
 - **Proposals after `rebuild`:** the table is empty until the next proposal run, a moment later in an open app and on next use from the command line. This is the lag ADR-0005 allows.
 - **Not verified:** macOS, Windows, RM-2, and a real model change on TD-2 (about 31 hours).
-- **M7b:** the screens, criteria 1 and 4, and the M8 go/no-go.
 
 ## 10. Hand check
 
@@ -373,3 +372,77 @@ Tried for the rest, without effect and not kept: one arena for the whole process
 | `decisions` at each step | Time, kind, status, before and after, newest first |
 
 **Connections screen.** The release app's view sweep (`MK_VIEW_SWEEP=1`), which goes through the real panes, on this project with one split and two merged rows: all 1,408 mentions opened, with none failing to open. It logged 26 "page not shown" lines, all pages of two PDF attachments, shown as text by design (`11-ingestion.md` §7). An untouched copy with no decisions gives the same 1,408 and the same 26 lines. This drives the screen by script: a person has not clicked through merged and split rows.
+
+## 11. M7b: review queue and entity page
+
+No schema change and no derived rows bump: reads, one event and screens. Linux on RM-1 only.
+
+**Scripted walk** (`ui/src/project/reviewWalk.ts`, `MK_REVIEW_WALK=1`). The release app presses the queue's keys as real `KeyboardEvent`s and clicks real buttons in WebKit, and checks the core after each step. All 20 steps passed:
+
+| Step | Covers |
+|---|---|
+| Review tab, highest score first; both sides with aliases, identifiers, evidence, score and reasons | US-11.3 AC1, US-11.2 AC1 |
+| `J`, `K`, caps lock, stop at the first row, a modifier does nothing | US-11.3 AC5 |
+| A snippet opens the source in one click | NFR-USE-04 |
+| `A` merges with the more frequent side's name, the other name becomes an alias, the index stays | US-11.3 AC2 |
+| `R` removes the pair, and the proposal thread does not make it again | US-11.3 AC3 |
+| `E` + Escape decides nothing and returns focus; typing in the field decides nothing | US-11.3 AC5 |
+| `E` + new name + Enter | US-11.3 AC4 |
+| Every control in the tab takes focus, with no Tab position of its own | NFR-USE-06, in part |
+| "Unreviewed merge" opens the queue filtered to that entity; Show all | US-07.7 AC4 |
+| The page's fields; Alt+← leaves it | US-12.1 AC1, US-08.2 AC2 |
+| A document and an evidence row open the source, from the decision list's Open | US-12.1 AC2 |
+| Rename, type, remove and restore an alias, note | US-12.2 |
+| Split one mention, open the new entity, put it back | US-11.4 AC2, US-11.1 AC2 |
+| Undo merge | US-11.4 AC1 |
+| The decision list, newest first, with time, kind and status | US-11.5 AC2 |
+
+**The project was a stand-in.** No project with real model output was kept, so the walk ran on one made by `keep_a_project_for_the_review_walk` (`crates/mk-core/tests/m7b_entity_detail.rs`, `#[ignore]`) with the fake model: 21 files, 22 names, 7 proposals. It proves the screens and keys work, not how they read on real 4B output or at TD-1's or TD-2's size.
+
+**After the walk.** `mangkon-cli rebuild` on the changed copy: same as incremental, consistent. The view sweep (`MK_VIEW_SWEEP=1`) on that copy with a split added through the CLI: all 68 mentions opened, 0 errors; `rebuild` was the same again afterwards.
+
+**What a script cannot prove.** A synthetic Tab moves no focus, so the walk checks that each control can take focus, not the order a person meets them in. It also never looked at the screens. Both need the hand walk below, which NFR-USE-06 calls for anyway.
+
+**Hand walk: moved to M9 or M10 (2026-11-07).** Not done yet, so nobody has looked at these screens. Steps, in the release app on a project with proposals:
+
+1. Tab through the Review tab: every control is reachable, in a sensible order, with visible focus.
+2. `J` and `K` move; `A` and `R` decide, and the next proposal takes the same place in the list.
+3. `E` then Escape returns focus to the queue; `E`, a new name and Enter accepts with that name.
+4. In a text field, `A`, `R` and the other keys type letters and decide nothing.
+5. Open an entity page from the status line; a document and a piece of evidence each open the right spot.
+6. Undo a merge, split two mentions and put them back; rename, change type, remove and restore an alias, add a note.
+7. In Settings, the decision list has the newest first and reads plainly.
+8. Alt+← goes back through the entity page, with list filters and scroll intact.
+9. The layout holds at 1280 × 800, in light and dark.
+
+**Guard timing (2026-11-07, RM-1, idle machine, release build): met.** ASSUMPTION: p95 at most 200 ms; no NFR depends on it. `crates/mk-core/tests/m7b_guard_td2.rs` (`#[ignore]`, its header has the commands) makes the same size of project as §3 with today's code, without decisions: 10,000 documents, none failed, 694 confirmed tables, 495,013 entities, 1,112 proposals, 2.0 GB. Stage A took 240 s, the confirmations 75 s, 5 min 23 s in all. The timing runs on a copy, 100 calls per case, one run:
+
+| What the screen reads | First call | p50 | p95 | Max |
+|---|---|---|---|---|
+| Entity page, the biggest entity (990 mentions, 297 documents) | 6.8 ms | 6.1 ms | 6.5 ms | 8.2 ms |
+| Entity page, the busiest proposal once merged (990 + 594 mentions) | 11.6 ms | 9.6 ms | 10.2 ms | 11.6 ms |
+| Queue card, the biggest entity on both sides | 4.9 ms | 4.9 ms | 5.3 ms | 6.3 ms |
+| Queue card, the busiest proposal | 5.1 ms | 4.7 ms | 5.4 ms | 7.3 ms |
+| Queue list, first 200 rows and the count | 2.1 ms | 1.6 ms | 1.8 ms | 2.1 ms |
+
+Limits of this result:
+
+- These are the core's reads alone. The IPC and the drawing are not in them, and the screens have not been timed at this size.
+- The copy had just been written, so the disk cache was warm. A first open after a restart will be slower, by an amount not measured.
+- Entities here come from tables only, with no model output. A real model on TD-2 would make the biggest ones bigger, and it would take about 31 hours (§3). The evidence read stops at 1,000, so its time should not grow much past that. The documents and identifiers reads have not been timed on bigger entities.
+
+### Choices made in M7b
+
+| Choice | Why |
+|---|---|
+| A table mention reads "From a table" (US-07.7 AC3) | It has no model confidence to show. |
+| An orphaned merge reads "One of these names has no mentions now. It applies again when they come back." Other orphaned decisions keep "No longer applies — the source is gone or changed" (ASSUMPTION, `04-domain.md` §7.5) | The first wording would be untrue of a merge that still holds (§9). |
+| The page's evidence stops at the first 1,000 with "first 1,000 of N"; the documents list stops at 1,000 and has its true total (ASSUMPTION, US-12.1) | `MAX_OCCURRENCES` since M2. |
+| The queue holds still while open; only your own decisions move it. A change from the proposal thread offers "Queue updated — Show" | US-07.5's rule. An accept often changes other proposals, so the offer tends to follow it about a second later. The next decision refreshes the list anyway. |
+| A proposal run that changed the stored rows sends the connections event | Otherwise the mark and the tab's count stay stale until something else fires (ADR-0003). |
+
+### Open points from M7b
+
+- **Mentions past the first 1,000 cannot be picked for a split.** TD-1 does not reach the cap. On TD-2 no single entity does (the biggest has 990 mentions from tables), but a merged group can: the busiest proposal makes one of 1,584.
+- **A row held on screen can be out of date.** If the thread has changed a proposal and you decide on the old row without pressing Show, the decision is refused with "no longer pending", stays on screen, and the list refreshes.
+- **Not verified:** macOS, Windows, RM-2; the screens on real model output or at TD-2's size.

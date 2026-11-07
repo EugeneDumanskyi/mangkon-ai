@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { commands, errorMessage } from "../ipc/commands";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
-import { aiMentionNote } from "../lib/aiExtraction";
+import { aiMentionNote, entityMentionNote } from "../lib/aiExtraction";
 import { groupByDocument } from "../lib/connections";
 import { fileName, locationLabel, plural } from "../lib/labels";
 import { useAiExtraction } from "../lib/useAiExtraction";
@@ -13,10 +13,16 @@ export function OccurrencesPanel({
   connection,
   selected,
   onSelect,
+  onDetails,
+  onReview,
 }: {
   connection: ConnectionItem | null;
   selected: number | null;
   onSelect: (mentionId: number) => void;
+  /** Opens the page of the entity (US-12.1). */
+  onDetails: (key: string) => void;
+  /** Opens the review queue for the entity (US-07.7 AC4). */
+  onReview: (connection: ConnectionItem) => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const key = connection?.key ?? null;
@@ -59,6 +65,30 @@ export function OccurrencesPanel({
         <span className="font-mono font-semibold">{connection.value}</span>
         <span className="text-muted"> · {plural(rows.length, "mention")}</span>
       </h2>
+      {isName && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1 text-xs">
+          <button
+            type="button"
+            className="rounded border border-border px-2 py-0.5"
+            onClick={() => {
+              onDetails(connection.key);
+            }}
+          >
+            Details
+          </button>
+          {connection.unreviewed && (
+            <button
+              type="button"
+              className="rounded px-1 underline"
+              onClick={() => {
+                onReview(connection);
+              }}
+            >
+              Unreviewed merge: review it
+            </button>
+          )}
+        </div>
+      )}
       {isName && (
         <label className="flex items-center gap-1 border-b border-border px-3 py-1 text-xs">
           <input
@@ -123,7 +153,9 @@ export function OccurrencesPanel({
                       <div className={isSelected ? "text-xs" : "text-xs text-muted"}>
                         {locationLabel(o.location)}
                         {o.lowConfidence ? " · low confidence" : ""}
-                        {aiMentionNote(o, experimental)}
+                        {isName
+                          ? entityMentionNote(o, experimental)
+                          : aiMentionNote(o, experimental)}
                       </div>
                       <Snippet pieces={o.snippet} />
                     </button>

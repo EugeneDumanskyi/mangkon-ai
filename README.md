@@ -6,7 +6,7 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 
 ## Status
 
-**In development, no release yet.** You can build it from source and use it on real folders; it has been tested on Linux only. Finding identifiers, keyword search, AI extraction of people and organizations, and meaning search all work. Merging and splitting entities work from the command line; their screens and the review queue come next.
+**In development, no release yet.** You can build it from source and use it on real folders; it has been tested on Linux only. Finding identifiers, keyword search, AI extraction of people and organizations, meaning search, the review queue for merges, and entity pages all work.
 
 ## Design docs
 
@@ -28,7 +28,7 @@ Drop in a folder of PDFs, scans, emails (EML/MBOX), CSV, JSON and DOCX files. Ma
 | [AI extraction](docs/14-ai-extraction.md) | Stage B, kill tests and real runs (M6a) |
 | [Meaning search](docs/15-meaning-search.md) | Search latency and recall at scale (M6b) |
 | [Entities and acceptance](docs/16-entities-acceptance.md) | Entities on the connections screen, the LLM benchmark, M6 results (M6c) |
-| [Entity resolution](docs/17-entity-resolution.md) | Merge proposals, decisions that survive re-runs, memory, M7a results |
+| [Entity resolution](docs/17-entity-resolution.md) | Merge proposals, decisions that survive re-runs, memory, review queue, M7 results |
 | [Install llama.cpp](docs/install-llama-cpp.md) | The `llama-server` prerequisite: minimum build, install options per OS |
 | [Add OCR languages](docs/install-ocr-languages.md) | English is built in; where other Tesseract language files go |
 

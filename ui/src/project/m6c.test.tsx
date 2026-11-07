@@ -5,6 +5,7 @@ import type { ConnectionFilter } from "../ipc/bindings/ConnectionFilter";
 import type { ConnectionItem } from "../ipc/bindings/ConnectionItem";
 import { DEFAULT_FILTER, KIND_CHOICES, kindChoice, kindsOf, linkedLabel } from "../lib/connections";
 import { ConnectionSummary, FilterBar } from "./ConnectionsList";
+import { OccurrencesPanel } from "./OccurrencesPanel";
 
 const invoke = vi.hoisted(() => vi.fn(() => Promise.resolve(null)));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel: Object }));
@@ -30,6 +31,7 @@ const person = (over: Partial<ConnectionItem> = {}): ConnectionItem => ({
   ignored: false,
   linkedIdentifiers: [],
   linkedTotal: 0,
+  unreviewed: false,
   ...over,
 });
 
@@ -103,5 +105,71 @@ describe("an entity row (US-07.7 AC2)", () => {
     expect(table).toContain("Name (from table)");
     const model = renderToStaticMarkup(<ConnectionSummary row={person()} selected={false} />);
     expect(model).not.toContain("Name (from table)");
+  });
+
+  it("marks an unreviewed merge (US-07.7 AC4), as a link when it can open the queue", () => {
+    const plain = renderToStaticMarkup(<ConnectionSummary row={person()} selected={false} />);
+    expect(plain).not.toContain("Unreviewed merge");
+    const mark = renderToStaticMarkup(
+      <ConnectionSummary row={person({ unreviewed: true })} selected={false} />,
+    );
+    expect(mark).toContain("Unreviewed merge");
+    expect(mark).not.toContain("<button");
+    const link = renderToStaticMarkup(
+      <ConnectionSummary row={person({ unreviewed: true })} selected={false} onReview={none} />,
+    );
+    expect(link).toMatch(/<button[^>]*>Unreviewed merge<\/button>/);
+  });
+});
+
+describe("the evidence of a row (US-07.7 AC3, AC4)", () => {
+  const client = () => {
+    const c = new QueryClient();
+    c.setQueryData(
+      ["occurrences", "person:corvin hale", false],
+      [
+        {
+          mentionId: -1,
+          key: "person:corvin hale",
+          fileType: "csv",
+          path: "/case/people.csv",
+          location: { kind: "row", row: 2 },
+          raw: "Corvin Hale",
+          lowConfidence: false,
+          confidence: 1,
+          aiModel: null,
+          documentId: 1,
+          snippet: [],
+        },
+      ],
+    );
+    return c;
+  };
+  const panel = (row: ConnectionItem) =>
+    renderToStaticMarkup(
+      <QueryClientProvider client={client()}>
+        <OccurrencesPanel
+          connection={row}
+          selected={null}
+          onSelect={none}
+          onDetails={none}
+          onReview={none}
+        />
+      </QueryClientProvider>,
+    );
+
+  it("says a table's mention came from a table", () => {
+    expect(panel(person())).toContain("From a table");
+  });
+
+  it("links to the review queue with a control that takes the Tab key", () => {
+    const html = panel(person({ unreviewed: true }));
+    expect(html).toMatch(/<button[^>]*>Unreviewed merge: review it<\/button>/);
+    expect(html).not.toContain('tabindex="-1"');
+    expect(panel(person())).not.toContain("Unreviewed merge");
+  });
+
+  it("opens the entity's page from a Details button (US-12.1)", () => {
+    expect(panel(person())).toContain(">Details<");
   });
 });

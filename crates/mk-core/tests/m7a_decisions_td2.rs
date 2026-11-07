@@ -366,12 +366,7 @@ fn decide_in_bulk(project: &Project, expected: &mut Expected) -> serde_json::Val
             .take(1)
             .map(|o| o.mention_id)
             .collect();
-        let seq = times.time("split", || project.split_mentions(key, &one).unwrap());
-        project
-            .decisions(Some(seq + 1), 1)
-            .unwrap()
-            .remove(0)
-            .anchor
+        times.time("split", || project.split_mentions(key, &one).unwrap().key)
     };
     for key in parts.next().unwrap_or_default() {
         let split = split_one(&mut times, key);

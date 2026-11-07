@@ -16,6 +16,21 @@
     "allow-connections-summary",
     "allow-set-ignored",
     "allow-occurrences",
+    "allow-proposal-count",
+    "allow-proposals-page",
+    "allow-proposal-accept",
+    "allow-proposal-reject",
+    "allow-entity-detail",
+    "allow-entity-evidence",
+    "allow-merge-undo",
+    "allow-entity-split",
+    "allow-split-undo",
+    "allow-entity-rename",
+    "allow-entity-set-type",
+    "allow-entity-set-note",
+    "allow-alias-remove",
+    "allow-alias-restore",
+    "allow-decisions-page",
     "allow-source-context",
     "allow-source-document",
     "allow-search",
@@ -97,6 +112,7 @@
     "allow-subscribe",
     "allow-record-ui-timing",
     "allow-record-view-sweep",
-    "allow-record-queue-walk"
+    "allow-record-queue-walk",
+    "allow-record-review-walk"
   ]
 }

@@ -661,7 +661,7 @@ fn proposals_are_between_one_type() {
 fn split_groups_are_not_proposed() {
     let s = setup();
     let moved = s.mentions(CORVIN, Some("b.txt"));
-    let seq = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let seq = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let split = s.decision(seq).anchor;
     let ps = s.proposals();
     assert!(
@@ -930,7 +930,7 @@ fn ignore_follows_the_entity_and_not_a_split() {
         s.mentions(C_HALE, Some("d.txt")),
     ]
     .concat();
-    let seq = s.project.split_mentions(C_HALE, &moved).unwrap();
+    let seq = s.project.split_mentions(C_HALE, &moved).unwrap().seq;
     let split = s.decision(seq).anchor;
     assert!(
         s.connection_keys().contains(&split),
@@ -1101,7 +1101,7 @@ fn us_11_1_ac2_exact_matches_can_be_split() {
     assert_eq!(s.entity(CORVIN).unwrap().mention_count, 3);
     let moved = s.mentions(CORVIN, Some("c.txt"));
     assert_eq!(moved.len(), 1);
-    let seq = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let seq = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let split = s.decision(seq).anchor;
     assert!(split.starts_with("split:"), "{split}");
     assert_eq!(s.entity(CORVIN).unwrap().mention_count, 2);
@@ -1123,7 +1123,7 @@ fn us_11_4_ac2_split_is_a_decision_and_opens_at_its_sources() {
         s.mentions(CORVIN, Some("c.txt")),
     ]
     .concat();
-    let seq = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let seq = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let d = s.decision(seq);
     assert_eq!(d.kind, DecisionKind::Split);
     assert_eq!(d.before.as_deref(), Some("Corvin Hale"));
@@ -1188,7 +1188,7 @@ fn a_split_works_on_groups_and_on_splits() {
     ]
     .concat();
     assert_eq!(two.len(), 2);
-    let first = s.project.split_mentions(C_HALE, &two).unwrap();
+    let first = s.project.split_mentions(C_HALE, &two).unwrap().seq;
     let outer = s.decision(first).anchor;
     assert_eq!(s.entity(C_HALE).unwrap().mention_count, 3);
     assert_eq!(s.entity(&outer).unwrap().mention_count, 2);
@@ -1196,7 +1196,7 @@ fn a_split_works_on_groups_and_on_splits() {
 
     // A mention in two standing splits goes to the newest; the older keeps the rest.
     let one = s.mentions(&outer, Some("d.txt"));
-    let second = s.project.split_mentions(&outer, &one).unwrap();
+    let second = s.project.split_mentions(&outer, &one).unwrap().seq;
     let inner = s.decision(second).anchor;
     assert_eq!(s.entity(&inner).unwrap().mention_count, 1);
     assert_eq!(s.entity(&outer).unwrap().mention_count, 1);
@@ -1244,7 +1244,7 @@ fn inv_er_01_each_mention_is_in_exactly_one_entity() {
     s.accept(C_HALE, CORVIN);
     check(&s);
     let moved = s.mentions(C_HALE, Some("c.txt"));
-    let split = s.project.split_mentions(C_HALE, &moved).unwrap();
+    let split = s.project.split_mentions(C_HALE, &moved).unwrap().seq;
     check(&s);
     s.project.undo_merge(C_HALE, CORVIN).unwrap();
     check(&s);
@@ -1285,7 +1285,7 @@ fn inv_er_08_no_mentions_no_entity_and_decisions_stay() {
 fn inv_cu_04_split_orphaned_and_active_again() {
     let s = setup();
     let moved = s.mentions(CORVIN, Some("c.txt"));
-    let seq = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let seq = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let split = s.decision(seq).anchor;
     let bytes = std::fs::read(s.src.join("c.txt")).unwrap();
     s.remove("c.txt");
@@ -1321,7 +1321,7 @@ fn inv_cu_04_split_orphaned_and_active_again() {
 fn inv_cu_04_a_missing_file_keeps_the_split() {
     let s = setup();
     let moved = s.mentions(CORVIN, Some("c.txt"));
-    let seq = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let seq = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let split = s.decision(seq).anchor;
     s.hide("c.txt");
     assert_eq!(s.entity(&split).unwrap().mention_count, 1);
@@ -1379,6 +1379,7 @@ fn kinds() -> Vec<Kind> {
                 s.project
                     .split_mentions(CORVIN, &s.mentions(CORVIN, Some("c.txt")))
                     .unwrap()
+                    .seq
             },
             holds: |s, anchor| {
                 assert_eq!(s.entity(anchor).unwrap().mention_count, 1);
@@ -1389,11 +1390,11 @@ fn kinds() -> Vec<Kind> {
         Kind {
             name: "undo split",
             make: |s| {
-                let seq = s
+                let made = s
                     .project
                     .split_mentions(CORVIN, &s.mentions(CORVIN, Some("c.txt")))
                     .unwrap();
-                s.project.undo_split(&s.decision(seq).anchor).unwrap()
+                s.project.undo_split(&made.key).unwrap()
             },
             holds: |s, _| assert_eq!(s.entity(CORVIN).unwrap().mention_count, 3),
         },
@@ -1539,7 +1540,7 @@ fn inv_cu_03_a_rerun_never_shows_results_without_decisions() {
     let s = setup_with(finding(names()), slow_y, FILES);
     s.extract();
     let moved = s.mentions(CORVIN, Some("c.txt"));
-    let split = s.project.split_mentions(CORVIN, &moved).unwrap();
+    let split = s.project.split_mentions(CORVIN, &moved).unwrap().seq;
     let split = s.decision(split).anchor;
     s.accept(C_HALE, CORVIN);
     s.project.rename_entity(C_HALE, "Chosen Name").unwrap();

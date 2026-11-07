@@ -4,7 +4,16 @@ import type { UiEvent } from "../ipc/bindings/UiEvent";
 export function staleKeys(event: UiEvent): string[][] {
   switch (event.kind) {
     case "connectionsChanged":
-      return [["connections"], ["occurrences"], ["source"], ["progress"], ["documents"]];
+      return [
+        ["connections"],
+        ["occurrences"],
+        ["source"],
+        ["progress"],
+        ["documents"],
+        ["review"],
+        ["entity"],
+        ["decisions"],
+      ];
     case "projectChanged":
       return [
         ["project"],
@@ -18,6 +27,9 @@ export function staleKeys(event: UiEvent): string[][] {
         ["roots"],
         ["recent"],
         ["search"],
+        ["review"],
+        ["entity"],
+        ["decisions"],
       ];
     case "ingestStarted":
       return [["progress"]];
@@ -26,7 +38,15 @@ export function staleKeys(event: UiEvent): string[][] {
       return [["progress"], ["ai_readiness"]];
     // Search results change only when a run ends, so a list being read does not jump.
     case "ingestFinished":
-      return [["progress"], ["connections"], ["documents"], ["search"]];
+      return [
+        ["progress"],
+        ["connections"],
+        ["documents"],
+        ["search"],
+        ["review"],
+        ["entity"],
+        ["decisions"],
+      ];
     case "modelsChanged":
       return [["hardware"], ["model_catalog"], ["ai_choice"], ["ai_readiness"]];
     case "runtimeChanged":

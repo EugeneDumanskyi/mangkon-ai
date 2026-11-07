@@ -197,7 +197,7 @@ Qwen3.8-Flash-Next (the best extractor), 2026-10-24 05:13 UTC. INV-AI-06 relatio
 |---|---|---|---|---|---|---|---|
 | 18 | 27 | 13 | 14 | 3 | 2 | 48.1% | 72.2% |
 
-Informative only. Recall is fair; precision is low, partly because the ground truth may not list every relation a text states (**ASSUMPTION:** the 20 relations are not a complete annotation, `07-test-corpus.md` §4 does not claim one). Run time 100 s for 14 segments. Input for the M8 go/no-go: relations from the biggest local model are usable only as "experimental" and need their own precision work; M8 stays cut first.
+Informative only. Recall is fair; precision is low, partly because the ground truth may not list every relation a text states (**ASSUMPTION:** the 20 relations are not a complete annotation, `07-test-corpus.md` §4 does not claim one). Run time 100 s for 14 segments. Input for the M8 go/no-go: relations from the biggest local model are usable only as "experimental" and need their own precision work; M8 stays cut first. **M8 was cut on 2026-11-07** (`06-roadmap.md` §4 #14).
 
 ---
 

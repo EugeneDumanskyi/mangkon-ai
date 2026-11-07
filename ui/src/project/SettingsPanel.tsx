@@ -6,6 +6,7 @@ import type { SettingsSaved } from "../ipc/bindings/SettingsSaved";
 import type { SourceRoot } from "../ipc/bindings/SourceRoot";
 import { AiExtractionSettings } from "./AiExtraction";
 import { CustomPatterns } from "./CustomPatterns";
+import { DecisionList } from "./DecisionList";
 import { EgressSettings } from "./EgressSettings";
 import { ocrChoices, parseDomains, reprocessQuestion } from "../lib/forms";
 import { plural } from "../lib/labels";
@@ -195,7 +196,7 @@ export function ReprocessPrompt({
 }
 
 /** Project settings and sources (US-01.6, D12). */
-export function SettingsPanel() {
+export function SettingsPanel({ onOpenEntity }: { onOpenEntity: (key: string) => void }) {
   const client = useQueryClient();
   const info = useQuery({ queryKey: ["settings"], queryFn: commands.projectSettings });
   const roots = useQuery({ queryKey: ["roots"], queryFn: commands.sourceRoots });
@@ -288,6 +289,7 @@ export function SettingsPanel() {
       <CustomPatterns />
       <AiExtractionSettings />
       <EgressSettings />
+      <DecisionList onOpenEntity={onOpenEntity} />
       <h3 className="mt-6 font-semibold">Sources</h3>
       {rootError && (
         <p role="alert" className="text-sm">

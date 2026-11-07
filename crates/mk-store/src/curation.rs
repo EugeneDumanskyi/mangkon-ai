@@ -12,7 +12,7 @@ use mk_graph::entity::{
     alias_anchor, anchor_subjects, group_members, merge_anchor, merge_pair, split_for, split_keys,
 };
 use mk_graph::proposal::{Candidate, MAX_ENTITIES_PER_IDENTIFIER, Proposal, is_hard_identifier};
-use mk_graph::{DecisionFact, DecisionFamily, DecisionKind, LOW_CONFIDENCE};
+use mk_graph::{DecisionFact, DecisionFamily, DecisionKind, LOW_CONFIDENCE, SubjectKind};
 use mk_kernel::{ContentHash, EntityType, MentionKey, NameKey, is_split_key};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -696,13 +696,20 @@ fn check_pair(a: &str, b: &str) -> Result<(), StoreError> {
     Ok(())
 }
 
+/// A split's decision and the key of the new entity (its anchor), so a screen can open it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SplitMade {
+    pub seq: i64,
+    pub key: String,
+}
+
 /// Moves mentions of an entity to a new entity (US-11.4 AC2): one decision listing their keys.
 /// `mentions` are ids as an occurrence row has them.
 pub(crate) fn split_mentions(
     conn: &Connection,
     key: &str,
     mentions: &[i64],
-) -> Result<DecisionOutcome, StoreError> {
+) -> Result<(DecisionOutcome, String), StoreError> {
     let entity = current(conn, key)?;
     let scope = Scope::lookup(conn, &entity.key)?;
     let ids: BTreeSet<i64> = mentions.iter().map(|m| m.abs()).collect();
@@ -739,10 +746,13 @@ pub(crate) fn split_mentions(
         Some(&entity.display),
         Some(&list.join("\n")),
     )?;
-    Ok(DecisionOutcome {
-        seq,
-        connections_changed: changed,
-    })
+    Ok((
+        DecisionOutcome {
+            seq,
+            connections_changed: changed,
+        },
+        anchor,
+    ))
 }
 
 /// Puts a split group's mentions back (US-11.4): a new decision on its anchor.
@@ -1032,27 +1042,49 @@ pub(crate) fn proposal_input(conn: &Connection) -> Result<ProposalInput, StoreEr
     })
 }
 
+/// What a proposal run stored: how many, and whether they differ from the rows before it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ProposalsStored {
+    pub stored: usize,
+    pub changed: bool,
+}
+
+/// `(a, b, left_key, right_key, score, reasons)`: a stored proposal row.
+type StoredProposal = (String, String, String, String, f64, String);
+
+fn stored_proposals(conn: &Connection) -> Result<Vec<StoredProposal>, StoreError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT a, b, left_key, right_key, score, reasons FROM merge_proposal ORDER BY a, b",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get(0)?,
+            r.get(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get(4)?,
+            r.get(5)?,
+        ))
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 /// Replaces the stored proposals in one short transaction, filtering them again against the decisions
 /// as they are now, so a rejected or merged pair never shows even for a moment (INV-ER-04). Skipped
-/// when newer ones are stored already. Returns how many are stored.
+/// when newer ones are stored already. A run that finds what is stored writes no rows, so nothing has
+/// to re-query (ADR-0003).
 pub(crate) fn replace_proposals(
     conn: &Connection,
     from_generation: u64,
     proposals: &[Proposal],
-) -> Result<Option<usize>, StoreError> {
+) -> Result<Option<ProposalsStored>, StoreError> {
     if generation(conn, PROPOSALS_GENERATION)? > from_generation {
         return Ok(None);
     }
     let members = all_members(conn)?;
     let root = |k: &str| members.get(k).cloned().unwrap_or_else(|| k.to_string());
     let blocked = blocked_pairs(conn, &root)?;
-    conn.prepare_cached("DELETE FROM merge_proposal")?
-        .execute([])?;
-    let mut insert = conn.prepare_cached(
-        "INSERT OR REPLACE INTO merge_proposal (a, b, left_key, right_key, score, reasons)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-    )?;
-    let mut stored = 0;
+    let mut rows: BTreeMap<(String, String), StoredProposal> = BTreeMap::new();
     for p in proposals {
         let (left, right) = (root(&p.a), root(&p.b));
         if left == right {
@@ -1066,22 +1098,39 @@ pub(crate) fn replace_proposals(
         if blocked.contains(&pair) {
             continue;
         }
-        insert.execute(params![
-            p.a,
-            p.b,
-            left,
-            right,
-            f64::from(p.score),
-            p.reasons.join("\n")
-        ])?;
-        stored += 1;
+        rows.insert(
+            (p.a.clone(), p.b.clone()),
+            (
+                p.a.clone(),
+                p.b.clone(),
+                left,
+                right,
+                f64::from(p.score),
+                p.reasons.join("\n"),
+            ),
+        );
+    }
+    let changed = !rows.values().eq(stored_proposals(conn)?.iter());
+    if changed {
+        conn.prepare_cached("DELETE FROM merge_proposal")?
+            .execute([])?;
+        let mut insert = conn.prepare_cached(
+            "INSERT INTO merge_proposal (a, b, left_key, right_key, score, reasons)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (a, b, left, right, score, reasons) in rows.values() {
+            insert.execute(params![a, b, left, right, score, reasons])?;
+        }
     }
     manage::set_meta(
         conn,
         PROPOSALS_GENERATION,
         Some(&from_generation.to_string()),
     )?;
-    Ok(Some(stored))
+    Ok(Some(ProposalsStored {
+        stored: rows.len(),
+        changed,
+    }))
 }
 
 /// A pending proposal, as the queue will list it (US-11.3).
@@ -1105,10 +1154,12 @@ pub struct ProposalCursor {
     pub b: String,
 }
 
-/// One page of pending proposals, highest score first (US-11.3 AC1). A proposal's side that is gone
-/// is not shown (domain §7.4 "Stale").
+/// One page of pending proposals, highest score first (US-11.3 AC1), only those of the entity
+/// holding `entity` when given (US-07.7 AC4). A proposal's side that is gone is not shown (domain
+/// §7.4 "Stale").
 pub(crate) fn proposals_page(
     conn: &Connection,
+    entity: Option<&str>,
     after: Option<&ProposalCursor>,
     limit: usize,
 ) -> Result<Vec<ProposalRow>, StoreError> {
@@ -1128,27 +1179,45 @@ pub(crate) fn proposals_page(
                 .collect(),
         })
     };
-    const SELECT: &str = "SELECT p.a, p.b, p.left_key, p.right_key, p.score, p.reasons,
-                                 l.display_name, r.display_name
-                          FROM merge_proposal p
-                          JOIN entity l ON l.entity_key = p.left_key
-                          JOIN entity r ON r.entity_key = p.right_key";
-    const ORDER: &str = "ORDER BY p.score DESC, p.a, p.b LIMIT";
-    let rows = match after {
-        None => {
-            let mut stmt = conn.prepare_cached(&format!("{SELECT} {ORDER} ?1"))?;
-            stmt.query_map([limit as i64], map)?
-                .collect::<Result<_, _>>()?
-        }
-        Some(c) => {
-            let mut stmt = conn.prepare_cached(&format!(
-                "{SELECT} WHERE (-p.score, p.a, p.b) > (-?1, ?2, ?3) {ORDER} ?4"
-            ))?;
-            stmt.query_map(params![f64::from(c.score), c.a, c.b, limit as i64], map)?
-                .collect::<Result<_, _>>()?
-        }
-    };
+    let holder = entity.map(|key| entity_key(conn, key)).transpose()?;
+    let mut stmt = conn.prepare_cached(
+        "SELECT p.a, p.b, p.left_key, p.right_key, p.score, p.reasons,
+                l.display_name, r.display_name
+         FROM merge_proposal p
+         JOIN entity l ON l.entity_key = p.left_key
+         JOIN entity r ON r.entity_key = p.right_key
+         WHERE (?1 IS NULL OR p.left_key = ?1 OR p.right_key = ?1)
+           AND (?2 IS NULL OR (-p.score, p.a, p.b) > (-?2, ?3, ?4))
+         ORDER BY p.score DESC, p.a, p.b LIMIT ?5",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![
+                holder,
+                after.map(|c| f64::from(c.score)),
+                after.map(|c| c.a.as_str()),
+                after.map(|c| c.b.as_str()),
+                limit as i64
+            ],
+            map,
+        )?
+        .collect::<Result<_, _>>()?;
     Ok(rows)
+}
+
+/// How many proposals [`proposals_page`] lists in all.
+pub(crate) fn proposal_count(conn: &Connection, entity: Option<&str>) -> Result<u64, StoreError> {
+    let holder = entity.map(|key| entity_key(conn, key)).transpose()?;
+    let n: i64 = conn
+        .prepare_cached(
+            "SELECT COUNT(*)
+             FROM merge_proposal p
+             JOIN entity l ON l.entity_key = p.left_key
+             JOIN entity r ON r.entity_key = p.right_key
+             WHERE ?1 IS NULL OR p.left_key = ?1 OR p.right_key = ?1",
+        )?
+        .query_row([holder], |r| r.get(0))?;
+    Ok(n as u64)
 }
 
 /// Those of `keys` with a pending proposal: the "Unreviewed merge" mark (D6, domain §9.1). Read per
@@ -1245,6 +1314,25 @@ pub struct DecisionRow {
     pub status: Option<mk_graph::DecisionStatus>,
 }
 
+impl DecisionRow {
+    /// The entity this decision is on, if it is on one; a merge names its first side. Read through
+    /// [`entity_detail`], which finds whoever holds that key now.
+    pub fn entity_key(&self) -> Option<String> {
+        anchor_subjects(self.kind, &self.anchor)
+            .into_iter()
+            .find(|k| SubjectKind::of_key(k) == SubjectKind::Entity)
+    }
+
+    /// How many mentions a split moved; its `after` lists their keys, which say nothing to a person.
+    pub fn moved_mentions(&self) -> Option<u64> {
+        (self.kind == DecisionKind::Split).then(|| {
+            self.after
+                .as_deref()
+                .map_or(0, |after| split_keys(after).count() as u64)
+        })
+    }
+}
+
 /// A page of the decision log, newest first, older than `before` (`None`: from the newest).
 pub(crate) fn decisions_page(
     conn: &Connection,
@@ -1275,4 +1363,241 @@ pub(crate) fn decisions_page(
         });
     }
     Ok(out)
+}
+
+/// How many documents an entity's detail lists; the rest are only counted.
+pub const DETAIL_DOCUMENTS: usize = 1_000;
+/// How many linked identifiers an entity's detail lists; the rest are only counted.
+pub const DETAIL_LINKED: usize = 200;
+
+/// One document an entity appears in (US-12.1 AC1).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EntityDocument {
+    pub document_id: i64,
+    pub file_type: String,
+    /// `None` when the file is no longer in any source folder.
+    pub path: Option<String>,
+    pub mentions: u64,
+}
+
+/// An accepted merge inside a group, each side by its most frequent written name (US-11.4 AC1).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MergedPair {
+    pub a: String,
+    pub b: String,
+    pub a_name: String,
+    pub b_name: String,
+}
+
+/// An entity named from another one's detail.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RelatedEntity {
+    pub key: String,
+    pub name: String,
+    pub mentions: u64,
+}
+
+/// What an entity's page shows (US-12.1), read at query time.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct EntityDetail {
+    /// The key as it is now: a name key in a group reads as its group.
+    pub key: String,
+    pub names: EntityNames,
+    pub entity_type: String,
+    pub note: Option<String>,
+    pub from_table: bool,
+    pub mention_count: u64,
+    pub linked: crate::read::LinkedIdentifiers,
+    /// The first [`DETAIL_DOCUMENTS`], most mentions first.
+    pub documents: Vec<EntityDocument>,
+    pub documents_total: u64,
+    /// Its mentions in all documents, counted ones only (INV-CO-07).
+    pub evidence_total: u64,
+    pub merges: Vec<MergedPair>,
+    /// Entities split out of this one's names.
+    pub splits: Vec<RelatedEntity>,
+    /// For a split entity: who holds the names its mentions came from, where "Put back" returns them.
+    pub split_from: Vec<RelatedEntity>,
+    pub is_split: bool,
+    pub pending_proposals: u64,
+}
+
+fn related(conn: &Connection, key: &str) -> Result<Option<RelatedEntity>, StoreError> {
+    Ok(conn
+        .prepare_cached("SELECT display_name, mention_count FROM entity WHERE entity_key = ?1")?
+        .query_row([key], |r| {
+            Ok(RelatedEntity {
+                key: key.to_string(),
+                name: r.get(0)?,
+                mentions: r.get::<_, i64>(1)? as u64,
+            })
+        })
+        .optional()?)
+}
+
+/// The most frequent way a name key is written; its own text when no mention has it now.
+fn written_name(conn: &Connection, name_key: &str) -> Result<String, StoreError> {
+    let written: Option<String> = conn
+        .prepare_cached(&format!(
+            "SELECT m.raw FROM entity_mention m WHERE {}
+             GROUP BY m.raw ORDER BY COUNT(*) DESC, m.raw LIMIT 1",
+            Scope::Single.filter()
+        ))?
+        .query_row([name_key], |r| r.get(0))
+        .optional()?;
+    Ok(written.unwrap_or_else(|| {
+        name_key
+            .split_once(':')
+            .map_or(name_key, |(_, name)| name)
+            .to_string()
+    }))
+}
+
+/// The documents of an entity: the first [`DETAIL_DOCUMENTS`], then `(documents, mentions)` in all.
+fn entity_documents(
+    conn: &Connection,
+    key: &str,
+    scope: Scope,
+    include_low: bool,
+) -> Result<(Vec<EntityDocument>, u64, u64), StoreError> {
+    let groups: Vec<(i64, i64, String, u64)> = {
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT m.document_id, m.content_id, c.file_type, COUNT(*)
+             FROM entity_mention m JOIN content c ON c.id = m.content_id
+             WHERE {} AND c.state != ?2 AND (?3 OR m.confidence >= ?4)
+             GROUP BY m.document_id, m.content_id, c.file_type
+             ORDER BY COUNT(*) DESC, m.document_id",
+            scope.filter()
+        ))?;
+        let rows = stmt.query_map(
+            params![
+                key,
+                IngestionState::Missing.as_str(),
+                include_low,
+                f64::from(LOW_CONFIDENCE)
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64)),
+        )?;
+        rows.collect::<Result<_, _>>()?
+    };
+    let total = groups.len() as u64;
+    let mentions = groups.iter().map(|g| g.3).sum();
+    let mut path = conn.prepare_cached(
+        "SELECT r.path, f.rel_path FROM file_ref f JOIN source_root r ON r.id = f.root_id
+         WHERE f.content_id = ?1 AND f.present = 1 ORDER BY f.id LIMIT 1",
+    )?;
+    let mut documents = Vec::with_capacity(groups.len().min(DETAIL_DOCUMENTS));
+    for (document_id, content, file_type, count) in groups.into_iter().take(DETAIL_DOCUMENTS) {
+        let found: Option<(String, String)> = path
+            .query_row([content], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()?;
+        documents.push(EntityDocument {
+            document_id,
+            file_type,
+            path: found.and_then(|(root, rel)| crate::read::display_path(Some(root), Some(rel))),
+            mentions: count,
+        });
+    }
+    Ok((documents, total, mentions))
+}
+
+/// An entity's page (US-12.1, US-11.4). `None` when no entity holds `key` now.
+pub(crate) fn entity_detail(
+    conn: &Connection,
+    key: &str,
+    include_low: bool,
+) -> Result<Option<EntityDetail>, StoreError> {
+    let Ok(entity) = current(conn, key) else {
+        return Ok(None);
+    };
+    let key = entity.key;
+    let scope = Scope::lookup(conn, &key)?;
+    let Some(names) = entity_names(conn, &key)? else {
+        return Ok(None);
+    };
+    let (mention_count, from_table): (i64, bool) = conn
+        .prepare_cached("SELECT mention_count, from_table FROM entity WHERE entity_key = ?1")?
+        .query_row([&key], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let linked = crate::read::linked_identifiers(
+        conn,
+        std::slice::from_ref(&key),
+        DETAIL_LINKED,
+        include_low,
+    )?
+    .remove(&key)
+    .unwrap_or_default();
+    let (documents, documents_total, evidence_total) =
+        entity_documents(conn, &key, scope, include_low)?;
+
+    let mut merges = Vec::new();
+    if scope == Scope::Group {
+        let pairs: Vec<(String, String)> = {
+            let mut stmt = conn.prepare_cached(
+                "SELECT a, b FROM merge_edge WHERE accepted = 1
+                 AND a IN (SELECT name_key FROM entity_member WHERE entity_key = ?1)
+                 ORDER BY a, b",
+            )?;
+            let rows = stmt.query_map([&key], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for (a, b) in pairs {
+            merges.push(MergedPair {
+                a_name: written_name(conn, &a)?,
+                b_name: written_name(conn, &b)?,
+                a,
+                b,
+            });
+        }
+    }
+
+    let mut splits = Vec::new();
+    let mut split_from = Vec::new();
+    let is_split = scope == Scope::Split;
+    if is_split {
+        let holders: BTreeSet<String> = {
+            let mut stmt = conn.prepare_cached(
+                "SELECT DISTINCT name_key FROM split_mention WHERE split_key = ?1",
+            )?;
+            let names = stmt
+                .query_map([&key], |r| r.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            names
+                .iter()
+                .map(|name| entity_key(conn, name))
+                .collect::<Result<_, _>>()?
+        };
+        for holder in holders {
+            split_from.extend(related(conn, &holder)?);
+        }
+    } else {
+        let mut found = BTreeSet::new();
+        let mut stmt = conn
+            .prepare_cached("SELECT DISTINCT split_key FROM split_mention WHERE name_key = ?1")?;
+        for name in anchors_of(conn, &key, scope)? {
+            for split in stmt.query_map([&name], |r| r.get::<_, String>(0))? {
+                found.insert(split?);
+            }
+        }
+        for split in found {
+            splits.extend(related(conn, &split)?);
+        }
+    }
+
+    Ok(Some(EntityDetail {
+        pending_proposals: proposal_count(conn, Some(&key))?,
+        key,
+        names,
+        entity_type: entity.entity_type,
+        note: entity.note,
+        from_table,
+        mention_count: mention_count as u64,
+        linked,
+        documents,
+        documents_total,
+        evidence_total,
+        merges,
+        splits,
+        split_from,
+        is_split,
+    }))
 }

@@ -113,8 +113,9 @@ pub use mk_models::state::DownloadState;
 pub use mk_models::{Catalog, Role as ModelRole};
 pub use mk_search::Run as SnippetRun;
 pub use mk_store::{
-    AiCancelled, AiRunRow, DecisionRow, EntityNames, MergeEdit, ProposalCursor, ProposalRow,
-    ScheduleOutcome, UnitScope,
+    AiCancelled, AiRunRow, DETAIL_DOCUMENTS, DETAIL_LINKED, DecisionRow, EntityDetail,
+    EntityDocument, EntityNames, MergeEdit, MergedPair, ProposalCursor, ProposalRow, RelatedEntity,
+    ScheduleOutcome, SplitMade, UnitScope,
 };
 pub use mk_store::{
     CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,

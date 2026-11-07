@@ -7,7 +7,7 @@
 //! Spans count Unicode characters (INV-CO-04). They are applied here, on the Rust side, so the
 //! UI never has to map them onto its own string units.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use mk_corpus::IngestionState;
@@ -60,6 +60,8 @@ pub struct ConnectionsPage {
     pub entities: BTreeMap<String, EntityRow>,
     /// The identifiers linked to this page's entity connections, by name key (US-07.7 AC2, D7).
     pub linked: BTreeMap<String, LinkedIdentifiers>,
+    /// Those of this page's entity connections with a pending proposal (US-07.7 AC4, D6).
+    pub unreviewed: BTreeSet<String>,
     /// `None` on the last page.
     pub next: Option<ListCursor>,
 }
@@ -441,10 +443,12 @@ impl Project {
         let linked =
             self.store()
                 .linked_identifiers(&entity_keys, LINKED_SHOWN, query.include_low)?;
+        let unreviewed = self.store().unreviewed_keys(&entity_keys)?;
         Ok(ConnectionsPage {
             rows,
             entities,
             linked,
+            unreviewed,
             next,
         })
     }

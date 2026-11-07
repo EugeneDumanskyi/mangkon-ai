@@ -7,6 +7,7 @@ import { connectCoreEvents, onCoreEvent } from "./lib/coreEvents";
 import { ModelsScreen } from "./models/ModelsScreen";
 import { ProjectScreen } from "./project/ProjectScreen";
 import { runQueueWalk } from "./project/queueWalk";
+import { runReviewWalk } from "./project/reviewWalk";
 import { StartScreen } from "./project/StartScreen";
 import { S2dScreen } from "./spike/S2dScreen";
 import { StatusBar } from "./status/StatusBar";
@@ -47,6 +48,13 @@ export function App() {
     walked.current = true;
     void runQueueWalk(walk, client);
   }, [walk, project.isSuccess, client]);
+  // Scripted runs only (`MK_REVIEW_WALK`): the M7b walk through the review queue and entity page.
+  const reviewWalk = info.data?.reviewWalk ?? null;
+  useEffect(() => {
+    if (reviewWalk === null || !project.isSuccess || walked.current) return;
+    walked.current = true;
+    void runReviewWalk(reviewWalk, client);
+  }, [reviewWalk, project.isSuccess, client]);
 
   return (
     <div className="flex h-full flex-col">

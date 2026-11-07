@@ -51,4 +51,8 @@ linkedIdentifiers: Array<LinkedIdentifierItem>,
 /**
  * How many identifiers are linked in all.
  */
-linkedTotal: number, };
+linkedTotal: number, 
+/**
+ * An entity with a pending merge proposal: "Unreviewed merge" (US-07.7 AC4).
+ */
+unreviewed: boolean, };

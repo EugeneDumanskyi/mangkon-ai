@@ -269,11 +269,12 @@ impl Project {
         let workers =
             mk_jobs::stage_a_limit(std::thread::available_parallelism().map_or(1, |n| n.get()));
         let store = Arc::new(store);
-        let proposal_lane = ProposalLane::start(store.clone());
+        let events = Events::start(DEBOUNCE);
+        let proposal_lane = ProposalLane::start(store.clone(), events.changes());
         let project = Project {
             layout,
             store,
-            events: Events::start(DEBOUNCE),
+            events,
             workers,
             worker_config: WorkerConfig::default(),
             tessdata: None,

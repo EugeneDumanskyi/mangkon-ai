@@ -68,3 +68,11 @@ export function aiMentionNote(o: Occurrence, experimental: boolean): string {
   const label = experimental ? " · Experimental" : "";
   return ` · ${confidenceLabel(o.confidence)} · ${o.aiModel}${label}`;
 }
+
+/**
+ * The note on one mention of a person or organization (US-07.7 AC3): a table has no model and no
+ * confidence, so its mention says where it came from.
+ */
+export function entityMentionNote(o: Occurrence, experimental: boolean): string {
+  return o.aiModel === null ? " · From a table" : aiMentionNote(o, experimental);
+}
