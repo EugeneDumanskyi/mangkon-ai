@@ -2889,6 +2889,7 @@ dependencies = [
  "mk-models",
  "mk-search",
  "mk-store",
+ "serde",
  "serde_json",
  "tempfile",
 ]
@@ -3005,6 +3006,8 @@ version = "0.0.0"
 dependencies = [
  "bech32",
  "bs58",
+ "mk-graph",
+ "mk-kernel",
  "schemars 1.2.3",
  "serde",
  "serde_json",

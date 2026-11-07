@@ -13,6 +13,7 @@ use mk_kernel::{ContentHash, IdentifierKey, Locator, OcrGeometry};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::codec::MentionCols;
+use crate::curation::Scope;
 use crate::derive::row_to_connection;
 use crate::{StoreError, codec};
 
@@ -503,7 +504,9 @@ pub(crate) fn derived_state(conn: &Connection) -> Result<DerivedState, StoreErro
     }
     {
         let mut stmt = conn.prepare(
-            "SELECT name_key, entity_type, display_name, mention_count, from_table FROM entity",
+            "SELECT entity_key, entity_type, display_name, display_key, note, mention_count,
+                    from_table
+             FROM entity",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((
@@ -511,12 +514,35 @@ pub(crate) fn derived_state(conn: &Connection) -> Result<DerivedState, StoreErro
                 EntityRow {
                     entity_type: r.get(1)?,
                     display_name: r.get(2)?,
-                    mention_count: r.get::<_, i64>(3)? as u64,
-                    from_table: r.get(4)?,
+                    display_key: r.get(3)?,
+                    note: r.get(4)?,
+                    mention_count: r.get::<_, i64>(5)? as u64,
+                    from_table: r.get(6)?,
                 },
             ))
         })?;
         out.entities = rows.collect::<Result<_, _>>()?;
+    }
+    {
+        let mut stmt = conn.prepare("SELECT name_key, entity_key FROM entity_member")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        out.entity_members = rows.collect::<Result<_, _>>()?;
+    }
+    {
+        let mut stmt = conn.prepare("SELECT anchor, accepted FROM merge_edge")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        out.merge_edges = rows.collect::<Result<_, _>>()?;
+    }
+    {
+        let mut stmt =
+            conn.prepare("SELECT split_key, mention_key, active, present FROM split_anchor")?;
+        let rows = stmt.query_map([], |r| Ok(((r.get(0)?, r.get(1)?), (r.get(2)?, r.get(3)?))))?;
+        out.split_anchors = rows.collect::<Result<_, _>>()?;
+    }
+    {
+        let mut stmt = conn.prepare("SELECT mention_id, split_key, name_key FROM split_mention")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?;
+        out.split_mentions = rows.collect::<Result<_, _>>()?;
     }
     {
         let mut stmt = conn.prepare(
@@ -580,14 +606,18 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
         }
     }
     {
+        let mention_keys = crate::curation::all_mention_keys(conn)?;
         let mut stmt = conn.prepare(
-            "SELECT content_id, document_id, name_key, raw, confidence, producer
+            "SELECT content_id, document_id, name_key, raw, confidence, producer, id
              FROM entity_mention",
         )?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let key: String = r.get(2)?;
+            let id: i64 = r.get(6)?;
             out.entity_mentions.push(EntityMentionFact {
+                id,
+                mention_key: mention_keys.get(&id).cloned().unwrap_or_default(),
                 content: r.get(0)?,
                 document: r.get(1)?,
                 key: key.parse().map_err(|e: mk_kernel::ParseNameKeyError| {
@@ -600,7 +630,8 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
         }
     }
     {
-        let mut stmt = conn.prepare("SELECT seq, kind, anchor FROM decision ORDER BY seq")?;
+        let mut stmt =
+            conn.prepare("SELECT seq, kind, anchor, after FROM decision ORDER BY seq")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let kind: String = r.get(1)?;
@@ -609,6 +640,7 @@ pub(crate) fn facts(conn: &Connection) -> Result<Facts, StoreError> {
                 kind: DecisionKind::from_name(&kind)
                     .ok_or_else(|| StoreError::Invalid(format!("unknown decision kind {kind}")))?,
                 anchor: r.get(2)?,
+                after: r.get(3)?,
             });
         }
     }
@@ -637,8 +669,16 @@ pub(crate) fn weak_connections(conn: &Connection, limit: usize) -> Result<Vec<St
            CASE k.subject_kind WHEN 'entity' THEN
              (SELECT COUNT(DISTINCT m.document_id) FROM entity_mention m
                 JOIN content c ON c.id = m.content_id
-                WHERE m.name_key = k.subject_key AND c.state != ?1
-                  AND (k.low_only = 1 OR m.confidence >= 0.5))
+                WHERE c.state != ?1 AND (k.low_only = 1 OR m.confidence >= 0.5)
+                  AND CASE WHEN k.subject_key LIKE 'split:%' THEN
+                        m.id IN (SELECT mention_id FROM split_mention
+                                 WHERE split_key = k.subject_key)
+                      ELSE
+                        m.name_key IN (SELECT k.subject_key UNION
+                                       SELECT name_key FROM entity_member
+                                       WHERE entity_key = k.subject_key)
+                        AND NOT EXISTS (SELECT 1 FROM split_mention x WHERE x.mention_id = m.id)
+                      END)
            ELSE
              (SELECT COUNT(DISTINCT m.document_id) FROM identifier_mention m
                 JOIN content c ON c.id = m.content_id
@@ -677,7 +717,7 @@ pub struct OccurrenceRow {
     /// The text around the value with the value marked, card-like numbers masked (US-07.3 AC1,
     /// NFR-SEC-14).
     pub snippet: Vec<mk_search::Run>,
-    /// The identifier key, such as `email:a@x.example`, or the entity's name key.
+    /// The identifier key, such as `email:a@x.example`, or the key of the entity it belongs to.
     pub key: String,
     /// The model an AI mention came from (US-10.4 AC1, INV-AI-02); `None` otherwise.
     pub ai_model: Option<String>,
@@ -701,7 +741,10 @@ const ENTITY_OCCURRENCE_SELECT: &str = "
     SELECT -m.id, m.content_id, m.document_id, m.segment_id, c.file_type, c.state,
            s.loc_kind, s.loc_pos, s.text, m.span_start, m.span_end, m.column_index,
            m.column_name, m.raw, m.confidence, r.path, f.rel_path, s.loc_ref, s.ocr,
-           m.name_key, a.model_name
+           COALESCE((SELECT x.split_key FROM split_mention x WHERE x.mention_id = m.id),
+                    (SELECT e.entity_key FROM entity_member e WHERE e.name_key = m.name_key),
+                    m.name_key),
+           a.model_name
     FROM entity_mention m
     JOIN segment s ON s.id = m.segment_id
     JOIN content c ON c.id = m.content_id
@@ -792,8 +835,9 @@ pub(crate) fn mentions_of(
         ),
         SubjectKind::Entity => format!(
             "{ENTITY_OCCURRENCE_SELECT}
-             WHERE m.name_key = ?1 AND (?2 OR m.confidence >= 0.5)
-             ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start"
+             WHERE {} AND (?2 OR m.confidence >= 0.5)
+             ORDER BY m.content_id, m.document_id, s.ordinal, m.span_start",
+            Scope::lookup(conn, key)?.filter()
         ),
     };
     let mut stmt = conn.prepare_cached(&sql)?;
@@ -820,22 +864,22 @@ pub(crate) fn mentions_in_document(
     include_low: bool,
 ) -> Result<Vec<i64>, StoreError> {
     let sql = match SubjectKind::of_key(key) {
-        SubjectKind::Identifier => {
-            "SELECT m.id, c.state FROM identifier_mention m
+        SubjectKind::Identifier => "SELECT m.id, c.state FROM identifier_mention m
              JOIN segment s ON s.id = m.segment_id
              JOIN content c ON c.id = m.content_id
              WHERE m.identifier_key = ?1 AND m.document_id = ?2 AND ?3 IN (0, 1)
              ORDER BY s.ordinal, m.span_start, m.id"
-        }
-        SubjectKind::Entity => {
+            .to_string(),
+        SubjectKind::Entity => format!(
             "SELECT -m.id, c.state FROM entity_mention m
              JOIN segment s ON s.id = m.segment_id
              JOIN content c ON c.id = m.content_id
-             WHERE m.name_key = ?1 AND m.document_id = ?2 AND (?3 OR m.confidence >= 0.5)
-             ORDER BY s.ordinal, m.span_start, m.id"
-        }
+             WHERE {} AND m.document_id = ?2 AND (?3 OR m.confidence >= 0.5)
+             ORDER BY s.ordinal, m.span_start, m.id",
+            Scope::lookup(conn, key)?.filter()
+        ),
     };
-    let mut stmt = conn.prepare_cached(sql)?;
+    let mut stmt = conn.prepare_cached(&sql)?;
     let mut rows = stmt.query(params![key, document, include_low])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -1231,8 +1275,8 @@ pub(crate) fn entities(
     keys: &[String],
 ) -> Result<BTreeMap<String, EntityRow>, StoreError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT entity_type, display_name, mention_count, from_table FROM entity
-         WHERE name_key = ?1",
+        "SELECT entity_type, display_name, display_key, note, mention_count, from_table
+         FROM entity WHERE entity_key = ?1",
     )?;
     let mut out = BTreeMap::new();
     for key in keys {
@@ -1241,8 +1285,10 @@ pub(crate) fn entities(
                 Ok(EntityRow {
                     entity_type: r.get(0)?,
                     display_name: r.get(1)?,
-                    mention_count: r.get::<_, i64>(2)? as u64,
-                    from_table: r.get(3)?,
+                    display_key: r.get(2)?,
+                    note: r.get(3)?,
+                    mention_count: r.get::<_, i64>(4)? as u64,
+                    from_table: r.get(5)?,
                 })
             })
             .optional()?;
@@ -1298,7 +1344,7 @@ pub struct LinkedIdentifiers {
     pub total: u64,
 }
 
-/// The identifiers linked to each of `keys` (name keys), for at most one page of them (US-07.7
+/// The identifiers linked to each of `keys` (entity keys), for at most one page of them (US-07.7
 /// AC2). A link comes only from a shared evidence unit (D7): the same CSV row or JSON record
 /// (INV-CM-05), or `Name <address>` in one email header. Counted contents only (INV-CO-07); a
 /// mention under 0.5 links only with `include_low` (INV-AI-05). A domain is left out: it only ever
@@ -1311,31 +1357,67 @@ pub(crate) fn linked_identifiers(
     include_low: bool,
 ) -> Result<BTreeMap<String, LinkedIdentifiers>, StoreError> {
     let missing = IngestionState::Missing.as_str();
-    let mut from_records = conn.prepare_cached(
-        "SELECT l.identifier_key, l.document_id
-         FROM record_link l JOIN content c ON c.id = l.content_id
-         WHERE l.name_key = ?1 AND c.state != ?2 AND l.identifier_key NOT LIKE 'domain:%'
-         GROUP BY l.identifier_key, l.document_id",
-    )?;
-    let mut from_headers = conn.prepare_cached(&format!(
-        "SELECT i.identifier_key, i.document_id,
-                substr(s.text, m.span_end + 1, i.span_start - m.span_end)
-         FROM entity_mention m
-         JOIN content c ON c.id = m.content_id
-         JOIN segment s ON s.id = m.segment_id
-         JOIN identifier_mention i ON i.segment_id = m.segment_id AND i.span_start >= m.span_end
-         WHERE m.name_key = ?1 AND c.state != ?2 AND s.loc_kind = '{}'
-           AND i.identifier_key NOT LIKE 'domain:%' AND (?3 OR m.confidence >= {})",
-        crate::codec::EMAIL_HEADER,
-        LOW_CONFIDENCE,
-    ))?;
     let mut out = BTreeMap::new();
     for key in keys {
+        let scope = Scope::lookup(conn, key)?;
         let mut documents: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
-        let mut rows = from_records.query(params![key, missing])?;
+        // Through the entity's own mentions when one of its name keys had mentions moved out: a
+        // moved mention takes its record's links with it. Otherwise straight from the links, which
+        // a table of a million rows answers at once.
+        let through_mentions = match scope {
+            Scope::Split => true,
+            Scope::Single => conn
+                .prepare_cached("SELECT EXISTS (SELECT 1 FROM split_mention WHERE name_key = ?1)")?
+                .query_row([key], |r| r.get(0))?,
+            Scope::Group => conn
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM split_mention x
+                     JOIN entity_member e ON e.name_key = x.name_key WHERE e.entity_key = ?1)",
+                )?
+                .query_row([key], |r| r.get(0))?,
+        };
+        let from_records = if through_mentions {
+            format!(
+                "SELECT DISTINCT l.identifier_key, l.document_id
+                 FROM entity_mention m
+                 JOIN content c ON c.id = m.content_id
+                 JOIN record_link l ON l.document_id = m.document_id AND l.record = m.record
+                                       AND l.name_key = m.name_key
+                 WHERE {} AND c.state != ?2 AND l.identifier_key NOT LIKE 'domain:%'
+                   AND m.producer = 'table'",
+                scope.filter()
+            )
+        } else {
+            let names = if scope == Scope::Group {
+                "l.name_key IN (SELECT name_key FROM entity_member WHERE entity_key = ?1)"
+            } else {
+                "l.name_key = ?1"
+            };
+            format!(
+                "SELECT l.identifier_key, l.document_id
+                 FROM record_link l JOIN content c ON c.id = l.content_id
+                 WHERE {names} AND c.state != ?2 AND l.identifier_key NOT LIKE 'domain:%'
+                 GROUP BY l.identifier_key, l.document_id"
+            )
+        };
+        let mut stmt = conn.prepare_cached(&from_records)?;
+        let mut rows = stmt.query(params![key, missing])?;
         while let Some(r) = rows.next()? {
             documents.entry(r.get(0)?).or_default().insert(r.get(1)?);
         }
+        let mut from_headers = conn.prepare_cached(&format!(
+            "SELECT i.identifier_key, i.document_id,
+                    substr(s.text, m.span_end + 1, i.span_start - m.span_end)
+             FROM entity_mention m
+             JOIN content c ON c.id = m.content_id
+             JOIN segment s ON s.id = m.segment_id
+             JOIN identifier_mention i ON i.segment_id = m.segment_id AND i.span_start >= m.span_end
+             WHERE {} AND c.state != ?2 AND s.loc_kind = '{}'
+               AND i.identifier_key NOT LIKE 'domain:%' AND (?3 OR m.confidence >= {})",
+            scope.filter(),
+            crate::codec::EMAIL_HEADER,
+            LOW_CONFIDENCE,
+        ))?;
         let mut rows = from_headers.query(params![key, missing, include_low])?;
         while let Some(r) = rows.next()? {
             let between: String = r.get(2)?;

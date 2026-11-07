@@ -1214,13 +1214,14 @@ As a researcher, I want people and companies found automatically, so that I see 
 **AC1 — Propose**
 - **Given** two entities have similar names (e.g. "J. Smith" / "John Smith") or share a hard identifier
 - **Then** the app creates a merge proposal with a score and plain reasons, e.g. "Similar names (0.86) · Same phone +4420… in 2 documents"
+- Spike S7 (2026-11-07): similar spelling or an acronym alone does not propose; it raises a pair that shares a hard identifier. Which name matches propose on their own is in `17-entity-resolution.md` §1.
 
 **AC2 — Never auto-merge**
 - **Then** no proposal is applied without my decision
 
 **AC3 — Threshold**
 - **Then** only proposals with score ≥ 0.6 are shown
-- ASSUMPTION: 0.6. Tuned in M7 (spike S7, `06-roadmap.md`).
+- 0.6 kept after spike S7 (2026-11-07, `17-entity-resolution.md` §1).
 
 ---
 

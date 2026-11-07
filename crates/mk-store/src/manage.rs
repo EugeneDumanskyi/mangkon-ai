@@ -383,6 +383,7 @@ fn settle_contents(
             content_keys(conn, id, touched)?;
             conn.prepare_cached("DELETE FROM document WHERE content_id = ?1")?
                 .execute([id])?;
+            crate::curation::refresh_splits(conn, id, touched)?;
             conn.prepare_cached("DELETE FROM content WHERE id = ?1")?
                 .execute([id])?;
             removed += 1;

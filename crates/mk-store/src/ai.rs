@@ -508,6 +508,7 @@ pub(crate) fn commit_ai_item(
         .query_row([run], |r| r.get(0))?;
     let active = state == RunState::Active.as_str();
     let mut touched = BTreeSet::new();
+    let mut contents = BTreeSet::new();
     let mut place = conn.prepare_cached(
         "SELECT s.document_id, d.content_id, length(s.text) FROM segment s
          JOIN document d ON d.id = s.document_id WHERE s.id = ?1",
@@ -545,6 +546,7 @@ pub(crate) fn commit_ai_item(
         if active {
             visible.execute(args)?;
             touched.insert(key);
+            contents.insert(content);
         } else {
             pending.execute(args)?;
         }
@@ -565,6 +567,9 @@ pub(crate) fn commit_ai_item(
     set_item_state(conn, item, ItemState::Done)?;
     conn.prepare_cached("UPDATE work_item SET finished_at = ?2 WHERE id = ?1")?
         .execute(params![item, now_ms()])?;
+    for content in contents {
+        crate::curation::refresh_splits(conn, content, &mut touched)?;
+    }
     let connections_changed = rebuild_keys(conn, &touched)?;
     complete_job_if_done(conn, job)?;
     Ok(AiCommitOutcome {

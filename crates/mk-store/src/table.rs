@@ -83,7 +83,7 @@ fn rules(conn: &Connection) -> Result<Rules, StoreError> {
     })
 }
 
-/// The name keys of a content's entity mentions.
+/// The name keys of a content's entity mentions, and the split groups some of them moved to.
 pub(crate) fn content_entity_keys(
     conn: &Connection,
     content: i64,
@@ -91,6 +91,11 @@ pub(crate) fn content_entity_keys(
 ) -> Result<(), StoreError> {
     let mut stmt =
         conn.prepare_cached("SELECT DISTINCT name_key FROM entity_mention WHERE content_id = ?1")?;
+    for k in stmt.query_map([content], |r| r.get::<_, String>(0))? {
+        keys.insert(k?);
+    }
+    let mut stmt =
+        conn.prepare_cached("SELECT DISTINCT split_key FROM split_mention WHERE content_id = ?1")?;
     for k in stmt.query_map([content], |r| r.get::<_, String>(0))? {
         keys.insert(k?);
     }
@@ -129,7 +134,7 @@ pub(crate) fn apply_table_step(
     }
     let documents = table_documents(conn, content)?;
     if documents.is_empty() {
-        return Ok(());
+        return crate::curation::refresh_splits(conn, content, touched);
     }
     let rules = rules(conn)?;
     let confirms = confirm_decisions(conn, content)?;
@@ -152,7 +157,7 @@ pub(crate) fn apply_table_step(
             write_entities(conn, content, &table, &names, touched)?;
         }
     }
-    Ok(())
+    crate::curation::refresh_splits(conn, content, touched)
 }
 
 /// A confirm decision on one of the content's paths: `(seq, signature, assignments)`.

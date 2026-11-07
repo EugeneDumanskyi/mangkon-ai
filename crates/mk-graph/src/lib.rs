@@ -9,16 +9,19 @@
 //! confirmed table columns ("Name (from table)", US-05.3): grouped by name key, with a display
 //! name and their own connections and ignore decisions (domain §9.3 steps 1, 2 and 4). M6a: AI
 //! mentions join the same entities; a connection that exists only because of mentions under 0.5
-//! is marked [`ConnectionRow::low_only`] and hidden by default (INV-AI-05). Merges and splits
-//! come in M7.
+//! is marked [`ConnectionRow::low_only`] and hidden by default (INV-AI-05). M7a: merges, splits and
+//! edits as logged decisions ([`entity`]) and scored merge proposals, never applied on their own
+//! ([`proposal`]).
 
+pub mod entity;
 pub mod model;
+pub mod proposal;
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BTreeSet;
 use std::fmt;
 
-use mk_kernel::{IdentifierKey, IdentifierKind, NameKey};
+use mk_kernel::{IdentifierKey, IdentifierKind, NameKey, is_split_key};
 
 /// Mentions below this confidence are "low confidence" (US-07.1 AC4, domain §9.1).
 pub const LOW_CONFIDENCE: f32 = 0.5;
@@ -58,10 +61,10 @@ impl SubjectKind {
             .find(|k| k.as_str() == name)
     }
 
-    /// The kind of a subject key: a name key (`person:` / `org:`) is an entity, anything else
-    /// an identifier.
+    /// The kind of a subject key: a name key (`person:` / `org:`) or a split group's key
+    /// (`split:`) is an entity, anything else an identifier.
     pub fn of_key(key: &str) -> Self {
-        if key.parse::<NameKey>().is_ok() {
+        if key.parse::<NameKey>().is_ok() || is_split_key(key) {
             SubjectKind::Entity
         } else {
             SubjectKind::Identifier
@@ -73,7 +76,8 @@ impl SubjectKind {
 /// (INV-LK-05).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConnectionRow {
-    /// The identifier key (`type:value`) or the entity's name key (`org:<name>`).
+    /// The identifier key (`type:value`) or the entity key: the smallest name key of its group
+    /// (`org:<name>`), or `split:<hash>` for a split-out group.
     pub subject_key: String,
     pub subject_kind: SubjectKind,
     pub source_count: u64,
@@ -165,7 +169,7 @@ pub struct EntityCounts {
 /// confidence; unless only they make it a connection: then the row is marked `low_only`, with
 /// every mention counted, and hidden by default (INV-AI-05).
 pub fn entity_connection_for(
-    key: &NameKey,
+    key: &str,
     stats: &EntityStats,
     ignored: bool,
 ) -> Option<ConnectionRow> {
@@ -259,9 +263,10 @@ impl ConnectionRow {
 }
 
 /// Decision kinds (domain §9.5). Ignore and un-ignore of a connection, anchored on its
-/// [`IdentifierKey`] or, for an entity, on its [`NameKey`] (M2b, M4c); confirming a column
-/// mapping, anchored on the file path and header signature (M4c, `mk-mapping`). The others come
-/// in M7.
+/// [`IdentifierKey`] or, for an entity, on a [`NameKey`] or split key (M2b, M4c); confirming a
+/// column mapping, anchored on the file path and header signature (M4c, `mk-mapping`). M7a: merges
+/// on an unordered pair of name keys, splits on `split:<hash>`, edits on a name key or split key,
+/// alias removals on `<key>#alias:<text>`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DecisionKind {
     IgnoreIdentifier,
@@ -269,15 +274,46 @@ pub enum DecisionKind {
     IgnoreEntity,
     UnignoreEntity,
     ConfirmMapping,
+    AcceptMerge,
+    RejectMerge,
+    Split,
+    UndoSplit,
+    Rename,
+    ChangeType,
+    SetNote,
+    RemoveAlias,
+    RestoreAlias,
+}
+
+/// Decisions that replace each other on one anchor: the newest of a family wins (INV-CU-05).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub enum DecisionFamily {
+    Ignore,
+    Mapping,
+    Merge,
+    Split,
+    Rename,
+    ChangeType,
+    Note,
+    Alias,
 }
 
 impl DecisionKind {
-    pub const ALL: [DecisionKind; 5] = [
+    pub const ALL: [DecisionKind; 14] = [
         DecisionKind::IgnoreIdentifier,
         DecisionKind::UnignoreIdentifier,
         DecisionKind::IgnoreEntity,
         DecisionKind::UnignoreEntity,
         DecisionKind::ConfirmMapping,
+        DecisionKind::AcceptMerge,
+        DecisionKind::RejectMerge,
+        DecisionKind::Split,
+        DecisionKind::UndoSplit,
+        DecisionKind::Rename,
+        DecisionKind::ChangeType,
+        DecisionKind::SetNote,
+        DecisionKind::RemoveAlias,
+        DecisionKind::RestoreAlias,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -287,6 +323,31 @@ impl DecisionKind {
             DecisionKind::IgnoreEntity => "ignore_entity",
             DecisionKind::UnignoreEntity => "unignore_entity",
             DecisionKind::ConfirmMapping => "confirm_mapping",
+            DecisionKind::AcceptMerge => "accept_merge",
+            DecisionKind::RejectMerge => "reject_merge",
+            DecisionKind::Split => "split",
+            DecisionKind::UndoSplit => "undo_split",
+            DecisionKind::Rename => "rename",
+            DecisionKind::ChangeType => "change_type",
+            DecisionKind::SetNote => "set_note",
+            DecisionKind::RemoveAlias => "remove_alias",
+            DecisionKind::RestoreAlias => "restore_alias",
+        }
+    }
+
+    pub fn family(&self) -> DecisionFamily {
+        match self {
+            DecisionKind::IgnoreIdentifier
+            | DecisionKind::UnignoreIdentifier
+            | DecisionKind::IgnoreEntity
+            | DecisionKind::UnignoreEntity => DecisionFamily::Ignore,
+            DecisionKind::ConfirmMapping => DecisionFamily::Mapping,
+            DecisionKind::AcceptMerge | DecisionKind::RejectMerge => DecisionFamily::Merge,
+            DecisionKind::Split | DecisionKind::UndoSplit => DecisionFamily::Split,
+            DecisionKind::Rename => DecisionFamily::Rename,
+            DecisionKind::ChangeType => DecisionFamily::ChangeType,
+            DecisionKind::SetNote => DecisionFamily::Note,
+            DecisionKind::RemoveAlias | DecisionKind::RestoreAlias => DecisionFamily::Alias,
         }
     }
 
@@ -558,6 +619,7 @@ mod tests {
                 mentions: documents,
             },
         };
+        let k = k.to_string();
         assert_eq!(entity_connection_for(&k, &stats(1), false), None);
         let row = entity_connection_for(&k, &stats(3), false).unwrap();
         assert_eq!(row.subject_kind, SubjectKind::Entity);
@@ -576,14 +638,14 @@ mod tests {
     /// counts them; once high-confidence mentions make it alone, they are all it counts.
     #[test]
     fn us_10_1_ac3_low_only_connection() {
-        let k: NameKey = "person:anna berg".parse().unwrap();
+        let k = "person:anna berg";
         let low = EntityCounts {
             documents: 3,
             file_types: 2,
             mentions: 5,
         };
         let row = entity_connection_for(
-            &k,
+            k,
             &EntityStats {
                 documents: 1,
                 file_types: 1,
@@ -596,7 +658,7 @@ mod tests {
         assert!(row.low_only && row.low_confidence);
         assert_eq!((row.source_count, row.mention_count), (3, 5));
         let row = entity_connection_for(
-            &k,
+            k,
             &EntityStats {
                 documents: 2,
                 file_types: 1,
@@ -616,7 +678,7 @@ mod tests {
             },
             ..EntityStats::default()
         };
-        assert_eq!(entity_connection_for(&k, &none, false), None);
+        assert_eq!(entity_connection_for(k, &none, false), None);
     }
 
     /// INV-CU-04: without its anchor the newest decision is orphaned and applies nothing; it

@@ -37,6 +37,7 @@
 
 mod ai;
 mod control;
+mod curation;
 mod egress;
 mod embeddings;
 mod events;
@@ -88,8 +89,12 @@ pub use mk_egress::{
     TestReport, TlsRoots,
 };
 pub use mk_graph::model::EntityRow;
-pub use mk_graph::{ConnectionRow, LOW_CONFIDENCE, RankKey, SubjectKind};
+pub use mk_graph::proposal::{Proposal, THRESHOLD as PROPOSAL_THRESHOLD};
+pub use mk_graph::{
+    ConnectionRow, DecisionKind, DecisionStatus, LOW_CONFIDENCE, RankKey, SubjectKind,
+};
 pub use mk_jobs::{ItemState, Stage as JobStage};
+pub use mk_kernel::EntityType;
 pub use mk_kernel::{Column, Locator, json_path};
 pub use mk_mapping::{Assignments, ColumnType, MappingState};
 pub use mk_models::download::DownloadConfig;
@@ -107,7 +112,10 @@ pub use mk_models::runtime::{
 pub use mk_models::state::DownloadState;
 pub use mk_models::{Catalog, Role as ModelRole};
 pub use mk_search::Run as SnippetRun;
-pub use mk_store::{AiCancelled, AiRunRow, ScheduleOutcome, UnitScope};
+pub use mk_store::{
+    AiCancelled, AiRunRow, DecisionRow, EntityNames, MergeEdit, ProposalCursor, ProposalRow,
+    ScheduleOutcome, UnitScope,
+};
 pub use mk_store::{
     CancelOutcome, CardFlagRow, ColumnRow, ConnectionQuery, DocumentCursor, DocumentFilter,
     DocumentInfo, DocumentRow, FailedFile, KnownFile, LinkedIdentifier, LinkedIdentifiers,

@@ -971,7 +971,7 @@ Marks on a connection row:
 |---|---|
 | Low confidence | Identifier connection where every mention is below 0.5 (US-07.1 AC4). Ranked below confident rows. |
 | Ignored | An active "ignore" decision exists. Hidden unless "Show ignored" (US-07.4). |
-| Unreviewed merge | The entity has a pending merge proposal. ASSUMPTION. See D6. |
+| Unreviewed merge | The entity has a pending merge proposal (D6, decided). Read per page, because proposals may lag behind connections (ADR-0005); not stored on the connection row. |
 | Name (from table) | Entity whose mentions all come from table columns (US-05.3, Q3). |
 
 ### 9.2 Ranking
@@ -1003,14 +1003,23 @@ The user can sort the list by another column (value without case, type, sources,
 | Decision | Anchor |
 |---|---|
 | Ignore an identifier connection | IdentifierKey |
-| Ignore an entity connection | NameKey of the entity's display name at decision time |
+| Ignore an entity connection | NameKey of the entity's display name at decision time; on a split entity, its split key |
 | Confirm or edit a column mapping | File path + header signature |
 | Accept a merge | The two name keys of the pair |
 | Reject a merge / Undo a merge | The unordered pair of name keys |
-| Split | MentionKeys of the mentions moved out |
-| Rename, change type, remove alias, add note | NameKey of the entity's display name at decision time |
+| Split / Undo a split | `split:` + a hash of the sorted MentionKeys of the mentions moved out; the decision lists them |
+| Rename, change type, add note | NameKey of the entity's display name at decision time; on a split entity, its split key |
+| Remove or restore an alias | The key above + `#alias:` + the alias as written |
 
-When re-applied, a name-key anchor finds the entity that **contains** that name key.
+When re-applied, a name-key anchor finds the entity that **contains** that name key. Amended in M7a (2026-11-07):
+
+- **Why alias anchors name the alias.** The newest decision per kind and anchor wins (INV-CU-05), so removing one alias must not cancel the removal of another.
+- **Within a group** the newest edit across its name keys applies. Each anchor's own status stays Active, so undoing a merge gives each side its own decisions back.
+- **A decision on a name key never applies to a split entity** that holds mentions moved out of it. A split entity has its own anchor.
+- **A chain A–B–C holds while B has no mentions** (ASSUMPTION). Membership depends only on decisions, so B's absence does not take A and C apart; the two links read Orphaned while it lasts.
+- **A rejected pair stands between the two groups holding it,** not only between its two names (INV-ER-04).
+- **Split entities are not proposed** (ASSUMPTION), which also keeps a split from being proposed straight back. Proposals are between name-key entities of one type.
+- **A mention in two standing splits** goes to the newest. A split stands while any of its mentions exists; otherwise it reads Orphaned and comes back with its content (INV-CU-04).
 
 ### 9.6 Re-run order
 
@@ -1032,7 +1041,7 @@ After any re-run (re-scan, setting change, model change, app upgrade):
 | D3 | "Remove from project" on a path whose content is also at another path: remove the data or keep it? | Keep it. Only the path is removed (INV-CO-08). |
 | D4 | Should Missing documents still show in keyword search? | Yes, with a "Missing" badge. They are hidden only from connections. |
 | D5 | Mapping after headers changed: apply the old mapping to unchanged columns while waiting for review? | Yes, for unchanged headers only (7.3). |
-| D6 | **Conflict:** US-07.7 AC4 says an entity can be "built from a merge that is not yet reviewed", but US-11.2 AC2 says merges are never applied without review. What does "Unreviewed merge" mean? | It means "this entity has a pending merge proposal". |
+| D6 | **Conflict:** US-07.7 AC4 says an entity can be "built from a merge that is not yet reviewed", but US-11.2 AC2 says merges are never applied without review. What does "Unreviewed merge" mean? | **Decided (2026-11-07):** it means "this entity has a pending merge proposal". |
 | D7 | How does an entity get "linked identifiers" (US-07.7 AC2, US-12.1)? | **Decided (2026-11-06, M6c):** only through shared evidence units: same CSV row / JSON object, and `Name <address>` email headers. No LLM linking in v0.1. |
 | D8 | Store card-like numbers at all? | Store only locator + last 4 digits in a sensitive flag. The full number exists only in the segment text. |
 | D9 | When is a document "Done": after Stage A, or after all stages? | After Stage A. AI progress is shown per job. |
